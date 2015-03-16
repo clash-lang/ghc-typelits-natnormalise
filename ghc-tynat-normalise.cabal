@@ -1,0 +1,34 @@
+name:                ghc-tynat-normalise
+version:             0.1.0.0
+synopsis:            GHC typechecker plugin for GHC.TypeLits.Nat
+-- description:
+homepage:            http://www.clash-lang.org/
+license:             BSD2
+license-file:        LICENSE
+author:              Christiaan Baaij
+maintainer:          christiaan.baaij@gmail.com
+copyright:           Copyright © 2015 University of Twente
+category:            Type System
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.10
+
+library
+  exposed-modules:     GHC.TypeLits.Normalise
+  -- other-modules:
+  -- other-extensions:
+  build-depends:       base >=4.8 && <4.9,
+                       ghc  >=7.10
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+
+test-suite test-ghc-tynat-normalise
+  type:                exitcode-stdio-1.0
+  main-is:             Tests.hs
+  build-depends:       base >=4.8 && <4.9,
+                       ghc-tynat-normalise >= 0.1,
+                       tasty >= 0.10,
+                       tasty-hunit >= 0.9
+  hs-source-dirs:      tests
+  default-language:    Haskell2010
+  ghc-options:         -O0 -dcore-lint
