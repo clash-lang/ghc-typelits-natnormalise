@@ -7,6 +7,8 @@ where
 import Data.Either
 
 -- GHC API
+import FastString
+import Coercion
 import Outputable
 import Plugins
 
@@ -21,6 +23,12 @@ import Type
 import TyCon
 import TypeRep
 import TysWiredIn
+
+import qualified TcMType
+
+-- local
+import GHC.TypeLits.Normalise.SOP
+import GHC.TypeLits.Normalise.Unify
 
 plugin :: Plugin
 plugin = defaultPlugin { tcPlugin = const $ Just normalisePlugin }
@@ -39,84 +47,55 @@ decideEqualSOP _ givens _deriveds wanteds = do
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
       _  -> do
-        (unit_givens, _) <- partitionEithers . map toNatEquality <$> mapM zonkCt givens
-        tcPluginTrace "normalise wanteds" (ppr unit_wanteds)
-        tcPluginTrace "normalise givens" (ppr unit_givens)
-        return (TcPluginOk [] [])
-
-data Op = Add | Sub | Mul | Exp
-  deriving Eq
-
-data Expr
-  = Lit Integer
-  | Var TyVar
-  | Op Op Expr Expr
-  deriving Eq
-
-data Symbol
-  = I Integer
-  | V TyVar
-  | E SOP Product
-  deriving (Eq,Ord)
-
-newtype Product = P { unP :: [Symbol] }
-  deriving (Eq,Ord)
-
-newtype SOP = S { unS :: [Product] }
-  deriving (Eq,Ord)
-
-instance Outputable Expr where
-  ppr (Lit i) = integer i
-  ppr (Var v) = ppr v
-  ppr (Op op e1 e2) = parens (ppr e1) <+> parens (ppr e2)
-
-instance Outputable Op where
-  ppr Add = text "+"
-  ppr Sub = text "-"
-  ppr Mul = text "*"
-  ppr Exp = text "^"
-
-instance Outputable SOP where
-  ppr = hcat . punctuate (text " + ") . map ppr . unS
-
-instance Outputable Product where
-  ppr = hcat . punctuate (text " * ") . map ppr . unP
-
-instance Outputable Symbol where
-  ppr (I i)   = integer i
-  ppr (V s)   = ppr s
-  ppr (E b e) = case (pprSimple b, pprSimple (S [e])) of
-                  (bS,eS) -> bS <+> text "^" <+> eS
-    where
-      pprSimple (S [P [I i]]) = integer i
-      pprSimple (S [P [V v]]) = ppr v
-      pprSimple sop           = text "(" <+> ppr sop <+> text ")"
+        let (unit_givens, _) = partitionEithers $ map toNatEquality givens -- <$> mapM zonkCt givens
+        sr <- simplifyNats (unit_givens ++ unit_wanteds)
+        tcPluginTrace "normalised" (ppr sr)
+        case sr of
+          Simplified subst evs  -> TcPluginOk (filter (isWanted . ctEvidence . snd) evs)
+                                              <$> mapM substItemToCt (filter (isWanted . ctEvidence . siCt) subst)
+          Impossible (ct, u, v) -> return (TcPluginContradiction [ct])
 
 type NatEquality = (Ct,Expr,Expr)
 
 fromNatEquality :: NatEquality -> Ct
 fromNatEquality (ct, _, _) = ct
 
--- | A substitution is essentially a list of (variable, unit) pairs,
--- but we keep the original 'Ct' that lead to the substitution being
--- made, for use when turning the substitution back into constraints.
-type TySubst = [SubstItem]
+substItemToCt :: SubstItem -> TcPluginM Ct
+substItemToCt si
+    | isGiven (ctEvidence ct) = return $ mkNonCanonical $ CtGiven predicate (evByFiat "typelit_normalise" (ty1,ty2)) loc
+    | otherwise               = newSimpleWanted (ctLocOrigin loc) predicate
+  where
+    predicate = mkEqPred ty1 ty2
+    ty1       = mkTyVarTy (siVar si)
+    ty2       = reifyUnit (siUnit si)
+    ct        = siCt si
+    loc       = ctLoc ct
 
-data SubstItem = SubstItem { siVar    :: TyVar
-                           , siUnit   :: Expr
-                           , siCt     :: Ct
-                           }
-
-instance Outputable SubstItem where
-  ppr si = ppr (siVar si) <+> text " := " <+> ppr (siUnit si)
+evByFiat :: String -> (Type, Type) -> EvTerm
+evByFiat name (t1,t2) = EvCoercion $ TcCoercion $ mkUnivCo (fsLit name) Nominal t1 t2
 
 data SimplifyResult
-  = Simplified [TyVar] TySubst [(EvTerm,Ct)] [NatEquality]
-  | Impossible NatEquality [NatEquality]
+  = Simplified TySubst [(EvTerm,Ct)]
+  | Impossible NatEquality
 
 instance Outputable SimplifyResult where
-  ppr (Simplified tvs subst evs eqs) = text "Simplified" $$ ppr tvs $$ ppr subst $$ ppr evs $$ ppr eqs
-  ppr (Impossible eq eqs)            = text "Impossible" <+> ppr eq <+> ppr eqs
+  ppr (Simplified subst evs) = text "Simplified" $$ ppr subst $$ ppr evs
+  ppr (Impossible eq)        = text "Impossible" <+> ppr eq
+
+simplifyNats :: [NatEquality] -> TcPluginM SimplifyResult
+simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
+  where
+    simples :: TySubst -> [(EvTerm, Ct)] -> [NatEquality] -> [NatEquality] -> TcPluginM SimplifyResult
+    simples subst evs xs [] = return (Simplified subst evs)
+    simples subst evs xs (eq@(ct,u,v):eqs) = do
+      ur <- unifyNats ct (substsExpr subst u) (substsExpr subst v)
+      tcPluginTrace "unifyNats result" (ppr ur)
+      case ur of
+        Win subst'  -> simples (substsSubst subst' subst ++ subst')
+                               ((evMagic ct, ct):evs) [] (xs ++ eqs)
+        Lose        -> return  (Impossible eq)
+        Draw []     -> simples subst evs (eq:xs) eqs
+        Draw subst' -> simples (substsSubst subst' subst ++ subst') evs [eq] (xs ++ eqs)
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Either NatEquality Ct
@@ -164,3 +143,10 @@ tracePlugin s TcPlugin{..} = TcPlugin { tcPluginInit  = traceInit
           TcPluginContradiction bad -> tcPluginTrace ("tcPluginSolve contradiction " ++ s)
                                            (text "bad =" <+> ppr bad)
         return r
+
+newSimpleWanted :: CtOrigin -> PredType -> TcPluginM Ct
+newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
+
+evMagic :: Ct -> EvTerm
+evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
+    EqPred NomEq t1 t2 -> evByFiat "tylits_magic" (t1, t2)
