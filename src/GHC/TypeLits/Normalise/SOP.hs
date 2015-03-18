@@ -160,6 +160,28 @@ toSOP (Op Sub e1 e2) = mergeSOPAdd (toSOP e1) (mergeSOPMul (S [P [I (-1)]]) (toS
 toSOP (Op Mul e1 e2) = mergeSOPMul (toSOP e1) (toSOP e2)
 toSOP (Op Exp e1 e2) = expandExp   (toSOP e1) (toSOP e2)
 
+sopToExpr :: SOP -> Expr
+sopToExpr = combineP . map negateP . unS
+  where
+    negateP :: Product -> Either Product Product
+    negateP (P ((I i):ps)) | i < 0 = Left  (P ps)
+    negateP ps                     = Right ps
+
+    combineP :: [Either Product Product] -> Expr
+    combineP [p]    = either (Op Sub (Lit 0) . productToExpr) productToExpr p
+    combineP (p:ps) = let es = combineP ps
+                      in  either (\x -> Op Sub es (productToExpr x))
+                                 (\x -> Op Add (productToExpr x) es)
+                                 p
+
+productToExpr :: Product -> Expr
+productToExpr = foldr1 (Op Mul) . map symbolToExpr . unP
+
+symbolToExpr :: Symbol -> Expr
+symbolToExpr (I i)   = (Lit i)
+symbolToExpr (V v)   = (Var v)
+symbolToExpr (E s p) = Op Exp (sopToExpr s) (productToExpr p)
+
 zeroP :: Product -> Bool
 zeroP (P ((I 0):_)) = True
 zeroP _             = False

@@ -47,7 +47,7 @@ decideEqualSOP _ givens _deriveds wanteds = do
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
       _  -> do
-        let (unit_givens, _) = partitionEithers $ map toNatEquality givens -- <$> mapM zonkCt givens
+        (unit_givens, _) <- partitionEithers . map toNatEquality <$> mapM zonkCt givens
         sr <- simplifyNats (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
@@ -91,8 +91,7 @@ simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eq
       ur <- unifyNats ct (substsExpr subst u) (substsExpr subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
-        Win subst'  -> simples (substsSubst subst' subst ++ subst')
-                               ((evMagic ct, ct):evs) [] (xs ++ eqs)
+        Win         -> simples subst ((evMagic ct,ct):evs) [] (xs ++ eqs)
         Lose        -> return  (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs
         Draw subst' -> simples (substsSubst subst' subst ++ subst') evs [eq] (xs ++ eqs)

@@ -2,14 +2,14 @@ module GHC.TypeLits.Normalise.Unify where
 
 -- External
 import Data.Function (on)
-import Data.List ((\\))
+import Data.List ((\\),intersect)
 
 -- GHC API
 import TcRnMonad
 import Type
 import Outputable
 import TcPluginM
-import UniqSet       ( UniqSet, emptyUniqSet, unionUniqSets, unitUniqSet)
+import UniqSet       ( UniqSet, emptyUniqSet, unionUniqSets, unitUniqSet, unionManyUniqSets)
 
 -- Internal
 import GHC.TypeLits.Normalise.SOP
@@ -42,49 +42,50 @@ substExpr tv e (Op o e1 e2) = Op o (substExpr tv e e1) (substExpr tv e e2)
 substsSubst :: TySubst -> TySubst -> TySubst
 substsSubst s = map (\si -> si {siUnit = substsExpr s (siUnit si)})
 
-data UnifyResult = Win TySubst | Lose | Draw TySubst
+data UnifyResult = Win | Lose | Draw TySubst
 
 instance Outputable UnifyResult where
-  ppr (Win  subst) = text "Win"  <+> ppr subst
+  ppr Win          = text "Win"
   ppr (Draw subst) = text "Draw" <+> ppr subst
   ppr Lose         = text "Lose"
 
+
 unifyNats :: Ct -> Expr -> Expr -> TcPluginM UnifyResult
-unifyNats ct u0 v0 = do tcPluginTrace "unifyNats" (ppr ct $$ ppr u0 $$ ppr v0)
-                        return (unifyNats' ct u0 v0)
+unifyNats ct u v = do
+  tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
+  unifyNats' ct (toSOP u) (toSOP v)
 
-unifyNats' :: Ct -> Expr -> Expr -> UnifyResult
-unifyNats' ct u0 v0
-    | eqFV u0 v0 = if uS == vS then (Win su)
-                               else Lose
-    | otherwise  = Draw su
+unifyNats' :: Ct -> SOP -> SOP -> TcPluginM UnifyResult
+unifyNats' ct u v
+    | eqFV u v  = if u == v then return Win else return Lose
+    | otherwise = Draw <$> subst
   where
-    uS = toSOP u0
-    vS = toSOP v0
-    su | isGiven (ctEvidence ct) = injective ct u0 v0
-       | otherwise               = []
+    subst | isGiven (ctEvidence ct) = unifiers ct u v
+          | otherwise               = pure []
 
-injective ct u0 (Var v0) = [SubstItem v0 u0 ct]
-injective ct (Var u0) v0 = [SubstItem u0 v0 ct]
-injective ct (Op op1 u1 u2) (Op op2 v1 v2)
-  | op1 == op2
-  , [u0] <- toVar u1 ++ toVar u2
-  , [v0] <- toVar v1 ++ toVar v2
-  = [SubstItem u0 (Var v0) ct]
-injective _ _ _ = []
+unifiers :: Ct -> SOP -> SOP -> TcPluginM TySubst
+unifiers ct (S [P [V x]]) (S [P [V y]]) = return [SubstItem x (Var y) ct]
+unifiers ct (S [P [V x]]) (S [])        = return [SubstItem x (Lit 0) ct]
+unifiers ct (S [])        (S [P [V x]]) = return [SubstItem x (Lit 0) ct]
+unifiers ct (S [P [V x]]) s             = return [SubstItem x (sopToExpr s) ct]
+unifiers ct s             (S [P [V x]]) = return [SubstItem x (sopToExpr s) ct]
+unifiers ct (S ps1)       (S ps2)
+    | null psx  = return []
+    | otherwise = unifiers ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
+  where
+    psx = intersect ps1 ps2
 
-toVar (Var v)      = [v]
-toVar (Lit _)      = []
-toVar (Op _ e1 e2) = toVar e1 ++ toVar e2
 
-isConstant (Var _)      = False
-isConstant (Lit _)      = True
-isConstant (Op _ e1 e2) = isConstant e1 && isConstant e2
+fvSOP :: SOP -> UniqSet TyVar
+fvSOP = unionManyUniqSets . map fvProduct . unS
 
-fvExpr :: Expr -> UniqSet TyVar
-fvExpr (Lit _)      = emptyUniqSet
-fvExpr (Var v)      = unitUniqSet v
-fvExpr (Op _ e1 e2) = fvExpr e1 `unionUniqSets` fvExpr e2
+fvProduct :: Product -> UniqSet TyVar
+fvProduct = unionManyUniqSets . map fvSymbol . unP
 
-eqFV :: Expr -> Expr -> Bool
-eqFV = (==) `on` fvExpr
+fvSymbol :: Symbol -> UniqSet TyVar
+fvSymbol (I i)   = emptyUniqSet
+fvSymbol (V v)   = unitUniqSet v
+fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
+
+eqFV :: SOP -> SOP -> Bool
+eqFV = (==) `on` fvSOP
