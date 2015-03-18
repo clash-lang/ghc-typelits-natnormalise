@@ -121,7 +121,7 @@ shiftInAtN xs ys = (zsR, zsL)
 
 concat :: Vec n (Vec m a) -> Vec (n * m) a
 concat Nil       = Nil
-concat (x :> xs) = (x ++ (concat xs))
+concat (x :> xs) = x ++ concat xs
 
 unconcat :: KnownNat n => SNat m -> Vec (n * m) a -> Vec n (Vec m a)
 unconcat n xs = unconcatU (withSNat toUNat) (toUNat n) xs

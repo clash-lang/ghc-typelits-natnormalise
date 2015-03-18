@@ -11,15 +11,6 @@ import TypeRep
 import TysWiredIn
 import TcTypeNats
 
-data Op = Add | Sub | Mul | Exp
-  deriving Eq
-
-data Expr
-  = Lit Integer
-  | Var TyVar
-  | Op Op Expr Expr
-  deriving Eq
-
 data Symbol
   = I Integer
   | V TyVar
@@ -31,17 +22,6 @@ newtype Product = P { unP :: [Symbol] }
 
 newtype SOP = S { unS :: [Product] }
   deriving (Eq,Ord)
-
-instance Outputable Expr where
-  ppr (Lit i) = integer i
-  ppr (Var v) = ppr v
-  ppr (Op op e1 e2) = parens (ppr e1) <+> parens (ppr e2)
-
-instance Outputable Op where
-  ppr Add = text "+"
-  ppr Sub = text "-"
-  ppr Mul = text "*"
-  ppr Exp = text "^"
 
 instance Outputable SOP where
   ppr = hcat . punctuate (text " + ") . map ppr . unS
@@ -58,17 +38,6 @@ instance Outputable Symbol where
       pprSimple (S [P [I i]]) = integer i
       pprSimple (S [P [V v]]) = ppr v
       pprSimple sop           = text "(" <+> ppr sop <+> text ")"
-
-
-reifyUnit :: Expr -> Type
-reifyUnit (Lit i)  = mkNumLitTy i
-reifyUnit (Var tv) = mkTyVarTy  tv
-reifyUnit (Op op e1 e2) = mkTyConApp (tc op) [reifyUnit e1, reifyUnit e2]
-  where
-    tc Add = typeNatAddTyCon
-    tc Sub = typeNatSubTyCon
-    tc Mul = typeNatMulTyCon
-    tc Exp = typeNatExpTyCon
 
 mergeWith :: (a -> a -> Either a a) -> [a] -> [a]
 mergeWith _ []      = []
@@ -152,35 +121,40 @@ expandExp b (S [e@(P [_])]) = S [P [reduceSymbol (E b e)]]
 -- (x + 2)^(x + 2) ==> (x + y)^y + x^2 + 4xy + 4
 expandExp b (S e) = foldr1 mergeSOPMul (map (expandExp b . S . (:[])) e)
 
-toSOP :: Expr -> SOP
-toSOP (Lit i)        = S [P [I i]]
-toSOP (Var s)        = S [P [V s]]
-toSOP (Op Add e1 e2) = mergeSOPAdd (toSOP e1) (toSOP e2)
-toSOP (Op Sub e1 e2) = mergeSOPAdd (toSOP e1) (mergeSOPMul (S [P [I (-1)]]) (toSOP e2))
-toSOP (Op Mul e1 e2) = mergeSOPMul (toSOP e1) (toSOP e2)
-toSOP (Op Exp e1 e2) = expandExp   (toSOP e1) (toSOP e2)
+normaliseNat :: Type -> Maybe SOP
+normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
+normaliseNat (TyVarTy v)          = pure (S [P [V v]])
+normaliseNat (LitTy (NumTyLit i)) = pure (S [P [I i]])
+normaliseNat (TyConApp tc tys)
+  | tc == typeNatAddTyCon, [x,y] <- tys = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatSubTyCon, [x,y] <- tys = mergeSOPAdd <$> normaliseNat x <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
+  | tc == typeNatMulTyCon, [x,y] <- tys = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatExpTyCon, [x,y] <- tys = expandExp   <$> normaliseNat x <*> normaliseNat y
+  | otherwise                           = Nothing
 
-sopToExpr :: SOP -> Expr
-sopToExpr = combineP . map negateP . unS
+reifySOP :: SOP -> Type
+reifySOP = combineP . map negateP . unS
   where
     negateP :: Product -> Either Product Product
     negateP (P ((I i):ps)) | i < 0 = Left  (P ps)
     negateP ps                     = Right ps
 
-    combineP :: [Either Product Product] -> Expr
-    combineP [p]    = either (Op Sub (Lit 0) . productToExpr) productToExpr p
+    combineP :: [Either Product Product] -> Type
+    combineP [p]    = either (\p' -> mkTyConApp typeNatSubTyCon
+                                                [mkNumLitTy 0, reifyProduct p'])
+                             reifyProduct p
     combineP (p:ps) = let es = combineP ps
-                      in  either (\x -> Op Sub es (productToExpr x))
-                                 (\x -> Op Add (productToExpr x) es)
+                      in  either (\x -> mkTyConApp typeNatSubTyCon [es, reifyProduct x])
+                                 (\x -> mkTyConApp typeNatAddTyCon [reifyProduct x, es])
                                  p
 
-productToExpr :: Product -> Expr
-productToExpr = foldr1 (Op Mul) . map symbolToExpr . unP
+reifyProduct :: Product -> Type
+reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2]) . map reifySymbol . unP
 
-symbolToExpr :: Symbol -> Expr
-symbolToExpr (I i)   = (Lit i)
-symbolToExpr (V v)   = (Var v)
-symbolToExpr (E s p) = Op Exp (sopToExpr s) (productToExpr p)
+reifySymbol :: Symbol -> Type
+reifySymbol (I i)   = mkNumLitTy i
+reifySymbol (V v)   = mkTyVarTy v
+reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
 
 zeroP :: Product -> Bool
 zeroP (P ((I 0):_)) = True

@@ -20,27 +20,33 @@ import GHC.TypeLits.Normalise.SOP
 type TySubst = [SubstItem]
 
 data SubstItem = SubstItem { siVar    :: TyVar
-                           , siUnit   :: Expr
+                           , siSOP   :: SOP
                            , siCt     :: Ct
                            }
 
 instance Outputable SubstItem where
-  ppr si = ppr (siVar si) <+> text " := " <+> ppr (siUnit si)
+  ppr si = ppr (siVar si) <+> text " := " <+> ppr (siSOP si)
 
 -- | Apply a substitution to a single normalised expr
-substsExpr :: TySubst -> Expr -> Expr
-substsExpr []     u = u
-substsExpr (si:s) u = substsExpr s (substExpr (siVar si) (siUnit si) u)
+substsSOP :: TySubst -> SOP -> SOP
+substsSOP []     u = u
+substsSOP (si:s) u = substsSOP s (substSOP (siVar si) (siSOP si) u)
 
-substExpr :: TyVar -> Expr -> Expr -> Expr
-substExpr _ _  (Lit i)      = Lit i
-substExpr tv e (Var tv')
-  | tv == tv'               = e
-  | otherwise               = Var tv'
-substExpr tv e (Op o e1 e2) = Op o (substExpr tv e e1) (substExpr tv e e2)
+substSOP :: TyVar -> SOP -> SOP -> SOP
+substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
+
+substProduct :: TyVar -> SOP -> Product -> SOP
+substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
+
+substSymbol :: TyVar -> SOP -> Symbol -> SOP
+substSymbol _ _ (I i)    = S [P [I i]]
+substSymbol tv e (V tv')
+  | tv == tv'            = e
+  | otherwise            = S [P [V tv']]
+substSymbol tv e (E s p) = expandExp (substSOP tv e s) (substProduct tv e p)
 
 substsSubst :: TySubst -> TySubst -> TySubst
-substsSubst s = map (\si -> si {siUnit = substsExpr s (siUnit si)})
+substsSubst s = map (\si -> si {siSOP = substsSOP s (siSOP si)})
 
 data UnifyResult = Win | Lose | Draw TySubst
 
@@ -50,10 +56,10 @@ instance Outputable UnifyResult where
   ppr Lose         = text "Lose"
 
 
-unifyNats :: Ct -> Expr -> Expr -> TcPluginM UnifyResult
+unifyNats :: Ct -> SOP -> SOP -> TcPluginM UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
-  unifyNats' ct (toSOP u) (toSOP v)
+  unifyNats' ct u v
 
 unifyNats' :: Ct -> SOP -> SOP -> TcPluginM UnifyResult
 unifyNats' ct u v
@@ -64,11 +70,10 @@ unifyNats' ct u v
           | otherwise               = pure []
 
 unifiers :: Ct -> SOP -> SOP -> TcPluginM TySubst
-unifiers ct (S [P [V x]]) (S [P [V y]]) = return [SubstItem x (Var y) ct]
-unifiers ct (S [P [V x]]) (S [])        = return [SubstItem x (Lit 0) ct]
-unifiers ct (S [])        (S [P [V x]]) = return [SubstItem x (Lit 0) ct]
-unifiers ct (S [P [V x]]) s             = return [SubstItem x (sopToExpr s) ct]
-unifiers ct s             (S [P [V x]]) = return [SubstItem x (sopToExpr s) ct]
+unifiers ct (S [P [V x]]) (S [])        = return [SubstItem x (S [P [I 0]]) ct]
+unifiers ct (S [])        (S [P [V x]]) = return [SubstItem x (S [P [I 0]]) ct]
+unifiers ct (S [P [V x]]) s             = return [SubstItem x s     ct]
+unifiers ct s             (S [P [V x]]) = return [SubstItem x s     ct]
 unifiers ct (S ps1)       (S ps2)
     | null psx  = return []
     | otherwise = unifiers ct (S (ps1 \\ psx)) (S (ps2 \\ psx))

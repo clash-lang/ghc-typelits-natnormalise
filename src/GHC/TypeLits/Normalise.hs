@@ -55,7 +55,7 @@ decideEqualSOP _ givens _deriveds wanteds = do
                                               <$> mapM substItemToCt (filter (isWanted . ctEvidence . siCt) subst)
           Impossible (ct, u, v) -> return (TcPluginContradiction [ct])
 
-type NatEquality = (Ct,Expr,Expr)
+type NatEquality = (Ct,SOP,SOP)
 
 fromNatEquality :: NatEquality -> Ct
 fromNatEquality (ct, _, _) = ct
@@ -67,7 +67,7 @@ substItemToCt si
   where
     predicate = mkEqPred ty1 ty2
     ty1       = mkTyVarTy (siVar si)
-    ty2       = reifyUnit (siUnit si)
+    ty2       = reifySOP (siSOP si)
     ct        = siCt si
     loc       = ctLoc ct
 
@@ -88,7 +88,7 @@ simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eq
     simples :: TySubst -> [(EvTerm, Ct)] -> [NatEquality] -> [NatEquality] -> TcPluginM SimplifyResult
     simples subst evs xs [] = return (Simplified subst evs)
     simples subst evs xs (eq@(ct,u,v):eqs) = do
-      ur <- unifyNats ct (substsExpr subst u) (substsExpr subst v)
+      ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win         -> simples subst ((evMagic ct,ct):evs) [] (xs ++ eqs)
@@ -107,17 +107,6 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
 
 isNatKind :: Kind -> Bool
 isNatKind = (== typeNatKind)
-
-normaliseNat :: Type -> Maybe Expr
-normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = pure (Var v)
-normaliseNat (LitTy (NumTyLit i)) = pure (Lit i)
-normaliseNat (TyConApp tc tys)
-  | tc == typeNatAddTyCon, [x,y] <- tys = Op Add <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon, [x,y] <- tys = Op Sub <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatMulTyCon, [x,y] <- tys = Op Mul <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon, [x,y] <- tys = Op Exp <$> normaliseNat x <*> normaliseNat y
-  | otherwise                           = Nothing
 
 -- Utils
 tracePlugin :: String -> TcPlugin -> TcPlugin
