@@ -1,4 +1,4 @@
-name:                ghc-tylits-natnormalise
+name:                ghc-typelits-natnormalise
 version:             0.1.0.0
 synopsis:            GHC typechecker plugin that normalises types of kind
                      GHC.TypeLits.Nat
