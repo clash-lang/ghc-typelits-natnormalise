@@ -1,33 +1,26 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections #-}
 module GHC.TypeLits.Normalise
   ( plugin )
 where
 
--- normal
-import Data.Either
-import Data.Maybe
+-- external
+import Data.Maybe (catMaybes, mapMaybe)
 
 -- GHC API
-import FastString
-import Coercion
-import Outputable
-import Plugins
+import FastString (fsLit)
+import Coercion   (Role (Nominal), mkUnivCo)
+import Outputable (Outputable (..), (<+>), ($$), text)
+import Plugins    (Plugin (..), defaultPlugin)
 
-import TcEvidence
-import TcPluginM
-import TcRnTypes
-import TcType
+import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
+import TcPluginM  (TcPluginM, tcPluginTrace, zonkCt)
+import TcRnTypes  (Ct, TcPlugin(..), TcPluginResult(..), ctEvidence, ctEvPred, isWanted)
+import TcType     (typeKind)
 
-import TcTypeNats
+import Type       (EqRel (NomEq), Kind, PredTree (EqPred), Type, classifyPredType)
+import TysWiredIn (typeNatKind)
 
-import Type
-import TyCon
-import TypeRep
-import TysWiredIn
-
-import qualified TcMType
-
--- local
+-- internal
 import GHC.TypeLits.Normalise.SOP
 import GHC.TypeLits.Normalise.Unify
 
@@ -42,34 +35,23 @@ normalisePlugin =
            }
 
 decideEqualSOP :: () -> [Ct] -> [Ct] -> [Ct] -> TcPluginM TcPluginResult
-decideEqualSOP _ givens _deriveds []      = return (TcPluginOk [] [])
-decideEqualSOP _ givens _deriveds wanteds = do
-    let (unit_wanteds, _) = partitionEithers $ map toNatEquality wanteds
+decideEqualSOP _ _givens _deriveds []      = return (TcPluginOk [] [])
+decideEqualSOP _ givens  _deriveds wanteds = do
+    let unit_wanteds = mapMaybe toNatEquality wanteds
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
       _  -> do
-        (unit_givens, _) <- partitionEithers . map toNatEquality <$> mapM zonkCt givens
+        unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
         sr <- simplifyNats (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
-          Simplified evs        -> return (TcPluginOk (filter (isWanted . ctEvidence . snd) evs) [])
-          Impossible (ct, u, v) -> return (TcPluginContradiction [ct])
+          Simplified evs -> return (TcPluginOk (filter (isWanted . ctEvidence . snd) evs) [])
+          Impossible eq  -> return (TcPluginContradiction [fromNatEquality eq])
 
 type NatEquality = (Ct,SOP,SOP)
 
 fromNatEquality :: NatEquality -> Ct
 fromNatEquality (ct, _, _) = ct
-
-substItemToCt :: SubstItem -> TcPluginM Ct
-substItemToCt si
-    | isGiven (ctEvidence ct) = return $ mkNonCanonical $ CtGiven predicate (evByFiat "typelit_normalise" (ty1,ty2)) loc
-    | otherwise               = newSimpleWanted (ctLocOrigin loc) predicate
-  where
-    predicate = mkEqPred ty1 ty2
-    ty1       = mkTyVarTy (siVar si)
-    ty2       = reifySOP (siSOP si)
-    ct        = siCt si
-    loc       = ctLoc ct
 
 data SimplifyResult
   = Simplified [(EvTerm,Ct)]
@@ -83,32 +65,28 @@ simplifyNats :: [NatEquality] -> TcPluginM SimplifyResult
 simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
     simples :: TySubst -> [Maybe (EvTerm, Ct)] -> [NatEquality] -> [NatEquality] -> TcPluginM SimplifyResult
-    simples subst evs xs [] = return (Simplified (catMaybes evs))
-    simples subst evs xs (eq@(ct,u,v):eqs) = do
+    simples _subst evs _xs [] = return (Simplified (catMaybes evs))
+    simples subst evs xs (eq@(ct,u,v):eqs') = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
-        Win         -> simples subst (((,) <$> evMagic ct <*> pure ct):evs) [] (xs ++ eqs)
+        Win         -> simples subst (((,) <$> evMagic ct <*> pure ct):evs) [] (xs ++ eqs')
         Lose        -> return  (Impossible eq)
-        Draw []     -> simples subst evs (eq:xs) eqs
-        Draw subst' -> simples (substsSubst subst' subst ++ subst') evs [eq] (xs ++ eqs)
+        Draw []     -> simples subst evs (eq:xs) eqs'
+        Draw subst' -> simples (substsSubst subst' subst ++ subst') evs [eq] (xs ++ eqs')
 
 -- Extract the Nat equality constraints
-toNatEquality :: Ct -> Either NatEquality Ct
+toNatEquality :: Ct -> Maybe NatEquality
 toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2
       | isNatKind (typeKind t1) || isNatKind (typeKind t1)
-      , Just u1 <- normaliseNat t1
-      , Just u2 <- normaliseNat t2 -> Left (ct, u1, u2)
-    _                              -> Right ct
+      -> (ct,,) <$> normaliseNat t1 <*> normaliseNat t2
+    _ -> Nothing
   where
     isNatKind :: Kind -> Bool
     isNatKind = (== typeNatKind)
 
 -- Utils
-newSimpleWanted :: CtOrigin -> PredType -> TcPluginM Ct
-newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
-
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 -> Just (evByFiat "tylits_magic" (t1, t2))

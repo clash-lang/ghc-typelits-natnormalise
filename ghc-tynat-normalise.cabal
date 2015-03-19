@@ -1,6 +1,7 @@
-name:                ghc-tynat-normalise
+name:                ghc-tylits-natnormalise
 version:             0.1.0.0
-synopsis:            GHC typechecker plugin for GHC.TypeLits.Nat
+synopsis:            GHC typechecker plugin that normalises types of kind
+                     GHC.TypeLits.Nat
 -- description:
 homepage:            http://www.clash-lang.org/
 license:             BSD2
@@ -22,6 +23,7 @@ library
                        ghc  >=7.10
   hs-source-dirs:      src
   default-language:    Haskell2010
+  ghc-options:         -Wall -fwarn-tabs
 
 test-suite test-ghc-tynat-normalise
   type:                exitcode-stdio-1.0

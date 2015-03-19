@@ -2,14 +2,15 @@ module GHC.TypeLits.Normalise.Unify where
 
 -- External
 import Data.Function (on)
-import Data.List ((\\),intersect)
+import Data.List     ((\\), intersect)
 
 -- GHC API
-import TcRnMonad
-import Type
-import Outputable
-import TcPluginM
-import UniqSet       ( UniqSet, emptyUniqSet, unionUniqSets, unitUniqSet, unionManyUniqSets)
+import TcRnMonad     (Ct, ctEvidence, isGiven)
+import Type          (TyVar)
+import Outputable    (Outputable (..), (<+>), ($$), text)
+import TcPluginM     (TcPluginM, tcPluginTrace)
+import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
+                      unitUniqSet)
 
 -- Internal
 import GHC.TypeLits.Normalise.SOP
