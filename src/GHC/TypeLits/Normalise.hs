@@ -24,7 +24,7 @@ import TcPluginM  (TcPluginM, tcPluginTrace, unsafeTcPluginTcM, zonkCt)
 import qualified  TcMType
 import TcRnTypes  (Ct, CtEvidence (..), CtOrigin, TcPlugin(..),
                    TcPluginResult(..), ctEvidence, ctEvPred,
-                   ctLoc, ctLocOrigin, isGiven, isWanted mkNonCanonical)
+                   ctLoc, ctLocOrigin, isGiven, isWanted, mkNonCanonical)
 import TcType     (mkEqPred, typeKind)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
                    TyVar, classifyPredType, mkTyVarTy)

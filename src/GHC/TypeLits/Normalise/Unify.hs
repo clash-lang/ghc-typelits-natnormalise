@@ -12,7 +12,7 @@ import Data.List     ((\\), intersect)
 -- GHC API
 import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
-import TcRnMonad     (Ct)
+import TcRnMonad     (Ct, ctEvidence, isGiven)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon)
 import Type          (TyVar, mkNumLitTy, mkTyConApp, mkTyVarTy, tcView)
@@ -121,14 +121,24 @@ unifyNats' ct u v
     | eqFV u v  = if u == v then Win else Lose
     | otherwise = Draw (unifiers ct u v)
 
+
 unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
-unifiers ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
-unifiers ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
-unifiers ct (S [P [V x]]) s             = [SubstItem x s     ct]
-unifiers ct s             (S [P [V x]]) = [SubstItem x s     ct]
-unifiers ct (S ps1)       (S ps2)
+unifiers ct (S [P [V x]]) s
+  | isGiven (ctEvidence ct) = [SubstItem x s     ct]
+  | otherwise               = []
+unifiers ct s (S [P [V x]])
+  | isGiven (ctEvidence ct) = [SubstItem x s     ct]
+  | otherwise               = []
+unifiers ct u v             = unifiers' ct u v
+
+unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
+unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
+unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
+unifiers' ct (S [P [V x]]) s             = [SubstItem x s     ct]
+unifiers' ct s             (S [P [V x]]) = [SubstItem x s     ct]
+unifiers' ct (S ps1)       (S ps2)
     | null psx  = []
-    | otherwise = unifiers ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
+    | otherwise = unifiers' ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
   where
     psx = intersect ps1 ps2
 
