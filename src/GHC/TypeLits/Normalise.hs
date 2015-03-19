@@ -2,6 +2,11 @@
 
 {-# OPTIONS_HADDOCK show-extensions #-}
 
+{-|
+Copyright  :  (C) 2015, University of Twente
+License    :  BSD2 (see the file LICENSE)
+Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
+-}
 module GHC.TypeLits.Normalise
   ( plugin )
 where
