@@ -3,7 +3,25 @@ Copyright  :  (C) 2015, University of Twente
 License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
-module GHC.TypeLits.Normalise.Unify where
+module GHC.TypeLits.Normalise.Unify
+  ( -- * Nat expressions \<-\> SOP terms
+    CoreSOP
+  , normaliseNat
+  , reifySOP
+    -- * Substitution on SOP terms
+  , SubstItem (..)
+  , TySubst
+  , CoreSubst
+  , substsSOP
+  , substsSubst
+    -- * Find unifiers
+  , UnifyResult (..)
+  , unifyNats
+  , unifiers
+    -- * Free variables in SOP terms
+  , fvSOP
+  )
+where
 
 -- External
 import Data.Function (on)
@@ -23,10 +41,17 @@ import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
 -- Internal
 import GHC.TypeLits.Normalise.SOP
 
+-- | 'SOP' with 'TyVar' variables
 type CoreSOP     = SOP TyVar
 type CoreProduct = Product TyVar
 type CoreSymbol  = Symbol TyVar
 
+-- | Convert a type of /kind/ 'GHC.TypeLits.Nat' to an 'SOP' term, but
+-- only when the type is constructed out of:
+--
+-- * literals
+-- * type variables
+-- * Applications of the arithmetic operators @(+,-,*,^)@
 normaliseNat :: Type -> Maybe CoreSOP
 normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
 normaliseNat (TyVarTy v)          = pure (S [P [V v]])
@@ -41,6 +66,7 @@ normaliseNat (TyConApp tc [x,y])
   | otherwise             = Nothing
 normaliseNat _ = Nothing
 
+-- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
 reifySOP = combineP . map negateP . unS
   where
@@ -69,7 +95,7 @@ reifySymbol (I i)   = mkNumLitTy i
 reifySymbol (V v)   = mkTyVarTy v
 reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
 
--- | A substitution is essentially a list of (variable, unit) pairs,
+-- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
 type CoreSubst   = TySubst TyVar Ct
@@ -83,7 +109,7 @@ data SubstItem a b = SubstItem { siVar  :: a
 instance Outputable a => Outputable (SubstItem a b) where
   ppr si = ppr (siVar si) <+> text " := " <+> ppr (siSOP si)
 
--- | Apply a substitution to a single normalised expr
+-- | Apply a substitution to a single normalised 'SOP' term
 substsSOP :: (Eq a, Ord a) => TySubst a b -> SOP a -> SOP a
 substsSOP []     u = u
 substsSOP (si:s) u = substsSOP s (substSOP (siVar si) (siSOP si) u)
@@ -101,16 +127,27 @@ substSymbol tv e (V tv')
   | otherwise            = S [P [V tv']]
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
+-- | Apply a substitution to a substitution
 substsSubst :: (Eq a, Ord a) => TySubst a b -> TySubst a b -> TySubst a b
 substsSubst s = map (\si -> si {siSOP = substsSOP s (siSOP si)})
 
-data UnifyResult = Win | Lose | Draw CoreSubst
+-- | Result of comparing two 'SOP' terms, returning a potential substitution
+-- list under which the two terms are equal.
+data UnifyResult
+  = Win            -- ^ Two terms are equal
+  | Lose           -- ^ Two terms are /not/ equal
+  | Draw CoreSubst -- ^ Two terms are only equal if the given substitution holds
 
 instance Outputable UnifyResult where
   ppr Win          = text "Win"
   ppr (Draw subst) = text "Draw" <+> ppr subst
   ppr Lose         = text "Lose"
 
+-- | Given two 'SOP's @u@ and @v@, when their free variables ('fvSOP') are the
+-- same, then we 'Win' if @u@ and @v@ are equal, and 'Lose' otherwise.
+--
+-- If @u@ and @v@ do not have the same free variables, we result in a 'Draw',
+-- ware @u@ and @v@ are only equal when the returned 'CoreSubst' holds.
 unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
@@ -121,7 +158,37 @@ unifyNats' ct u v
     | eqFV u v  = if u == v then Win else Lose
     | otherwise = Draw (unifiers ct u v)
 
-
+-- | Find unifiers for two SOP terms
+--
+-- Can find the following unifiers:
+--
+-- @
+-- t ~ a + b          ==>  [t := a + b]
+-- a + b ~ t          ==>  [t := a + b]
+-- (a + c) ~ (b + c)  ==>  \[a := b\]
+-- (2*a) ~ (2*b)      ==>  [a := b]
+-- @
+--
+-- However, given a wanted:
+--
+-- @
+-- [W] t ~ a + b
+-- @
+--
+-- this function returns @[]@, or otherwise we \"solve\" the contstraint by
+-- finding a unifier equal to the constraint.
+--
+-- However, given a wanted:
+--
+-- @
+-- [W] (a + c) ~ (b + c)
+-- @
+--
+-- we do return the unifier:
+--
+-- @
+-- [a := b]
+-- @
 unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
 unifiers ct (S [P [V x]]) s
   | isGiven (ctEvidence ct) = [SubstItem x s     ct]
@@ -145,7 +212,7 @@ unifiers' ct (S ps1)       (S ps2)
   where
     psx = intersect ps1 ps2
 
-
+-- | Find the 'TyVar' in a 'CoreSOP'
 fvSOP :: CoreSOP -> UniqSet TyVar
 fvSOP = unionManyUniqSets . map fvProduct . unS
 

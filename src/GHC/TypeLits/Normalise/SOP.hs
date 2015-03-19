@@ -2,8 +2,90 @@
 Copyright  :  (C) 2015, University of Twente
 License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
+
+= SOP: Sum-of-Products, sorta
+
+The arithmetic operation for 'GHC.TypeLits.Nat' are, addition
+(@'GHC.TypeLits.+'@), subtraction (@'GHC.TypeLits.-'@), multiplication
+(@'GHC.TypeLits.*'@), and exponentiation (@'GHC.TypeLits.^'@). This means we
+cannot write expressions in a canonical SOP normal form. We can get rid of
+subtraction by working with integers, and translating @a - b@ to @a + (-1)*b@.
+Exponentation cannot be getten rid of that way. So we define the following
+grammar for our canonical SOP-like normal form of arithmetic expressions:
+
+@
+SOP      ::= Product \'+\' SOP | Product
+Product  ::= Symbol \'*\' Product | Symbol
+Symbol   ::= Integer
+          |  Var
+          |  Var \'^\' Product
+          |  SOP \'^\' ProductE
+
+ProductE ::= SymbolE \'*\' ProductE | SymbolE
+SymbolE  ::= Var
+          |  Var \'^\' Product
+          |  SOP \'^\' ProductE
+@
+
+So a valid SOP terms are:
+
+@
+x*y + y^2
+(x+y)^(k*z)
+@
+
+, but,
+
+@
+(x*y)^2
+@
+
+is not, and should be:
+
+@
+x^2 * y^2
+@
+
+Exponents are thus not allowed to have products, so for example, the expression:
+
+@
+(x + 2)^(y + 2)
+@
+
+in valid SOP form is:
+
+@
+4*x*(2 + x)^y + 4*(2 + x)^y + (2 + x)^y*x^2
+@
+
+Also, exponents can only be integer values when the base is a variable. Although
+not enforced by the grammar, the exponentials are flatted as far as possible in
+SOP form. So:
+
+@
+(x^y)^z
+@
+
+is flattened to:
+
+@
+x^(y*z)
+@
 -}
-module GHC.TypeLits.Normalise.SOP where
+module GHC.TypeLits.Normalise.SOP
+  ( -- * SOP types
+    Symbol (..)
+  , Product (..)
+  , SOP (..)
+    -- * Simplification
+  , reduceExp
+  , mergeS
+  , mergeP
+  , mergeSOPAdd
+  , mergeSOPMul
+  , normaliseExp
+  )
+where
 
 -- External
 import Data.Either (partitionEithers)
@@ -46,7 +128,16 @@ mergeWith op (f:fs) = case partitionEithers $ map (`op` f) fs of
                         ([],_)              -> f : mergeWith op fs
                         (updated,untouched) -> mergeWith op (updated ++ untouched)
 
--- | Simplify 'complex' exponentials
+-- | reduce exponentials
+--
+-- Performs the following rewrites:
+--
+-- @
+-- x^0          ==>  1
+-- 0^x          ==>  0
+-- 2^3          ==>  8
+-- (k ^ i) ^ j  ==>  k ^ (i * j)
+-- @
 reduceExp :: (Eq a, Ord a) => Symbol a -> Symbol a
 reduceExp (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
 reduceExp (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
@@ -62,6 +153,19 @@ reduceExp (E (S [P [(E k i)]]) j) = case normaliseExp k (S [e]) of
 reduceExp s = s
 
 -- | Merge two symbols of a Product term
+--
+-- Performs the following rewrites:
+--
+-- @
+-- 8 * 7    ==>  56
+-- 1 * x    ==>  x
+-- x * 1    ==>  x
+-- 0 * x    ==>  0
+-- x * 0    ==>  0
+-- x * x^4  ==>  x^5
+-- x^4 * x  ==>  x^5
+-- y*y      ==>  y^2
+-- @
 mergeS :: (Eq a, Ord a) => Symbol a -> Symbol a -> Either (Symbol a) (Symbol a)
 mergeS (I i) (I j) = Left (I (i * j)) -- 8 * 7 ==> 56
 mergeS (I 1) r     = Left r           -- 1 * x ==> x
@@ -89,6 +193,15 @@ mergeS l r
 mergeS l _ = Right l
 
 -- | Merge two products of a SOP term
+--
+-- Performs the following rewrites:
+--
+-- @
+-- 2xy + 3xy  ==>  5xy
+-- 2xy + xy   ==>  3xy
+-- xy + 2xy   ==>  3xy
+-- xy + xy    ==>  2xy
+-- @
 mergeP :: (Eq a, Ord a) => Product a -> Product a
        -> Either (Product a) (Product a)
 -- 2xy + 3xy ==> 5xy
@@ -106,6 +219,16 @@ mergeP (P is) (P js)
   | otherwise = Right $ P is
 
 -- | Expand or Simplify 'complex' exponentials
+--
+-- Performs the following rewrites:
+--
+-- @
+-- b^1              ==>  b
+-- 2^(y^2)          ==>  4^y
+-- (x + 2)^2        ==>  x^2 + 4xy + 4
+-- (x + 2)^(2x)     ==>  (x^2 + 4xy + 4)^x
+-- (x + 2)^(y + 2)  ==>  4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
+-- @
 normaliseExp :: Ord a => SOP a -> SOP a -> SOP a
 -- b^1 ==> b
 normaliseExp b (S [P [I 1]]) = b
@@ -134,6 +257,11 @@ zeroP :: Product a -> Bool
 zeroP (P ((I 0):_)) = True
 zeroP _             = False
 
+-- | Simplifies SOP terms using
+--
+-- * 'mergeS'
+-- * 'mergeP'
+-- * 'reduceExp'
 simplifySOP :: Ord a => SOP a -> SOP a
 simplifySOP
   = S
@@ -142,9 +270,11 @@ simplifySOP
   . map (P . sort . map reduceExp . mergeWith mergeS . unP)
   . unS
 
+-- | Merge two SOP terms by additions
 mergeSOPAdd :: Ord a => SOP a -> SOP a -> SOP a
 mergeSOPAdd (S sop1) (S sop2) = simplifySOP $ S (sop1 ++ sop2)
 
+-- | Merge two SOP terms by multiplication
 mergeSOPMul :: Ord a =>  SOP a -> SOP a -> SOP a
 mergeSOPMul (S sop1) (S sop2)
   = simplifySOP
