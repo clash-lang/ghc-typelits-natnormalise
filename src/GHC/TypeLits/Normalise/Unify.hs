@@ -19,9 +19,9 @@ import GHC.TypeLits.Normalise.SOP
 -- made, for use when turning the substitution back into constraints.
 type TySubst = [SubstItem]
 
-data SubstItem = SubstItem { siVar    :: TyVar
-                           , siSOP   :: SOP
-                           , siCt     :: Ct
+data SubstItem = SubstItem { siVar :: TyVar
+                           , siSOP :: SOP
+                           , siCt  :: Ct
                            }
 
 instance Outputable SubstItem where
@@ -59,23 +59,23 @@ instance Outputable UnifyResult where
 unifyNats :: Ct -> SOP -> SOP -> TcPluginM UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
-  unifyNats' ct u v
+  return (unifyNats' ct u v)
 
-unifyNats' :: Ct -> SOP -> SOP -> TcPluginM UnifyResult
+unifyNats' :: Ct -> SOP -> SOP -> UnifyResult
 unifyNats' ct u v
-    | eqFV u v  = if u == v then return Win else return Lose
-    | otherwise = Draw <$> subst
+    | eqFV u v  = if u == v then Win else Lose
+    | otherwise = Draw subst
   where
     subst | isGiven (ctEvidence ct) = unifiers ct u v
-          | otherwise               = pure []
+          | otherwise               = []
 
-unifiers :: Ct -> SOP -> SOP -> TcPluginM TySubst
-unifiers ct (S [P [V x]]) (S [])        = return [SubstItem x (S [P [I 0]]) ct]
-unifiers ct (S [])        (S [P [V x]]) = return [SubstItem x (S [P [I 0]]) ct]
-unifiers ct (S [P [V x]]) s             = return [SubstItem x s     ct]
-unifiers ct s             (S [P [V x]]) = return [SubstItem x s     ct]
+unifiers :: Ct -> SOP -> SOP -> TySubst
+unifiers ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
+unifiers ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
+unifiers ct (S [P [V x]]) s             = [SubstItem x s     ct]
+unifiers ct s             (S [P [V x]]) = [SubstItem x s     ct]
 unifiers ct (S ps1)       (S ps2)
-    | null psx  = return []
+    | null psx  = []
     | otherwise = unifiers ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
   where
     psx = intersect ps1 ps2

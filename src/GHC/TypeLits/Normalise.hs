@@ -5,6 +5,7 @@ where
 
 -- normal
 import Data.Either
+import Data.Maybe
 
 -- GHC API
 import FastString
@@ -34,7 +35,7 @@ plugin :: Plugin
 plugin = defaultPlugin { tcPlugin = const $ Just normalisePlugin }
 
 normalisePlugin :: TcPlugin
-normalisePlugin = tracePlugin "ghc-tynat-normalise" $
+normalisePlugin =
   TcPlugin { tcPluginInit  = return ()
            , tcPluginSolve = decideEqualSOP
            , tcPluginStop  = const (return ())
@@ -51,8 +52,7 @@ decideEqualSOP _ givens _deriveds wanteds = do
         sr <- simplifyNats (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
-          Simplified subst evs  -> TcPluginOk (filter (isWanted . ctEvidence . snd) evs)
-                                              <$> mapM substItemToCt (filter (isWanted . ctEvidence . siCt) subst)
+          Simplified evs        -> return (TcPluginOk (filter (isWanted . ctEvidence . snd) evs) [])
           Impossible (ct, u, v) -> return (TcPluginContradiction [ct])
 
 type NatEquality = (Ct,SOP,SOP)
@@ -71,27 +71,24 @@ substItemToCt si
     ct        = siCt si
     loc       = ctLoc ct
 
-evByFiat :: String -> (Type, Type) -> EvTerm
-evByFiat name (t1,t2) = EvCoercion $ TcCoercion $ mkUnivCo (fsLit name) Nominal t1 t2
-
 data SimplifyResult
-  = Simplified TySubst [(EvTerm,Ct)]
+  = Simplified [(EvTerm,Ct)]
   | Impossible NatEquality
 
 instance Outputable SimplifyResult where
-  ppr (Simplified subst evs) = text "Simplified" $$ ppr subst $$ ppr evs
-  ppr (Impossible eq)        = text "Impossible" <+> ppr eq
+  ppr (Simplified evs) = text "Simplified" $$ ppr evs
+  ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
 simplifyNats :: [NatEquality] -> TcPluginM SimplifyResult
 simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples :: TySubst -> [(EvTerm, Ct)] -> [NatEquality] -> [NatEquality] -> TcPluginM SimplifyResult
-    simples subst evs xs [] = return (Simplified subst evs)
+    simples :: TySubst -> [Maybe (EvTerm, Ct)] -> [NatEquality] -> [NatEquality] -> TcPluginM SimplifyResult
+    simples subst evs xs [] = return (Simplified (catMaybes evs))
     simples subst evs xs (eq@(ct,u,v):eqs) = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
-        Win         -> simples subst ((evMagic ct,ct):evs) [] (xs ++ eqs)
+        Win         -> simples subst (((,) <$> evMagic ct <*> pure ct):evs) [] (xs ++ eqs)
         Lose        -> return  (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs
         Draw subst' -> simples (substsSubst subst' subst ++ subst') evs [eq] (xs ++ eqs)
@@ -104,37 +101,19 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
       , Just u1 <- normaliseNat t1
       , Just u2 <- normaliseNat t2 -> Left (ct, u1, u2)
     _                              -> Right ct
-
-isNatKind :: Kind -> Bool
-isNatKind = (== typeNatKind)
+  where
+    isNatKind :: Kind -> Bool
+    isNatKind = (== typeNatKind)
 
 -- Utils
-tracePlugin :: String -> TcPlugin -> TcPlugin
-tracePlugin s TcPlugin{..} = TcPlugin { tcPluginInit  = traceInit
-                                      , tcPluginSolve = traceSolve
-                                      , tcPluginStop  = traceStop
-                                      }
-  where
-    traceInit    = tcPluginTrace ("tcPluginInit " ++ s) empty >> tcPluginInit
-    traceStop  z = tcPluginTrace ("tcPluginStop " ++ s) empty >> tcPluginStop z
-
-    traceSolve z given derived wanted = do
-        tcPluginTrace ("tcPluginSolve start " ++ s)
-                          (text "given   =" <+> ppr given
-                        $$ text "derived =" <+> ppr derived
-                        $$ text "wanted  =" <+> ppr wanted)
-        r <- tcPluginSolve z given derived wanted
-        case r of
-          TcPluginOk solved new     -> tcPluginTrace ("tcPluginSolve ok " ++ s)
-                                           (text "solved =" <+> ppr solved
-                                         $$ text "new    =" <+> ppr new)
-          TcPluginContradiction bad -> tcPluginTrace ("tcPluginSolve contradiction " ++ s)
-                                           (text "bad =" <+> ppr bad)
-        return r
-
 newSimpleWanted :: CtOrigin -> PredType -> TcPluginM Ct
 newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
 
-evMagic :: Ct -> EvTerm
+evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
-    EqPred NomEq t1 t2 -> evByFiat "tylits_magic" (t1, t2)
+    EqPred NomEq t1 t2 -> Just (evByFiat "tylits_magic" (t1, t2))
+    _                  -> Nothing
+
+evByFiat :: String -> (Type, Type) -> EvTerm
+evByFiat name (t1,t2) = EvCoercion $ TcCoercion
+                      $ mkUnivCo (fsLit name) Nominal t1 t2
