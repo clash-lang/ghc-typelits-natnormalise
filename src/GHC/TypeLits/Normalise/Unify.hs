@@ -12,7 +12,7 @@ import Data.List     ((\\), intersect)
 -- GHC API
 import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
-import TcRnMonad     (Ct, ctEvidence, isGiven)
+import TcRnMonad     (Ct)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon)
 import Type          (TyVar, mkNumLitTy, mkTyConApp, mkTyVarTy, tcView)
@@ -119,10 +119,7 @@ unifyNats ct u v = do
 unifyNats' :: Ct -> CoreSOP -> CoreSOP -> UnifyResult
 unifyNats' ct u v
     | eqFV u v  = if u == v then Win else Lose
-    | otherwise = Draw subst
-  where
-    subst | isGiven (ctEvidence ct) = unifiers ct u v
-          | otherwise               = []
+    | otherwise = Draw (unifiers ct u v)
 
 unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
 unifiers ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]

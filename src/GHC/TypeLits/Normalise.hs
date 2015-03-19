@@ -20,12 +20,14 @@ import FastString (fsLit)
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
-import TcPluginM  (TcPluginM, tcPluginTrace, zonkCt)
-import TcRnTypes  (Ct, TcPlugin(..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   isWanted)
-import TcType     (typeKind)
-import Type       (EqRel (NomEq), Kind, PredTree (EqPred), Type,
-                   classifyPredType)
+import TcPluginM  (TcPluginM, tcPluginTrace, unsafeTcPluginTcM, zonkCt)
+import qualified  TcMType
+import TcRnTypes  (Ct, CtEvidence (..), CtOrigin, TcPlugin(..),
+                   TcPluginResult(..), ctEvidence, ctEvPred,
+                   ctLoc, ctLocOrigin, isGiven, isWanted mkNonCanonical)
+import TcType     (mkEqPred, typeKind)
+import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
+                   TyVar, classifyPredType, mkTyVarTy)
 import TysWiredIn (typeNatKind)
 
 -- internal
@@ -52,10 +54,23 @@ decideEqualSOP _ givens  _deriveds wanteds = do
         sr <- simplifyNats (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
-          Simplified evs -> return (TcPluginOk
-                                      (filter (isWanted . ctEvidence . snd) evs)
-                                      [])
+          Simplified subst evs ->
+            TcPluginOk (filter (isWanted . ctEvidence . snd) evs) <$>
+              mapM substItemToCt (filter (isWanted . ctEvidence . siNote) subst)
           Impossible eq  -> return (TcPluginContradiction [fromNatEquality eq])
+
+substItemToCt :: SubstItem TyVar Ct -> TcPluginM Ct
+substItemToCt si
+  | isGiven (ctEvidence ct) = return $ mkNonCanonical
+                                     $ CtGiven predicate
+                                               (evByFiat "units" (ty1, ty2)) loc
+  | otherwise               = newSimpleWanted (ctLocOrigin loc) predicate
+  where
+    predicate = mkEqPred ty1 ty2
+    ty1  = mkTyVarTy (siVar si)
+    ty2  = reifySOP (siSOP si)
+    ct   = siNote si
+    loc  = ctLoc ct
 
 type NatEquality = (Ct,CoreSOP,CoreSOP)
 
@@ -63,11 +78,11 @@ fromNatEquality :: NatEquality -> Ct
 fromNatEquality (ct, _, _) = ct
 
 data SimplifyResult
-  = Simplified [(EvTerm,Ct)]
+  = Simplified CoreSubst [(EvTerm,Ct)]
   | Impossible NatEquality
 
 instance Outputable SimplifyResult where
-  ppr (Simplified evs) = text "Simplified" $$ ppr evs
+  ppr (Simplified subst evs) = text "Simplified" $$ ppr subst $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
 simplifyNats :: [NatEquality] -> TcPluginM SimplifyResult
@@ -75,7 +90,7 @@ simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eq
   where
     simples :: CoreSubst -> [Maybe (EvTerm, Ct)] -> [NatEquality]
             -> [NatEquality] -> TcPluginM SimplifyResult
-    simples _subst evs _xs [] = return (Simplified (catMaybes evs))
+    simples subst evs _xs [] = return (Simplified subst (catMaybes evs))
     simples subst evs xs (eq@(ct,u,v):eqs') = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
@@ -99,6 +114,9 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind = (== typeNatKind)
 
 -- Utils
+newSimpleWanted :: CtOrigin -> PredType -> TcPluginM Ct
+newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
+
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 -> Just (evByFiat "tylits_magic" (t1, t2))
