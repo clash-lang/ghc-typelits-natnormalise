@@ -136,6 +136,9 @@ unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [P [V x]]) s             = [SubstItem x s     ct]
 unifiers' ct s             (S [P [V x]]) = [SubstItem x s     ct]
+unifiers' ct (S [P ((I i):ps1)]) (S [P ((I j):ps2)])
+    | i == j    = unifiers' ct (S [P ps1]) (S [P ps2])
+    | otherwise = []
 unifiers' ct (S ps1)       (S ps2)
     | null psx  = []
     | otherwise = unifiers' ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
