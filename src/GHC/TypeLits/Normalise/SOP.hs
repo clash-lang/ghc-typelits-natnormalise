@@ -5,31 +5,27 @@ import Data.Either (partitionEithers)
 import Data.List   (sort)
 
 -- GHC API
-import Type        (TyVar, mkNumLitTy, mkTyConApp, mkTyVarTy, tcView)
 import Outputable  (Outputable (..), (<+>), text, hcat, integer, punctuate)
-import TypeRep     (Type (..), TyLit (..))
-import TcTypeNats  (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
-                    typeNatSubTyCon)
 
-data Symbol
+data Symbol a
   = I Integer
-  | V TyVar
-  | E SOP Product
+  | V a
+  | E (SOP a) (Product a)
   deriving (Eq,Ord)
 
-newtype Product = P { unP :: [Symbol] }
+newtype Product a = P { unP :: [Symbol a] }
   deriving (Eq,Ord)
 
-newtype SOP = S { unS :: [Product] }
+newtype SOP a = S { unS :: [Product a] }
   deriving (Eq,Ord)
 
-instance Outputable SOP where
+instance Outputable a => Outputable (SOP a) where
   ppr = hcat . punctuate (text " + ") . map ppr . unS
 
-instance Outputable Product where
+instance Outputable a => Outputable (Product a) where
   ppr = hcat . punctuate (text " * ") . map ppr . unP
 
-instance Outputable Symbol where
+instance Outputable a => Outputable (Symbol a) where
   ppr (I i)   = integer i
   ppr (V s)   = ppr s
   ppr (E b e) = case (pprSimple b, pprSimple (S [e])) of
@@ -46,7 +42,7 @@ mergeWith op (f:fs) = case partitionEithers $ map (`op` f) fs of
                         (updated,untouched) -> mergeWith op (updated ++ untouched)
 
 -- | Simplify 'complex' exponentials
-reduceExp :: Symbol -> Symbol
+reduceExp :: (Eq a, Ord a) => Symbol a -> Symbol a
 reduceExp (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
 reduceExp (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
 reduceExp (E (S [P [(I i)]])   (P [(I j)])) = I (i ^ j)  -- 2^3 ==> 8
@@ -61,7 +57,7 @@ reduceExp (E (S [P [(E k i)]]) j) = case normaliseExp k (S [e]) of
 reduceExp s = s
 
 -- | Merge two symbols of a Product term
-mergeS :: Symbol -> Symbol -> Either Symbol Symbol
+mergeS :: (Eq a, Ord a) => Symbol a -> Symbol a -> Either (Symbol a) (Symbol a)
 mergeS (I i) (I j) = Left (I (i * j)) -- 8 * 7 ==> 56
 mergeS (I 1) r     = Left r           -- 1 * x ==> x
 mergeS l     (I 1) = Left l           -- x * 1 ==> x
@@ -88,7 +84,8 @@ mergeS l r
 mergeS l _ = Right l
 
 -- | Merge two products of a SOP term
-mergeP :: Product -> Product -> Either Product Product
+mergeP :: (Eq a, Ord a) => Product a -> Product a
+       -> Either (Product a) (Product a)
 -- 2xy + 3xy ==> 5xy
 mergeP (P ((I i):is)) (P ((I j):js))
   | is == js = Left . P $ (I (i + j)) : is
@@ -104,7 +101,7 @@ mergeP (P is) (P js)
   | otherwise = Right $ P is
 
 -- | Expand or Simplify 'complex' exponentials
-normaliseExp :: SOP -> SOP -> SOP
+normaliseExp :: Ord a => SOP a -> SOP a -> SOP a
 -- b^1 ==> b
 normaliseExp b (S [P [I 1]]) = b
 
@@ -128,53 +125,11 @@ normaliseExp b (S [e]) = S [P [reduceExp (E b e)]]
 -- (x + 2)^(y + 2) ==> 4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
 normaliseExp b (S e) = foldr1 mergeSOPMul (map (normaliseExp b . S . (:[])) e)
 
-normaliseNat :: Type -> Maybe SOP
-normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = pure (S [P [V v]])
-normaliseNat (LitTy (NumTyLit i)) = pure (S [P [I i]])
-normaliseNat (TyConApp tc [x,y])
-  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon = mergeSOPAdd <$> normaliseNat x
-                                        <*> (mergeSOPMul (S [P [I (-1)]]) <$>
-                                                         normaliseNat y)
-  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
-  | otherwise             = Nothing
-normaliseNat _ = Nothing
-
-reifySOP :: SOP -> Type
-reifySOP = combineP . map negateP . unS
-  where
-    negateP :: Product -> Either Product Product
-    negateP (P ((I i):ps)) | i < 0 = Left  (P ps)
-    negateP ps                     = Right ps
-
-    combineP :: [Either Product Product] -> Type
-    combineP []     = mkNumLitTy 0
-    combineP [p]    = either (\p' -> mkTyConApp typeNatSubTyCon
-                                                [mkNumLitTy 0, reifyProduct p'])
-                             reifyProduct p
-    combineP (p:ps) = let es = combineP ps
-                      in  either (\x -> mkTyConApp typeNatSubTyCon
-                                                   [es, reifyProduct x])
-                                 (\x -> mkTyConApp typeNatAddTyCon
-                                                  [reifyProduct x, es])
-                                 p
-
-reifyProduct :: Product -> Type
-reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2])
-             . map reifySymbol . unP
-
-reifySymbol :: Symbol -> Type
-reifySymbol (I i)   = mkNumLitTy i
-reifySymbol (V v)   = mkTyVarTy v
-reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
-
-zeroP :: Product -> Bool
+zeroP :: Product a -> Bool
 zeroP (P ((I 0):_)) = True
 zeroP _             = False
 
-simplifySOP :: SOP -> SOP
+simplifySOP :: Ord a => SOP a -> SOP a
 simplifySOP
   = S
   . sort . filter (not . zeroP)
@@ -182,10 +137,10 @@ simplifySOP
   . map (P . sort . map reduceExp . mergeWith mergeS . unP)
   . unS
 
-mergeSOPAdd :: SOP -> SOP -> SOP
+mergeSOPAdd :: Ord a => SOP a -> SOP a -> SOP a
 mergeSOPAdd (S sop1) (S sop2) = simplifySOP $ S (sop1 ++ sop2)
 
-mergeSOPMul :: SOP -> SOP -> SOP
+mergeSOPMul :: Ord a =>  SOP a -> SOP a -> SOP a
 mergeSOPMul (S sop1) (S sop2)
   = simplifySOP
   . S

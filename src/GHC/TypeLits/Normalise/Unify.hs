@@ -5,64 +5,113 @@ import Data.Function (on)
 import Data.List     ((\\), intersect)
 
 -- GHC API
-import TcRnMonad     (Ct, ctEvidence, isGiven)
-import Type          (TyVar)
 import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
+import TcRnMonad     (Ct, ctEvidence, isGiven)
+import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
+                      typeNatSubTyCon)
+import Type          (TyVar, mkNumLitTy, mkTyConApp, mkTyVarTy, tcView)
+import TypeRep       (Type (..), TyLit (..))
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
 -- Internal
 import GHC.TypeLits.Normalise.SOP
 
+type CoreSOP     = SOP TyVar
+type CoreProduct = Product TyVar
+type CoreSymbol  = Symbol TyVar
+
+normaliseNat :: Type -> Maybe CoreSOP
+normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
+normaliseNat (TyVarTy v)          = pure (S [P [V v]])
+normaliseNat (LitTy (NumTyLit i)) = pure (S [P [I i]])
+normaliseNat (TyConApp tc [x,y])
+  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatSubTyCon = mergeSOPAdd <$> normaliseNat x
+                                        <*> (mergeSOPMul (S [P [I (-1)]]) <$>
+                                                         normaliseNat y)
+  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
+  | otherwise             = Nothing
+normaliseNat _ = Nothing
+
+reifySOP :: CoreSOP -> Type
+reifySOP = combineP . map negateP . unS
+  where
+    negateP :: CoreProduct -> Either CoreProduct CoreProduct
+    negateP (P ((I i):ps)) | i < 0 = Left  (P ps)
+    negateP ps                     = Right ps
+
+    combineP :: [Either CoreProduct CoreProduct] -> Type
+    combineP []     = mkNumLitTy 0
+    combineP [p]    = either (\p' -> mkTyConApp typeNatSubTyCon
+                                                [mkNumLitTy 0, reifyProduct p'])
+                             reifyProduct p
+    combineP (p:ps) = let es = combineP ps
+                      in  either (\x -> mkTyConApp typeNatSubTyCon
+                                                   [es, reifyProduct x])
+                                 (\x -> mkTyConApp typeNatAddTyCon
+                                                  [reifyProduct x, es])
+                                 p
+
+reifyProduct :: CoreProduct -> Type
+reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2])
+             . map reifySymbol . unP
+
+reifySymbol :: CoreSymbol -> Type
+reifySymbol (I i)   = mkNumLitTy i
+reifySymbol (V v)   = mkTyVarTy v
+reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
+
 -- | A substitution is essentially a list of (variable, unit) pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
-type TySubst = [SubstItem]
+type CoreSubst   = TySubst TyVar Ct
+type TySubst a b = [SubstItem a b]
 
-data SubstItem = SubstItem { siVar :: TyVar
-                           , siSOP :: SOP
-                           , siCt  :: Ct
-                           }
+data SubstItem a b = SubstItem { siVar  :: a
+                               , siSOP  :: SOP a
+                               , siNote :: b
+                               }
 
-instance Outputable SubstItem where
+instance Outputable a => Outputable (SubstItem a b) where
   ppr si = ppr (siVar si) <+> text " := " <+> ppr (siSOP si)
 
 -- | Apply a substitution to a single normalised expr
-substsSOP :: TySubst -> SOP -> SOP
+substsSOP :: (Eq a, Ord a) => TySubst a b -> SOP a -> SOP a
 substsSOP []     u = u
 substsSOP (si:s) u = substsSOP s (substSOP (siVar si) (siSOP si) u)
 
-substSOP :: TyVar -> SOP -> SOP -> SOP
+substSOP :: (Eq a, Ord a) => a -> SOP a -> SOP a -> SOP a
 substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
 
-substProduct :: TyVar -> SOP -> Product -> SOP
+substProduct :: (Eq a, Ord a) => a -> SOP a -> Product a -> SOP a
 substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
 
-substSymbol :: TyVar -> SOP -> Symbol -> SOP
+substSymbol :: (Eq a, Ord a) => a -> SOP a -> Symbol a -> SOP a
 substSymbol _ _ (I i)    = S [P [I i]]
 substSymbol tv e (V tv')
   | tv == tv'            = e
   | otherwise            = S [P [V tv']]
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
-substsSubst :: TySubst -> TySubst -> TySubst
+substsSubst :: (Eq a, Ord a) => TySubst a b -> TySubst a b -> TySubst a b
 substsSubst s = map (\si -> si {siSOP = substsSOP s (siSOP si)})
 
-data UnifyResult = Win | Lose | Draw TySubst
+data UnifyResult = Win | Lose | Draw CoreSubst
 
 instance Outputable UnifyResult where
   ppr Win          = text "Win"
   ppr (Draw subst) = text "Draw" <+> ppr subst
   ppr Lose         = text "Lose"
 
-
-unifyNats :: Ct -> SOP -> SOP -> TcPluginM UnifyResult
+unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
   return (unifyNats' ct u v)
 
-unifyNats' :: Ct -> SOP -> SOP -> UnifyResult
+unifyNats' :: Ct -> CoreSOP -> CoreSOP -> UnifyResult
 unifyNats' ct u v
     | eqFV u v  = if u == v then Win else Lose
     | otherwise = Draw subst
@@ -70,7 +119,7 @@ unifyNats' ct u v
     subst | isGiven (ctEvidence ct) = unifiers ct u v
           | otherwise               = []
 
-unifiers :: Ct -> SOP -> SOP -> TySubst
+unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
 unifiers ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
 unifiers ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
 unifiers ct (S [P [V x]]) s             = [SubstItem x s     ct]
@@ -82,16 +131,16 @@ unifiers ct (S ps1)       (S ps2)
     psx = intersect ps1 ps2
 
 
-fvSOP :: SOP -> UniqSet TyVar
+fvSOP :: CoreSOP -> UniqSet TyVar
 fvSOP = unionManyUniqSets . map fvProduct . unS
 
-fvProduct :: Product -> UniqSet TyVar
+fvProduct :: CoreProduct -> UniqSet TyVar
 fvProduct = unionManyUniqSets . map fvSymbol . unP
 
-fvSymbol :: Symbol -> UniqSet TyVar
-fvSymbol (I i)   = emptyUniqSet
+fvSymbol :: CoreSymbol -> UniqSet TyVar
+fvSymbol (I _)   = emptyUniqSet
 fvSymbol (V v)   = unitUniqSet v
 fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
 
-eqFV :: SOP -> SOP -> Bool
+eqFV :: CoreSOP -> CoreSOP -> Bool
 eqFV = (==) `on` fvSOP

@@ -11,19 +11,18 @@ maintainer:          christiaan.baaij@gmail.com
 copyright:           Copyright © 2015 University of Twente
 category:            Type System
 build-type:          Simple
--- extra-source-files:
+extra-source-files:  README.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     GHC.TypeLits.Normalise
-  other-modules:       GHC.TypeLits.Normalise.SOP,
+  exposed-modules:     GHC.TypeLits.Normalise,
+                       GHC.TypeLits.Normalise.SOP,
                        GHC.TypeLits.Normalise.Unify
-  -- other-extensions:
   build-depends:       base >=4.8 && <4.9,
                        ghc  >=7.10
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options:         -Wall -fwarn-tabs
+  ghc-options:         -Wall -fwarn-tabs -Werror
 
 test-suite test-ghc-tynat-normalise
   type:                exitcode-stdio-1.0
