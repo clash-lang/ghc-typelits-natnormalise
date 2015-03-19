@@ -5,11 +5,11 @@ import Data.Either (partitionEithers)
 import Data.List   (sort)
 
 -- GHC API
-import Type
-import Outputable
-import TypeRep
-import TysWiredIn
-import TcTypeNats
+import Type        (TyVar, mkNumLitTy, mkTyConApp, mkTyVarTy, tcView)
+import Outputable  (Outputable (..), (<+>), text, hcat, integer, punctuate)
+import TypeRep     (Type (..), TyLit (..))
+import TcTypeNats  (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
+                    typeNatSubTyCon)
 
 data Symbol
   = I Integer
@@ -103,16 +103,6 @@ mergeP (P is) (P js)
   | is == js  = Left . P $ (I 2) : is
   | otherwise = Right $ P is
 
-
--- expandExp :: SOP -> SOP -> SOP
--- expandExp b         [[(I 1)]]    = b
--- expandExp b@[[S _]] [e]          = [[E b e]]
--- expandExp b@([[_]]) [e@([_])]    = [[reduceExp (E b e)]]
--- expandExp b         e@[[(I i)]]  = foldr1 mergeSOPMul (replicate (fromInteger i) b)
--- expandExp b         [e@(I _):es] = expandExp (expandExp b [[e]]) [es]
--- expandExp b         [es]         = [[reduceExp (E b es)]]
--- expandExp b         e            = foldr1 mergeSOPMul (map (expandExp b . (:[])) e)
-
 -- | Expand or Simplify 'complex' exponentials
 normaliseExp :: SOP -> SOP -> SOP
 -- b^1 ==> b
@@ -129,7 +119,7 @@ normaliseExp b (S [P [(I i)]]) =
   foldr1 mergeSOPMul (replicate (fromInteger i) b)
 
 -- (x + 2)^(2x) ==> (x^2 + 4xy + 4)^x
-normaliseExp b (S [P (e@(I i):es)]) =
+normaliseExp b (S [P (e@(I _):es)]) =
   normaliseExp (normaliseExp b (S [P [e]])) (S [P es])
 
 -- (x + 2)^(xy) ==> (x+2)^(xy)
@@ -142,12 +132,15 @@ normaliseNat :: Type -> Maybe SOP
 normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
 normaliseNat (TyVarTy v)          = pure (S [P [V v]])
 normaliseNat (LitTy (NumTyLit i)) = pure (S [P [I i]])
-normaliseNat (TyConApp tc tys)
-  | tc == typeNatAddTyCon, [x,y] <- tys = mergeSOPAdd  <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon, [x,y] <- tys = mergeSOPAdd  <$> normaliseNat x <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
-  | tc == typeNatMulTyCon, [x,y] <- tys = mergeSOPMul  <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon, [x,y] <- tys = normaliseExp <$> normaliseNat x <*> normaliseNat y
-  | otherwise                           = Nothing
+normaliseNat (TyConApp tc [x,y])
+  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatSubTyCon = mergeSOPAdd <$> normaliseNat x
+                                        <*> (mergeSOPMul (S [P [I (-1)]]) <$>
+                                                         normaliseNat y)
+  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
+  | otherwise             = Nothing
+normaliseNat _ = Nothing
 
 reifySOP :: SOP -> Type
 reifySOP = combineP . map negateP . unS
@@ -157,16 +150,20 @@ reifySOP = combineP . map negateP . unS
     negateP ps                     = Right ps
 
     combineP :: [Either Product Product] -> Type
+    combineP []     = mkNumLitTy 0
     combineP [p]    = either (\p' -> mkTyConApp typeNatSubTyCon
                                                 [mkNumLitTy 0, reifyProduct p'])
                              reifyProduct p
     combineP (p:ps) = let es = combineP ps
-                      in  either (\x -> mkTyConApp typeNatSubTyCon [es, reifyProduct x])
-                                 (\x -> mkTyConApp typeNatAddTyCon [reifyProduct x, es])
+                      in  either (\x -> mkTyConApp typeNatSubTyCon
+                                                   [es, reifyProduct x])
+                                 (\x -> mkTyConApp typeNatAddTyCon
+                                                  [reifyProduct x, es])
                                  p
 
 reifyProduct :: Product -> Type
-reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2]) . map reifySymbol . unP
+reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2])
+             . map reifySymbol . unP
 
 reifySymbol :: Symbol -> Type
 reifySymbol (I i)   = mkNumLitTy i
