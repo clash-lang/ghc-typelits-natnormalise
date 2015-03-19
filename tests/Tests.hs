@@ -9,7 +9,7 @@
 import Data.Proxy
 import GHC.TypeLits
 import Unsafe.Coerce
-import Prelude hiding (tail,init,(++),splitAt,concat,drop)
+import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 
 data Vec :: Nat -> * -> * where
   Nil  :: Vec 0 a
@@ -73,12 +73,15 @@ powUNat :: UNat n -> UNat m -> UNat (n ^ m)
 powUNat _ UZero     = USucc UZero
 powUNat x (USucc y) = multUNat x (powUNat x y)
 
+head :: Vec (n + 1) a -> a
+head (x :> _) = x
+
 tail :: Vec (n + 1) a -> Vec n a
 tail (_ :> xs) = xs
 
 init :: Vec (n + 1) a -> Vec n a
-init (_ :> Nil)        = Nil
-init (x :> z@(_ :> _)) = x :> init z
+init (_ :> Nil)      = Nil
+init (x :> y :> ys) = x :> init (y :> ys)
 
 infixr 5 ++
 (++) :: Vec n a -> Vec m a -> Vec (n + m) a
@@ -137,3 +140,6 @@ merge (x :> xs) (y :> ys) = x :> y :> merge xs ys
 
 drop :: SNat m -> Vec (m + n) a -> Vec n a
 drop n = snd . splitAt n
+
+at :: SNat m -> Vec (m + (n + 1)) a -> a
+at n xs = head $ snd $ splitAt n xs
