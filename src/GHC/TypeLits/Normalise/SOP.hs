@@ -45,23 +45,20 @@ mergeWith op (f:fs) = case partitionEithers $ map (`op` f) fs of
                         ([],_)              -> f : mergeWith op fs
                         (updated,untouched) -> mergeWith op (updated ++ untouched)
 
-isSimple :: Symbol -> Bool
-isSimple (I _)             = True
-isSimple (V _)             = True
-isSimple (E (S [P [_]]) _) = True
-isSimple _                 = False
-
--- | Simplify 'complex' symbols
-reduceSymbol :: Symbol -> Symbol
-reduceSymbol (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
-reduceSymbol (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
-reduceSymbol (E (S [P [(I i)]])   (P [(I j)])) = I (i ^ j)  -- 2^3 ==> 8
+-- | Simplify 'complex' exponentials
+reduceExp :: Symbol -> Symbol
+reduceExp (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
+reduceExp (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
+reduceExp (E (S [P [(I i)]])   (P [(I j)])) = I (i ^ j)  -- 2^3 ==> 8
 
 -- (k ^ i) ^ j ==> k ^ (i * j)
-reduceSymbol (E (S [P [(E k i)]]) j          ) = E k (P . sort . map reduceSymbol
-                                                        $ mergeWith mergeS (unP i ++ unP j))
+reduceExp (E (S [P [(E k i)]]) j) = case normaliseExp k (S [e]) of
+    (S [P [s]]) -> s
+    _           -> E k e
+  where
+    e = (P . sort . map reduceExp $ mergeWith mergeS (unP i ++ unP j))
 
-reduceSymbol s                                 = s
+reduceExp s = s
 
 -- | Merge two symbols of a Product term
 mergeS :: Symbol -> Symbol -> Either Symbol Symbol
@@ -83,8 +80,10 @@ mergeS (E (S [P [s']]) (P [I i])) s
 
 -- y*y ==> y^2
 mergeS l r
-  | l == r && isSimple l
-  = Left (E (S [P [l]]) (P [I 2]))
+  | l == r
+  = case normaliseExp (S [P [l]]) (S [P [I 2]]) of
+      (S [P [e]]) -> Left  e
+      _           -> Right l
 
 mergeS l _ = Right l
 
@@ -104,32 +103,50 @@ mergeP (P is) (P js)
   | is == js  = Left . P $ (I 2) : is
   | otherwise = Right $ P is
 
--- | Expand or Simplify 'complex' exponentials
-expandExp :: SOP -> SOP -> SOP
--- b^1 ==> b
-expandExp b (S [P [(I 1)]]) = b
 
--- x^y ==> x^y
-expandExp b@(S [P [_]]) (S [e@(P (_:_))]) = S [P [reduceSymbol (E b e)]]
+-- expandExp :: SOP -> SOP -> SOP
+-- expandExp b         [[(I 1)]]    = b
+-- expandExp b@[[S _]] [e]          = [[E b e]]
+-- expandExp b@([[_]]) [e@([_])]    = [[reduceExp (E b e)]]
+-- expandExp b         e@[[(I i)]]  = foldr1 mergeSOPMul (replicate (fromInteger i) b)
+-- expandExp b         [e@(I _):es] = expandExp (expandExp b [[e]]) [es]
+-- expandExp b         [es]         = [[reduceExp (E b es)]]
+-- expandExp b         e            = foldr1 mergeSOPMul (map (expandExp b . (:[])) e)
+
+-- | Expand or Simplify 'complex' exponentials
+normaliseExp :: SOP -> SOP -> SOP
+-- b^1 ==> b
+normaliseExp b (S [P [I 1]]) = b
+
+-- x^(2xy) ==> x^(2xy)
+normaliseExp b@(S [P [V _]]) (S [e]) = S [P [E b e]]
+
+-- 2^(y^2) ==> 4^y
+normaliseExp b@(S [P [_]]) (S [e@(P [_])]) = S [P [reduceExp (E b e)]]
 
 -- (x + 2)^2 ==> x^2 + 4xy + 4
-expandExp b (S [P [(I i)]]) = foldr1 mergeSOPMul (replicate (fromInteger i) b)
+normaliseExp b (S [P [(I i)]]) =
+  foldr1 mergeSOPMul (replicate (fromInteger i) b)
 
--- (x + 2)^x ==> (x+2)^x
-expandExp b (S [e@(P [_])]) = S [P [reduceSymbol (E b e)]]
+-- (x + 2)^(2x) ==> (x^2 + 4xy + 4)^x
+normaliseExp b (S [P (e@(I i):es)]) =
+  normaliseExp (normaliseExp b (S [P [e]])) (S [P es])
 
--- (x + 2)^(x + 2) ==> (x + y)^y + x^2 + 4xy + 4
-expandExp b (S e) = foldr1 mergeSOPMul (map (expandExp b . S . (:[])) e)
+-- (x + 2)^(xy) ==> (x+2)^(xy)
+normaliseExp b (S [e]) = S [P [reduceExp (E b e)]]
+
+-- (x + 2)^(y + 2) ==> 4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
+normaliseExp b (S e) = foldr1 mergeSOPMul (map (normaliseExp b . S . (:[])) e)
 
 normaliseNat :: Type -> Maybe SOP
 normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
 normaliseNat (TyVarTy v)          = pure (S [P [V v]])
 normaliseNat (LitTy (NumTyLit i)) = pure (S [P [I i]])
 normaliseNat (TyConApp tc tys)
-  | tc == typeNatAddTyCon, [x,y] <- tys = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon, [x,y] <- tys = mergeSOPAdd <$> normaliseNat x <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
-  | tc == typeNatMulTyCon, [x,y] <- tys = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon, [x,y] <- tys = expandExp   <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatAddTyCon, [x,y] <- tys = mergeSOPAdd  <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatSubTyCon, [x,y] <- tys = mergeSOPAdd  <$> normaliseNat x <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
+  | tc == typeNatMulTyCon, [x,y] <- tys = mergeSOPMul  <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatExpTyCon, [x,y] <- tys = normaliseExp <$> normaliseNat x <*> normaliseNat y
   | otherwise                           = Nothing
 
 reifySOP :: SOP -> Type
@@ -165,7 +182,7 @@ simplifySOP
   = S
   . sort . filter (not . zeroP)
   . mergeWith mergeP
-  . map (P . sort . map reduceSymbol . mergeWith mergeS . unP)
+  . map (P . sort . map reduceExp . mergeWith mergeS . unP)
   . unS
 
 mergeSOPAdd :: SOP -> SOP -> SOP

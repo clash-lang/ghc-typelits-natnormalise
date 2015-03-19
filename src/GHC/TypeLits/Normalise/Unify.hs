@@ -43,7 +43,7 @@ substSymbol _ _ (I i)    = S [P [I i]]
 substSymbol tv e (V tv')
   | tv == tv'            = e
   | otherwise            = S [P [V tv']]
-substSymbol tv e (E s p) = expandExp (substSOP tv e s) (substProduct tv e p)
+substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
 substsSubst :: TySubst -> TySubst -> TySubst
 substsSubst s = map (\si -> si {siSOP = substsSOP s (siSOP si)})
