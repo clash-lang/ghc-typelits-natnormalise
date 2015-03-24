@@ -15,8 +15,8 @@ A type checker plugin for GHC that can solve /equalities/ of types of kind
 * Applications of the arithmetic expressions @(+,-,*,^)@.
 
 It solves these equalities by normalising them to /sort-of/
-'GHC.TypeLits.Normalise.SOP' (Sum-of-Products) form, and then perform a simple
-syntactic equality.
+'GHC.TypeLits.Normalise.SOP.SOP' (Sum-of-Products) form, and then perform a
+simple syntactic equality.
 
 For example, this solver can prove the equality between:
 
@@ -30,8 +30,8 @@ and
 4*x*(2 + x)^y + 4*(2 + x)^y + (2 + x)^y*x^2
 @
 
-Because the latter is actually the 'GHC.TypeLits.Normalise.SOP' normal form of
-the former.
+Because the latter is actually the 'GHC.TypeLits.Normalise.SOP.SOP' normal form
+of the former.
 
 To use the plugin, add
 
