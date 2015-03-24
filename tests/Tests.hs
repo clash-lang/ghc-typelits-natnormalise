@@ -2,14 +2,11 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE KindSignatures    #-}
 {-# LANGUAGE TypeOperators     #-}
-{-# LANGUAGE TypeFamilies      #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
 import Data.Proxy
-import Data.Type.Bool
 import GHC.TypeLits
 import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
@@ -230,14 +227,6 @@ drop n = snd . splitAt n
 -- 2
 at :: SNat m -> Vec (m + (n + 1)) a -> a
 at n xs = head $ snd $ splitAt n xs
-
-type family Max (x :: Nat) (y :: Nat) :: Nat
-  where
-    Max x y = If (x <=? y) y x
-
-merge2 :: Vec n a -> Vec n a -> Vec (n + (Max n n)) a
-merge2 Nil       Nil       = Nil
-merge2 (x :> xs) (y :> ys) = x :> y :> merge2 xs ys
 
 main :: IO ()
 main = defaultMain tests

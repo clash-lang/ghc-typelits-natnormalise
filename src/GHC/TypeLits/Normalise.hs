@@ -100,7 +100,7 @@ decideEqualSOP _ givens  _deriveds wanteds = do
               mapM substItemToCt (filter (isWanted . ctEvidence . siNote) subst)
           Impossible eq  -> return (TcPluginContradiction [fromNatEquality eq])
 
-substItemToCt :: SubstItem TyVar Ct -> TcPluginM Ct
+substItemToCt :: SubstItem TyVar Type Ct -> TcPluginM Ct
 substItemToCt si
   | isGiven (ctEvidence ct) = return $ mkNonCanonical
                                      $ CtGiven predicate
@@ -148,7 +148,7 @@ toNatEquality :: Ct -> Maybe NatEquality
 toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2
       | isNatKind (typeKind t1) || isNatKind (typeKind t1)
-      -> (ct,,) <$> normaliseNat t1 <*> normaliseNat t2
+      -> Just (ct,normaliseNat t1,normaliseNat t2)
     _ -> Nothing
   where
     isNatKind :: Kind -> Bool

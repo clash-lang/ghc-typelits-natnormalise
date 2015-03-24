@@ -94,26 +94,28 @@ import Data.List   (sort)
 -- GHC API
 import Outputable  (Outputable (..), (<+>), text, hcat, integer, punctuate)
 
-data Symbol a
-  = I Integer
-  | V a
-  | E (SOP a) (Product a)
+data Symbol v c
+  = I Integer                 -- ^ Integer constant
+  | C c                       -- ^ Non-integer constant
+  | E (SOP v c) (Product v c) -- ^ Exponentiation
+  | V v                       -- ^ Variable
   deriving (Eq,Ord)
 
-newtype Product a = P { unP :: [Symbol a] }
+newtype Product v c = P { unP :: [Symbol v c] }
   deriving (Eq,Ord)
 
-newtype SOP a = S { unS :: [Product a] }
+newtype SOP v c = S { unS :: [Product v c] }
   deriving (Eq,Ord)
 
-instance Outputable a => Outputable (SOP a) where
+instance (Outputable v, Outputable c) => Outputable (SOP v c) where
   ppr = hcat . punctuate (text " + ") . map ppr . unS
 
-instance Outputable a => Outputable (Product a) where
+instance (Outputable v, Outputable c) => Outputable (Product v c) where
   ppr = hcat . punctuate (text " * ") . map ppr . unP
 
-instance Outputable a => Outputable (Symbol a) where
+instance (Outputable v, Outputable c) => Outputable (Symbol v c) where
   ppr (I i)   = integer i
+  ppr (C c)   = ppr c
   ppr (V s)   = ppr s
   ppr (E b e) = case (pprSimple b, pprSimple (S [e])) of
                   (bS,eS) -> bS <+> text "^" <+> eS
@@ -138,7 +140,7 @@ mergeWith op (f:fs) = case partitionEithers $ map (`op` f) fs of
 -- 2^3          ==>  8
 -- (k ^ i) ^ j  ==>  k ^ (i * j)
 -- @
-reduceExp :: (Eq a, Ord a) => Symbol a -> Symbol a
+reduceExp :: (Ord v, Ord c) => Symbol v c -> Symbol v c
 reduceExp (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
 reduceExp (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
 reduceExp (E (S [P [(I i)]])   (P [(I j)])) = I (i ^ j)  -- 2^3 ==> 8
@@ -148,7 +150,7 @@ reduceExp (E (S [P [(E k i)]]) j) = case normaliseExp k (S [e]) of
     (S [P [s]]) -> s
     _           -> E k e
   where
-    e = (P . sort . map reduceExp $ mergeWith mergeS (unP i ++ unP j))
+    e = P . sort . map reduceExp $ mergeWith mergeS (unP i ++ unP j)
 
 reduceExp s = s
 
@@ -166,7 +168,8 @@ reduceExp s = s
 -- x^4 * x  ==>  x^5
 -- y*y      ==>  y^2
 -- @
-mergeS :: (Eq a, Ord a) => Symbol a -> Symbol a -> Either (Symbol a) (Symbol a)
+mergeS :: (Ord v, Ord c) => Symbol v c -> Symbol v c
+       -> Either (Symbol v c) (Symbol v c)
 mergeS (I i) (I j) = Left (I (i * j)) -- 8 * 7 ==> 56
 mergeS (I 1) r     = Left r           -- 1 * x ==> x
 mergeS l     (I 1) = Left l           -- x * 1 ==> x
@@ -202,8 +205,8 @@ mergeS l _ = Right l
 -- xy + 2xy   ==>  3xy
 -- xy + xy    ==>  2xy
 -- @
-mergeP :: (Eq a, Ord a) => Product a -> Product a
-       -> Either (Product a) (Product a)
+mergeP :: (Eq v, Eq c) => Product v c -> Product v c
+       -> Either (Product v c) (Product v c)
 -- 2xy + 3xy ==> 5xy
 mergeP (P ((I i):is)) (P ((I j):js))
   | is == js = Left . P $ (I (i + j)) : is
@@ -229,7 +232,7 @@ mergeP (P is) (P js)
 -- (x + 2)^(2x)     ==>  (x^2 + 4xy + 4)^x
 -- (x + 2)^(y + 2)  ==>  4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
 -- @
-normaliseExp :: Ord a => SOP a -> SOP a -> SOP a
+normaliseExp :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 -- b^1 ==> b
 normaliseExp b (S [P [I 1]]) = b
 
@@ -253,7 +256,7 @@ normaliseExp b (S [e]) = S [P [reduceExp (E b e)]]
 -- (x + 2)^(y + 2) ==> 4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
 normaliseExp b (S e) = foldr1 mergeSOPMul (map (normaliseExp b . S . (:[])) e)
 
-zeroP :: Product a -> Bool
+zeroP :: Product v c -> Bool
 zeroP (P ((I 0):_)) = True
 zeroP _             = False
 
@@ -262,7 +265,7 @@ zeroP _             = False
 -- * 'mergeS'
 -- * 'mergeP'
 -- * 'reduceExp'
-simplifySOP :: Ord a => SOP a -> SOP a
+simplifySOP :: (Ord v, Ord c) => SOP v c -> SOP v c
 simplifySOP
   = S
   . sort . filter (not . zeroP)
@@ -271,11 +274,11 @@ simplifySOP
   . unS
 
 -- | Merge two SOP terms by additions
-mergeSOPAdd :: Ord a => SOP a -> SOP a -> SOP a
+mergeSOPAdd :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 mergeSOPAdd (S sop1) (S sop2) = simplifySOP $ S (sop1 ++ sop2)
 
 -- | Merge two SOP terms by multiplication
-mergeSOPMul :: Ord a =>  SOP a -> SOP a -> SOP a
+mergeSOPMul :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 mergeSOPMul (S sop1) (S sop2)
   = simplifySOP
   . S

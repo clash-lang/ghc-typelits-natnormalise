@@ -39,12 +39,13 @@ import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
 -- Internal
+import GHC.Type.Instances () -- Ord instance for Type
 import GHC.TypeLits.Normalise.SOP
 
 -- | 'SOP' with 'TyVar' variables
-type CoreSOP     = SOP TyVar
-type CoreProduct = Product TyVar
-type CoreSymbol  = Symbol TyVar
+type CoreSOP     = SOP TyVar Type
+type CoreProduct = Product TyVar Type
+type CoreSymbol  = Symbol TyVar Type
 
 -- | Convert a type of /kind/ 'GHC.TypeLits.Nat' to an 'SOP' term, but
 -- only when the type is constructed out of:
@@ -52,19 +53,18 @@ type CoreSymbol  = Symbol TyVar
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: Type -> Maybe CoreSOP
+normaliseNat :: Type -> CoreSOP
 normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = pure (S [P [V v]])
-normaliseNat (LitTy (NumTyLit i)) = pure (S [P [I i]])
+normaliseNat (TyVarTy v)          = S [P [V v]]
+normaliseNat (LitTy (NumTyLit i)) = S [P [I i]]
 normaliseNat (TyConApp tc [x,y])
-  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon = mergeSOPAdd <$> normaliseNat x
-                                        <*> (mergeSOPMul (S [P [I (-1)]]) <$>
-                                                         normaliseNat y)
-  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
-  | otherwise             = Nothing
-normaliseNat _ = Nothing
+  | tc == typeNatAddTyCon = mergeSOPAdd (normaliseNat x) (normaliseNat y)
+  | tc == typeNatSubTyCon = mergeSOPAdd (normaliseNat x)
+                                        (mergeSOPMul (S [P [I (-1)]])
+                                                     (normaliseNat y))
+  | tc == typeNatMulTyCon = mergeSOPMul (normaliseNat x) (normaliseNat y)
+  | tc == typeNatExpTyCon = normaliseExp (normaliseNat x) (normaliseNat y)
+normaliseNat t = S [P [C t]]
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
@@ -92,43 +92,45 @@ reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2])
 
 reifySymbol :: CoreSymbol -> Type
 reifySymbol (I i)   = mkNumLitTy i
+reifySymbol (C c)   = c
 reifySymbol (V v)   = mkTyVarTy v
 reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
-type CoreSubst   = TySubst TyVar Ct
-type TySubst a b = [SubstItem a b]
+type CoreSubst     = TySubst TyVar Type Ct
+type TySubst v c n = [SubstItem v c n]
 
-data SubstItem a b = SubstItem { siVar  :: a
-                               , siSOP  :: SOP a
-                               , siNote :: b
-                               }
+data SubstItem v c n = SubstItem { siVar  :: v
+                                 , siSOP  :: SOP v c
+                                 , siNote :: n
+                                 }
 
-instance Outputable a => Outputable (SubstItem a b) where
+instance (Outputable v, Outputable c) => Outputable (SubstItem v c n) where
   ppr si = ppr (siVar si) <+> text " := " <+> ppr (siSOP si)
 
 -- | Apply a substitution to a single normalised 'SOP' term
-substsSOP :: (Eq a, Ord a) => TySubst a b -> SOP a -> SOP a
+substsSOP :: (Ord v, Ord c) => TySubst v c n -> SOP v c -> SOP v c
 substsSOP []     u = u
 substsSOP (si:s) u = substsSOP s (substSOP (siVar si) (siSOP si) u)
 
-substSOP :: (Eq a, Ord a) => a -> SOP a -> SOP a -> SOP a
+substSOP :: (Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
 substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
 
-substProduct :: (Eq a, Ord a) => a -> SOP a -> Product a -> SOP a
+substProduct :: (Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
 substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
 
-substSymbol :: (Eq a, Ord a) => a -> SOP a -> Symbol a -> SOP a
-substSymbol _ _ (I i)    = S [P [I i]]
+substSymbol :: (Ord v, Ord c) => v -> SOP v c -> Symbol v c -> SOP v c
+substSymbol _  _ s@(I _) = S [P [s]]
+substSymbol _  _ s@(C _) = S [P [s]]
 substSymbol tv e (V tv')
   | tv == tv'            = e
   | otherwise            = S [P [V tv']]
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
 -- | Apply a substitution to a substitution
-substsSubst :: (Eq a, Ord a) => TySubst a b -> TySubst a b -> TySubst a b
+substsSubst :: (Ord v, Ord c) => TySubst v c n -> TySubst v c n -> TySubst v c n
 substsSubst s = map (\si -> si {siSOP = substsSOP s (siSOP si)})
 
 -- | Result of comparing two 'SOP' terms, returning a potential substitution
@@ -203,8 +205,8 @@ unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [P [V x]]) s             = [SubstItem x s     ct]
 unifiers' ct s             (S [P [V x]]) = [SubstItem x s     ct]
-unifiers' ct (S [P ((I i):ps1)]) (S [P ((I j):ps2)])
-    | i == j    = unifiers' ct (S [P ps1]) (S [P ps2])
+unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
+    | p == p'    = unifiers' ct (S [P ps1]) (S [P ps2])
     | otherwise = []
 unifiers' ct (S ps1)       (S ps2)
     | null psx  = []
@@ -221,6 +223,7 @@ fvProduct = unionManyUniqSets . map fvSymbol . unP
 
 fvSymbol :: CoreSymbol -> UniqSet TyVar
 fvSymbol (I _)   = emptyUniqSet
+fvSymbol (C _)   = emptyUniqSet
 fvSymbol (V v)   = unitUniqSet v
 fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
 
