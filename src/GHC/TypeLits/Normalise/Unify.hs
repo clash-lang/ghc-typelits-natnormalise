@@ -1,14 +1,16 @@
+{-# OPTIONS_GHC -fno-warn-unused-imports #-}
+
 {-|
 Copyright  :  (C) 2015, University of Twente
 License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 module GHC.TypeLits.Normalise.Unify
-  ( -- * Nat expressions \<-\> SOP terms
+  ( -- * 'Nat' expressions \<-\> 'SOP' terms
     CoreSOP
   , normaliseNat
   , reifySOP
-    -- * Substitution on SOP terms
+    -- * Substitution on 'SOP' terms
   , SubstItem (..)
   , TySubst
   , CoreSubst
@@ -18,7 +20,7 @@ module GHC.TypeLits.Normalise.Unify
   , UnifyResult (..)
   , unifyNats
   , unifiers
-    -- * Free variables in SOP terms
+    -- * Free variables in 'SOP' terms
   , fvSOP
   )
 where
@@ -41,6 +43,9 @@ import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
 -- Internal
 import GHC.Type.Instances () -- Ord instance for Type
 import GHC.TypeLits.Normalise.SOP
+
+-- Used for haddock
+import GHC.TypeLits (Nat)
 
 -- | 'SOP' with 'TyVar' variables
 type CoreSOP     = SOP TyVar Type
