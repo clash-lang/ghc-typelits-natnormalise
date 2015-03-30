@@ -3,7 +3,7 @@ version:             0.1
 synopsis:            GHC typechecker plugin for types of kind GHC.TypeLits.Nat
 description:
   A type checker plugin for GHC that can solve /equalities/ of types of kind
-  'GHC.TypeLits.Nat', where these types are either:
+  @Nat@, where these types are either:
   .
   * Type-level naturals
   .
@@ -11,9 +11,8 @@ description:
   .
   * Applications of the arithmetic expressions @(+,-,*,^)@.
   .
-  It solves these equalities by normalising them to /sort-of/
-  'GHC.TypeLits.Normalise.SOP.SOP' (Sum-of-Products) form, and then perform a
-  simple syntactic equality.
+  It solves these equalities by normalising them to /sort-of/ @SOP@
+  (Sum-of-Products) form, and then perform a simple syntactic equality.
   .
   For example, this solver can prove the equality between:
   .
@@ -27,8 +26,7 @@ description:
   4*x*(2 + x)^y + 4*(2 + x)^y + (2 + x)^y*x^2
   @
   .
-  Because the latter is actually the 'GHC.TypeLits.Normalise.SOP.SOP' normal
-  form of the former.
+  Because the latter is actually the @SOP@ normal form of the former.
   .
   To use the plugin, add the
   .
