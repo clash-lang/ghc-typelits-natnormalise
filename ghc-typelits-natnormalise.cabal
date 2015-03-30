@@ -45,6 +45,7 @@ copyright:           Copyright © 2015 University of Twente
 category:            Type System
 build-type:          Simple
 extra-source-files:  README.md
+                     CHANGELOG.md
 cabal-version:       >=1.10
 
 source-repository head
