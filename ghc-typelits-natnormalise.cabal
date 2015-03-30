@@ -6,7 +6,9 @@ description:
   'GHC.TypeLits.Nat', where these types are either:
   .
   * Type-level naturals
+  .
   * Type variables
+  .
   * Applications of the arithmetic expressions @(+,-,*,^)@.
   .
   It solves these equalities by normalising them to /sort-of/
