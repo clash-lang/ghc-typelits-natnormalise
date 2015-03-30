@@ -1,6 +1,6 @@
 name:                ghc-typelits-natnormalise
 version:             0.1
-synopsis:            GHC typechecker plugin for proving equalities between types of kind GHC.TypeLits.Nat
+synopsis:            GHC typechecker plugin for types of kind GHC.TypeLits.Nat
 description:
   A type checker plugin for GHC that can solve /equalities/ of types of kind
   'GHC.TypeLits.Nat', where these types are either:
