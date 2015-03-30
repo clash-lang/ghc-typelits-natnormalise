@@ -36,6 +36,7 @@ description:
   .
   Pragma to the header of your file.
 homepage:            http://www.clash-lang.org/
+bug-reports:         http://github.com/christiaanb/ghc-typelits-natnormalise/issues
 license:             BSD2
 license-file:        LICENSE
 author:              Christiaan Baaij
@@ -45,6 +46,10 @@ category:            Type System
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
+
+source-repository head
+  type: git
+  location: https://github.com/christiaanb/ghc-typelits-natnormalise.git
 
 library
   exposed-modules:     GHC.TypeLits.Normalise,
