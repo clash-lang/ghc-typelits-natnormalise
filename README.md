@@ -1,5 +1,7 @@
 # ghc-tynat-normalise
 
+[![Build Status](https://secure.travis-ci.org/christiaanb/ghc-typelits-natnormalise.png?branch=master)](http://travis-ci.org/christiaanb/ghc-typelits-natnormalise)
+
 A type checker plugin for GHC that can solve _equalities_ 
 of types of kind `Nat`, where these types are either:
 
