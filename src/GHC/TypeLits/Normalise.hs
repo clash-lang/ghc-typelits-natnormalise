@@ -1,4 +1,5 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE CPP           #-}
 
 {-# OPTIONS_HADDOCK show-extensions #-}
 
@@ -55,7 +56,11 @@ import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
 import TcPluginM  (TcPluginM, tcPluginTrace, unsafeTcPluginTcM, zonkCt)
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
+import qualified  Inst
+#else
 import qualified  TcMType
+#endif
 import TcRnTypes  (Ct, CtEvidence (..), CtOrigin, TcPlugin(..),
                    TcPluginResult(..), ctEvidence, ctEvPred,
                    ctLoc, ctLocOrigin, isGiven, isWanted, mkNonCanonical)
@@ -156,7 +161,11 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
 
 -- Utils
 newSimpleWanted :: CtOrigin -> PredType -> TcPluginM Ct
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
+newSimpleWanted orig = unsafeTcPluginTcM . Inst.newWanted orig
+#else
 newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
+#endif
 
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
