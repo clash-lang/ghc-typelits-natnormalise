@@ -73,6 +73,12 @@ import TysWiredIn (typeNatKind)
 -- internal
 import GHC.TypeLits.Normalise.Unify
 
+-- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
+import Control.Monad (unless)
+import Data.IORef    (readIORef)
+import StaticFlags   (initStaticOpts, v_opt_C_ready)
+import TcPluginM     (tcPluginIO)
+
 -- | To use the plugin, add
 --
 -- @
@@ -93,6 +99,8 @@ normalisePlugin =
 decideEqualSOP :: () -> [Ct] -> [Ct] -> [Ct] -> TcPluginM TcPluginResult
 decideEqualSOP _ _givens _deriveds []      = return (TcPluginOk [] [])
 decideEqualSOP _ givens  _deriveds wanteds = do
+    -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
+    initializeStaticFlags
     let unit_wanteds = mapMaybe toNatEquality wanteds
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
@@ -181,3 +189,9 @@ evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
 evByFiat :: String -> (Type, Type) -> EvTerm
 evByFiat name (t1,t2) = EvCoercion $ TcCoercion
                       $ mkUnivCo (fsLit name) Nominal t1 t2
+
+-- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
+initializeStaticFlags :: TcPluginM ()
+initializeStaticFlags = tcPluginIO $ do
+  r <- readIORef v_opt_C_ready
+  unless r initStaticOpts
