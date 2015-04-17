@@ -61,12 +61,10 @@ import qualified  Inst
 #else
 import qualified  TcMType
 #endif
-import TcRnTypes  (Ct, CtEvidence (..), CtLoc, CtOrigin, TcPlugin(..),
+import TcRnTypes  (Ct, CtLoc, CtOrigin, TcPlugin(..),
                    TcPluginResult(..), ctEvidence, ctEvPred,
                    ctLoc, ctLocOrigin, isGiven, isWanted, mkNonCanonical)
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
 import TcSMonad   (runTcS,newGivenEvVar)
-#endif
 import TcType     (mkEqPred, typeKind)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
                    TyVar, classifyPredType, mkTyVarTy)
@@ -169,20 +167,11 @@ newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
 #endif
 
 newSimpleGiven :: CtLoc -> PredType -> (Type,Type) -> TcPluginM Ct
-newSimpleGiven loc predicate (ty1,ty2)
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
-  = do (ev,_) <- unsafeTcPluginTcM $ runTcS
-                                   $ newGivenEvVar loc
-                                        ( predicate
-                                        , evByFiat "units" (ty1, ty2)
-                                        )
-       return (mkNonCanonical ev)
-#else
-  = return
-  $ mkNonCanonical
-  $ CtGiven predicate
-            (evByFiat "units" (ty1, ty2)) loc
-#endif
+newSimpleGiven loc predicate (ty1,ty2)= do
+  (ev,_) <- unsafeTcPluginTcM $ runTcS
+                              $ newGivenEvVar loc
+                                  (predicate, evByFiat "units" (ty1, ty2))
+  return (mkNonCanonical ev)
 
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
