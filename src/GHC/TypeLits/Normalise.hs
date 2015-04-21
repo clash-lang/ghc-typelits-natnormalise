@@ -101,7 +101,9 @@ decideEqualSOP _ _givens _deriveds []      = return (TcPluginOk [] [])
 decideEqualSOP _ givens  _deriveds wanteds = do
     -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
     initializeStaticFlags
-    let unit_wanteds = mapMaybe toNatEquality wanteds
+    -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
+    let wanteds' = filter (isWanted . ctEvidence) wanteds
+    let unit_wanteds = mapMaybe toNatEquality wanteds'
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
       _  -> do
