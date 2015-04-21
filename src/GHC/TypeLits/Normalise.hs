@@ -1,5 +1,6 @@
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE CPP           #-}
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections   #-}
 
 {-# OPTIONS_HADDOCK show-extensions #-}
 
@@ -52,7 +53,7 @@ import Data.Maybe (catMaybes, mapMaybe)
 -- GHC API
 import Coercion   (Role (Nominal), mkUnivCo)
 import FastString (fsLit)
-import Outputable (Outputable (..), (<+>), ($$), text)
+import Outputable (Outputable (..), (<+>), ($$), empty, text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
 import TcPluginM  (TcPluginM, tcPluginTrace, unsafeTcPluginTcM, zonkCt)
@@ -90,7 +91,7 @@ plugin :: Plugin
 plugin = defaultPlugin { tcPlugin = const $ Just normalisePlugin }
 
 normalisePlugin :: TcPlugin
-normalisePlugin =
+normalisePlugin = tracePlugin "ghc-typelits-natnormalise"
   TcPlugin { tcPluginInit  = return ()
            , tcPluginSolve = decideEqualSOP
            , tcPluginStop  = const (return ())
@@ -191,6 +192,29 @@ evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
 evByFiat :: String -> (Type, Type) -> EvTerm
 evByFiat name (t1,t2) = EvCoercion $ TcCoercion
                       $ mkUnivCo (fsLit name) Nominal t1 t2
+
+tracePlugin :: String -> TcPlugin -> TcPlugin
+tracePlugin s TcPlugin{..} = TcPlugin { tcPluginInit  = traceInit
+                                      , tcPluginSolve = traceSolve
+                                      , tcPluginStop  = traceStop
+                                      }
+  where
+    traceInit    = tcPluginTrace ("tcPluginInit " ++ s) empty >> tcPluginInit
+    traceStop  z = tcPluginTrace ("tcPluginStop " ++ s) empty >> tcPluginStop z
+
+    traceSolve z given derived wanted = do
+        tcPluginTrace ("tcPluginSolve start " ++ s)
+                          (text "given   =" <+> ppr given
+                        $$ text "derived =" <+> ppr derived
+                        $$ text "wanted  =" <+> ppr wanted)
+        r <- tcPluginSolve z given derived wanted
+        case r of
+          TcPluginOk solved new     -> tcPluginTrace ("tcPluginSolve ok " ++ s)
+                                           (text "solved =" <+> ppr solved
+                                         $$ text "new    =" <+> ppr new)
+          TcPluginContradiction bad -> tcPluginTrace ("tcPluginSolve contradiction " ++ s)
+                                           (text "bad =" <+> ppr bad)
+        return r
 
 -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
 initializeStaticFlags :: TcPluginM ()
