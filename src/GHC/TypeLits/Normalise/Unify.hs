@@ -175,6 +175,7 @@ unifyNats' ct u v
 -- (a + c) ~ (b + c)  ==>  \[a := b\]
 -- (2*a) ~ (2*b)      ==>  [a := b]
 -- (2 + a) ~ 5        ==>  [a := 3]
+-- (3 * a) ~ 0        ==>  [a := 0]
 -- @
 --
 -- However, given a wanted:
@@ -209,14 +210,25 @@ unifiers ct u v             = unifiers' ct u v
 unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
 unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
+
 unifiers' ct (S [P [V x]]) s             = [SubstItem x s     ct]
 unifiers' ct s             (S [P [V x]]) = [SubstItem x s     ct]
+
+-- (3 * a) ~ 0 ==> [a := 0]
+unifiers' ct (S [P ((I _):ps)]) (S [P [I 0]]) = unifiers' ct (S [P ps]) (S [P [I 0]])
+unifiers' ct (S [P [I 0]]) (S [P ((I _):ps)]) = unifiers' ct (S [P ps]) (S [P [I 0]])
+
+-- (2*a) ~ (2*b) ==> [a := b]
 unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
-    | p == p'    = unifiers' ct (S [P ps1]) (S [P ps2])
+    | p == p'   = unifiers' ct (S [P ps1]) (S [P ps2])
     | otherwise = []
+
+-- (2 + a) ~ 5 ==> [a := 3]
 unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
     | i < j     = unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
     | i > j     = unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
+
+-- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct (S ps1)       (S ps2)
     | null psx  = []
     | otherwise = unifiers' ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
