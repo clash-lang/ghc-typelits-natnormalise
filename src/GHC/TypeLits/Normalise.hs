@@ -100,8 +100,6 @@ normalisePlugin = tracePlugin "ghc-typelits-natnormalise"
 decideEqualSOP :: () -> [Ct] -> [Ct] -> [Ct] -> TcPluginM TcPluginResult
 decideEqualSOP _ _givens _deriveds []      = return (TcPluginOk [] [])
 decideEqualSOP _ givens  _deriveds wanteds = do
-    -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
-    initializeStaticFlags
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
@@ -199,10 +197,16 @@ tracePlugin s TcPlugin{..} = TcPlugin { tcPluginInit  = traceInit
                                       , tcPluginStop  = traceStop
                                       }
   where
-    traceInit    = tcPluginTrace ("tcPluginInit " ++ s) empty >> tcPluginInit
-    traceStop  z = tcPluginTrace ("tcPluginStop " ++ s) empty >> tcPluginStop z
+    traceInit    = do -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
+                      initializeStaticFlags
+                      tcPluginTrace ("tcPluginInit " ++ s) empty >> tcPluginInit
+    traceStop  z = do -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
+                      initializeStaticFlags
+                      tcPluginTrace ("tcPluginStop " ++ s) empty >> tcPluginStop z
 
     traceSolve z given derived wanted = do
+        -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
+        initializeStaticFlags
         tcPluginTrace ("tcPluginSolve start " ++ s)
                           (text "given   =" <+> ppr given
                         $$ text "derived =" <+> ppr derived
