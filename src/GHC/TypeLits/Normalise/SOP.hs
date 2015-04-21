@@ -143,7 +143,8 @@ mergeWith op (f:fs) = case partitionEithers $ map (`op` f) fs of
 reduceExp :: (Ord v, Ord c) => Symbol v c -> Symbol v c
 reduceExp (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
 reduceExp (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
-reduceExp (E (S [P [(I i)]])   (P [(I j)])) = I (i ^ j)  -- 2^3 ==> 8
+reduceExp (E (S [P [(I i)]])   (P [(I j)]))
+  | j >= 0                                  = I (i ^ j)  -- 2^3 ==> 8
 
 -- (k ^ i) ^ j ==> k ^ (i * j)
 reduceExp (E (S [P [(E k i)]]) j) = case normaliseExp k (S [e]) of
