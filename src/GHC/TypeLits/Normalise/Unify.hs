@@ -183,7 +183,7 @@ unifyNats' ct u v
 -- [W] t ~ a + b
 -- @
 --
--- this function returns @[]@, or otherwise we \"solve\" the contstraint by
+-- this function returns @[]@, or otherwise we \"solve\" the constraint by
 -- finding a unifier equal to the constraint.
 --
 -- However, given a wanted:
