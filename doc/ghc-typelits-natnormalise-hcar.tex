@@ -1,0 +1,64 @@
+\documentclass[DIV16,twocolumn,10pt]{scrreprt}
+\usepackage{paralist}
+\usepackage{graphicx}
+\usepackage[final]{hcar}
+
+%include polycode.fmt
+
+\begin{document}
+
+\begin{hcarentry}{(GHC Type-checker plugin for kind Nat)}
+\report{Christiaan Baaij}
+\status{actively developed}
+% \participants{(PARTICIPANTS OTHER THAN MYSELF)}% optional
+\makeheader
+
+% (WHAT IS IT?)
+As of GHC version 7.10, GHC's type checking and inference mechanisms can be enriched by plugins.
+This particular plugin enriches GHC's knowledge of arithmetic on the type-level.
+Specifically it allows the compiler to reason about \emph{equalities} of types of kind \verb!GHC.TypeLits.Nat!.
+
+GHC's type-checker's knowledge of arithmetic is virtually non-existent: it doesn't know addition is associative and commutative, that multiplication distributes over addition, etc.
+In a dependently-typed language, or in Haskell using singleton types, one can provide proofs for these properties and use them to type-check programs that depend on these properties in order to be (type-)correct.
+However, most of these properties of arithmetic over natural number are elementary school level knowledge, and it is cumbersome and tiresome to keep on providing and proving them manually.
+This type-checker plugin adds the knowledge of these properties to GHC's type-checker.
+
+For example, using this plugin, GHC now knows that:
+\begin{verbatim}
+(x + 2)^(y + 2)
+\end{verbatim}
+is equal to:
+\begin{verbatim}
+4*x*(2 + x)^y + 4*(2 + x)^y + (2 + x)^y*x^2
+\end{verbatim}
+
+The way that the plugin works, is that it normalises arithmetic expressions to a normal form that very much resembles \emph{Cantor normal form for ordinals}(\url{http://en.wikipedia.org/wiki/Ordinal_arithmetic#Cantor_normal_form}).
+Subsequently, it perform a simple syntactic equality of the two expressions.
+Indeed, in the example above, the latter expression is the normal form of the former expression.
+
+% (WHAT IS ITS STATUS? / WHAT HAS HAPPENED SINCE LAST TIME?)
+The main test suite for the plugin can be found at: \url{https://github.com/christiaanb/ghc-typelits-natnormalise/blob/master/tests/Tests.hs}.
+It demonstrates what kind of \emph{correct} code can be written without type equality annotations, or the use of \verb!unsafeCoerce!.
+
+One important aspect of this plugin is that it only enriches the type checkers knowledge of equalities, but \underline{not} \emph{in}equalities.
+That is, it does not allow GHC to solve constraints such as:
+\begin{verbatim}
+CmpNat (x + 2) (x + 3) ~ 'LT
+\end{verbatim}
+
+% (CAN OTHERS GET IT?)
+The plugin is available on hackage, for GHC version 7.10 and higher:
+\begin{verbatim}
+$ cabal update
+$ cabal install ghc-typelits-natnormalise
+\end{verbatim}
+
+% (WHAT ARE THE IMMEDIATE PLANS?)
+Development focus for the plugin is on further testing and improving its testsuite.
+
+\FurtherReading
+  \url{http://hackage.haskell.org/package/ghc-typelits-natnormalise} \\
+  \url{http://hackage.haskell.org/package/base/docs/GHC-TypeLits.html}
+\end{hcarentry}
+
+\end{document}
