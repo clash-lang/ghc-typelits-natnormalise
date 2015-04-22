@@ -1,6 +1,8 @@
 # ghc-tynat-normalise
 
 [![Build Status](https://secure.travis-ci.org/christiaanb/ghc-typelits-natnormalise.png?branch=master)](http://travis-ci.org/christiaanb/ghc-typelits-natnormalise)
+[![Hackage](https://img.shields.io/hackage/v/ghc-typelits-natnormalise.svg)](https://hackage.haskell.org/package/ghc-typelits-natnormalise)
+[![Hackage Dependencies](https://img.shields.io/hackage-deps/v/ghc-typelits-natnormalise.svg?style=flat)](http://packdeps.haskellers.com/feed?needle=exact%3Aghc-typelits-natnormalise)
 
 A type checker plugin for GHC that can solve _equalities_ 
 of types of kind `Nat`, where these types are either:
