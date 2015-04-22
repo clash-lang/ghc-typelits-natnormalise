@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.2
+## 0.2 *April 22nd 2015*
 * Finds more unifications:
   * `(2 + a) ~ 5  ==>  [a := 3]`
   * `(3 * a) ~ 0  ==>  [a := 0]`
