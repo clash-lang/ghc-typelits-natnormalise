@@ -105,7 +105,12 @@ newtype Product v c = P { unP :: [Symbol v c] }
   deriving (Eq,Ord)
 
 newtype SOP v c = S { unS :: [Product v c] }
-  deriving (Eq,Ord)
+  deriving (Ord)
+
+instance (Eq v, Eq c) => Eq (SOP v c) where
+  (S []) == (S [P [I 0]]) = True
+  (S [P [I 0]]) == (S []) = True
+  (S ps1) == (S ps2)      = ps1 == ps2
 
 instance (Outputable v, Outputable c) => Outputable (SOP v c) where
   ppr = hcat . punctuate (text " + ") . map ppr . unS

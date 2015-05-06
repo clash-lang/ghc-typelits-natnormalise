@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.2.1 *May 6th 2015*
+* Update `Eq` instance of `SOP`: Empty SOP is equal to 0
+
 ## 0.2 *April 22nd 2015*
 * Finds more unifications:
   * `(2 + a) ~ 5  ==>  [a := 3]`
