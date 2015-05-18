@@ -63,7 +63,7 @@ import qualified  Inst
 import qualified  TcMType
 #endif
 import TcRnTypes  (Ct, CtLoc, CtOrigin, TcPlugin(..),
-                   TcPluginResult(..), ctEvidence, ctEvPred,
+                   TcPluginResult(..), ctEvidence, ctEvPred, ctPred,
                    ctLoc, ctLocOrigin, isGiven, isWanted, mkNonCanonical)
 import TcSMonad   (runTcS,newGivenEvVar)
 import TcType     (mkEqPred, typeKind)
@@ -112,17 +112,22 @@ decideEqualSOP _ givens  _deriveds wanteds = do
         case sr of
           Simplified subst evs ->
             TcPluginOk (filter (isWanted . ctEvidence . snd) evs) <$>
-              mapM substItemToCt (filter (isWanted . ctEvidence . siNote) subst)
+              (catMaybes <$> mapM (substItemToCt wanteds') (filter (isWanted . ctEvidence . siNote) subst))
           Impossible eq  -> return (TcPluginContradiction [fromNatEquality eq])
 
-substItemToCt :: SubstItem TyVar Type Ct -> TcPluginM Ct
-substItemToCt si
-  | isGiven (ctEvidence ct) = newSimpleGiven loc predicate (ty1,ty2)
-  | otherwise               = newSimpleWanted (ctLocOrigin loc) predicate
+substItemToCt :: [Ct] -> UnifyItem TyVar Type Ct -> TcPluginM (Maybe Ct)
+substItemToCt wanteds si
+  | isGiven (ctEvidence ct)             = Just <$> newSimpleGiven loc predicate (ty1,ty2)
+  | predicate `notElem` (map ctPred wanteds) = Just <$> newSimpleWanted (ctLocOrigin loc) predicate
+  | otherwise                           = return Nothing
   where
     predicate = mkEqPred ty1 ty2
-    ty1  = mkTyVarTy (siVar si)
-    ty2  = reifySOP (siSOP si)
+    ty1  = case si of
+             (SubstItem {..}) -> mkTyVarTy siVar
+             (UnifyItem {..}) -> reifySOP siLHS
+    ty2  = case si of
+             (SubstItem {..}) -> reifySOP siSOP
+             (UnifyItem {..}) -> reifySOP siRHS
     ct   = siNote si
     loc  = ctLoc ct
 
@@ -132,7 +137,7 @@ fromNatEquality :: NatEquality -> Ct
 fromNatEquality (ct, _, _) = ct
 
 data SimplifyResult
-  = Simplified CoreSubst [(EvTerm,Ct)]
+  = Simplified CoreUnify [(EvTerm,Ct)]
   | Impossible NatEquality
 
 instance Outputable SimplifyResult where
@@ -142,7 +147,7 @@ instance Outputable SimplifyResult where
 simplifyNats :: [NatEquality] -> TcPluginM SimplifyResult
 simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples :: CoreSubst -> [Maybe (EvTerm, Ct)] -> [NatEquality]
+    simples :: CoreUnify -> [Maybe (EvTerm, Ct)] -> [NatEquality]
             -> [NatEquality] -> TcPluginM SimplifyResult
     simples subst evs _xs [] = return (Simplified subst (catMaybes evs))
     simples subst evs xs (eq@(ct,u,v):eqs') = do
@@ -153,7 +158,8 @@ simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eq
                                (xs ++ eqs')
         Lose        -> return  (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs'
-        Draw subst' -> simples (substsSubst subst' subst ++ subst') evs [eq]
+        Draw subst' -> simples (substsSubst subst' subst ++ subst')
+                               (((,) <$> evMagic ct <*> pure ct):evs) []
                                (xs ++ eqs')
 
 -- Extract the Nat equality constraints

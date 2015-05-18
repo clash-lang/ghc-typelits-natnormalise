@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 
 {-|
@@ -11,9 +12,9 @@ module GHC.TypeLits.Normalise.Unify
   , normaliseNat
   , reifySOP
     -- * Substitution on 'SOP' terms
-  , SubstItem (..)
-  , TySubst
-  , CoreSubst
+  , UnifyItem (..)
+  , TyUnify
+  , CoreUnify
   , substsSOP
   , substsSubst
     -- * Find unifiers
@@ -104,21 +105,27 @@ reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
-type CoreSubst     = TySubst TyVar Type Ct
-type TySubst v c n = [SubstItem v c n]
+type CoreUnify     = TyUnify TyVar Type Ct
+type TyUnify v c n = [UnifyItem v c n]
 
-data SubstItem v c n = SubstItem { siVar  :: v
+data UnifyItem v c n = SubstItem { siVar  :: v
                                  , siSOP  :: SOP v c
                                  , siNote :: n
                                  }
+                     | UnifyItem { siLHS  :: SOP v c
+                                 , siRHS  :: SOP v c
+                                 , siNote :: n
+                                 }
 
-instance (Outputable v, Outputable c) => Outputable (SubstItem v c n) where
-  ppr si = ppr (siVar si) <+> text " := " <+> ppr (siSOP si)
+instance (Outputable v, Outputable c) => Outputable (UnifyItem v c n) where
+  ppr (SubstItem {..}) = ppr siVar <+> text " := " <+> ppr siSOP
+  ppr (UnifyItem {..}) = ppr siLHS <+> text " :~ " <+> ppr siRHS
 
 -- | Apply a substitution to a single normalised 'SOP' term
-substsSOP :: (Ord v, Ord c) => TySubst v c n -> SOP v c -> SOP v c
-substsSOP []     u = u
-substsSOP (si:s) u = substsSOP s (substSOP (siVar si) (siSOP si) u)
+substsSOP :: (Ord v, Ord c) => TyUnify v c n -> SOP v c -> SOP v c
+substsSOP []                   u = u
+substsSOP ((SubstItem {..}):s) u = substsSOP s (substSOP siVar siSOP u)
+substsSOP ((UnifyItem {}):s)   u = substsSOP s u
 
 substSOP :: (Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
 substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
@@ -135,15 +142,18 @@ substSymbol tv e (V tv')
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
 -- | Apply a substitution to a substitution
-substsSubst :: (Ord v, Ord c) => TySubst v c n -> TySubst v c n -> TySubst v c n
-substsSubst s = map (\si -> si {siSOP = substsSOP s (siSOP si)})
+substsSubst :: (Ord v, Ord c) => TyUnify v c n -> TyUnify v c n -> TyUnify v c n
+substsSubst s = map subt
+  where
+    subt si@(SubstItem {..}) = si {siSOP = substsSOP s siSOP}
+    subt si@(UnifyItem {..}) = si {siLHS = substsSOP s siLHS, siRHS = substsSOP s siRHS}
 
 -- | Result of comparing two 'SOP' terms, returning a potential substitution
 -- list under which the two terms are equal.
 data UnifyResult
   = Win            -- ^ Two terms are equal
   | Lose           -- ^ Two terms are /not/ equal
-  | Draw CoreSubst -- ^ Two terms are only equal if the given substitution holds
+  | Draw CoreUnify -- ^ Two terms are only equal if the given substitution holds
 
 instance Outputable UnifyResult where
   ppr Win          = text "Win"
@@ -162,8 +172,12 @@ unifyNats ct u v = do
 
 unifyNats' :: Ct -> CoreSOP -> CoreSOP -> UnifyResult
 unifyNats' ct u v
-    | eqFV u v  = if u == v then Win else Lose
-    | otherwise = Draw (unifiers ct u v)
+  | eqFV u v
+  , not (containsConstants u)
+  , not (containsConstants v)
+  = if u == v then Win else Lose
+  | otherwise
+  = Draw (unifiers ct u v)
 
 -- | Find unifiers for two SOP terms
 --
@@ -198,30 +212,40 @@ unifyNats' ct u v
 -- @
 -- [a := b]
 -- @
-unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
+unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreUnify
 unifiers ct (S [P [V x]]) s
-  | isGiven (ctEvidence ct) = [SubstItem x s     ct]
+  | isGiven (ctEvidence ct) = [SubstItem x s ct]
   | otherwise               = []
 unifiers ct s (S [P [V x]])
-  | isGiven (ctEvidence ct) = [SubstItem x s     ct]
+  | isGiven (ctEvidence ct) = [SubstItem x s ct]
   | otherwise               = []
+unifiers _ (S [P [C _]]) _  = []
+unifiers _ _ (S [P [C _]])  = []
 unifiers ct u v             = unifiers' ct u v
 
-unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreSubst
+unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify
 unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
 
-unifiers' ct (S [P [V x]]) s             = [SubstItem x s     ct]
-unifiers' ct s             (S [P [V x]]) = [SubstItem x s     ct]
+unifiers' ct (S [P [V x]]) s             = [SubstItem x s ct]
+unifiers' ct s             (S [P [V x]]) = [SubstItem x s ct]
+
+unifiers' ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2 ct]
+unifiers' ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2 ct]
 
 -- (3 * a) ~ 0 ==> [a := 0]
 unifiers' ct (S [P ((I _):ps)]) (S [P [I 0]]) = unifiers' ct (S [P ps]) (S [P [I 0]])
 unifiers' ct (S [P [I 0]]) (S [P ((I _):ps)]) = unifiers' ct (S [P ps]) (S [P [I 0]])
 
 -- (2*a) ~ (2*b) ==> [a := b]
-unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
-    | p == p'   = unifiers' ct (S [P ps1]) (S [P ps2])
-    | otherwise = []
+-- unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
+--     | p == p'   = unifiers' ct (S [P ps1]) (S [P ps2])
+--     | otherwise = []
+unifiers' ct (S [P ps1]) (S [P ps2])
+    | null psx  = []
+    | otherwise = unifiers' ct (S [P (ps1 \\ psx)]) (S [P (ps2 \\ psx)])
+  where
+    psx = intersect ps1 ps2
 
 -- (2 + a) ~ 5 ==> [a := 3]
 unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
@@ -250,3 +274,6 @@ fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
 
 eqFV :: CoreSOP -> CoreSOP -> Bool
 eqFV = (==) `on` fvSOP
+
+containsConstants :: CoreSOP -> Bool
+containsConstants = any (any (\c -> case c of {(C _) -> True; _ -> False}) . unP) . unS
