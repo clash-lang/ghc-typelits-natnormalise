@@ -1,8 +1,9 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE KindSignatures    #-}
-{-# LANGUAGE TypeOperators     #-}
-{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
@@ -12,8 +13,12 @@ import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
 
+import Data.List (isInfixOf)
+import Control.Exception
 import Test.Tasty
 import Test.Tasty.HUnit
+
+import ErrorTests
 
 data Vec :: Nat -> * -> * where
   Nil  :: Vec 0 a
@@ -256,4 +261,15 @@ tests = testGroup "ghc-typelits-natnormalise"
       show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil)) @?=
       "<<1,2,3,4>,<5,6,7,8>,<9,10,11,12>>"
     ]
+  , testGroup "errors"
+    [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
+    ]
   ]
+
+-- | Assert that evaluation of the first argument (to WHNF) will throw
+-- an exception whose string representation contains the given
+-- substrings.
+throws :: a -> [String] -> Assertion
+throws v xs =
+  (evaluate v >> assertFailure "No exception!")
+  `catch` \ (e :: SomeException) -> if all (`isInfixOf` show e) xs then return () else throw e

@@ -66,6 +66,7 @@ library
 test-suite test-ghc-tynat-normalise
   type:                exitcode-stdio-1.0
   main-is:             Tests.hs
+  Other-Modules:       ErrorTests
   build-depends:       base >=4.8 && <4.9,
                        ghc-typelits-natnormalise >= 0.1,
                        tasty >= 0.10,
