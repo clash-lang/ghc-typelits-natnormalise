@@ -228,14 +228,17 @@ simplifyNats solved disproven eqs =
                                (xs ++ eqs')
         Lose        -> return (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs'
-        Draw subst' -> do alreadySolved <- unifiersSolved solved disproven subst'
-                          case alreadySolved of
-                            Win -> simples (substsSubst subst' subst ++ subst')
-                                           (((,) <$> evMagic ct <*> pure ct):evs)
-                                           [] (xs ++ eqs')
-                            Lose -> return (Impossible eq)
-                            _    -> simples (substsSubst subst' subst ++ subst')
-                                            evs [eq] (xs ++ eqs')
+        Draw subst' -> simples (substsSubst subst' subst ++ subst')
+                               (((,) <$> evMagic ct <*> pure ct):evs)
+                               [] (xs ++ eqs')
+        --Draw subst' -> do alreadySolved <- unifiersSolved solved disproven subst'
+        --                  case alreadySolved of
+        --                    Win -> simples (substsSubst subst' subst ++ subst')
+        --                                   (((,) <$> evMagic ct <*> pure ct):evs)
+        --                                   [] (xs ++ eqs')
+        --                    Lose -> return (Impossible eq)
+        --                    _    -> simples (substsSubst subst' subst ++ subst')
+        --                                    evs [eq] (xs ++ eqs')
 
 unifiersSolved :: [Ct]      -- ^ Solved wanted contraints
                -> [Ct]      -- ^ Disproven wanted constraints
