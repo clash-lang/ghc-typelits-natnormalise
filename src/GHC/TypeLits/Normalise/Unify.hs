@@ -42,7 +42,7 @@ import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
 -- Internal
-import GHC.Type.Instances () -- Ord instance for Type
+import GHC.Extra.Instances () -- Ord instance for Type
 import GHC.TypeLits.Normalise.SOP
 
 -- Used for haddock

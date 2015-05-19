@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP             #-}
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections   #-}
 
@@ -48,37 +49,45 @@ module GHC.TypeLits.Normalise
 where
 
 -- external
+import Data.IORef (IORef, newIORef,readIORef, modifyIORef)
+import Data.List  (intersect)
 import Data.Maybe (catMaybes, mapMaybe)
+import Data.Set   (Set)
+import qualified  Data.Set as Set
 
 -- GHC API
+import Bag        (bagToList)
 import Coercion   (Role (Nominal), mkUnivCo)
 import FastString (fsLit)
 import Outputable (Outputable (..), (<+>), ($$), empty, text)
 import Plugins    (Plugin (..), defaultPlugin)
-import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
-import TcPluginM  (TcPluginM, tcPluginTrace, unsafeTcPluginTcM, zonkCt)
+import TcEvidence (EvBind (..), EvBindsVar (..), EvTerm (EvCoercion),
+                   TcCoercion (..), evBindMapBinds, evVarsOfTerm)
+import TcPluginM  (TcPluginM, getEnvs, tcPluginIO, tcPluginTrace,
+                   unsafeTcPluginTcM, zonkCt)
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
 import qualified  Inst
 #else
 import qualified  TcMType
 #endif
-import TcRnTypes  (Ct, CtLoc, CtOrigin, TcPlugin(..),
-                   TcPluginResult(..), ctEvidence, ctEvPred, ctPred,
+import TcRnTypes  (Ct, CtEvidence (..), CtLoc, CtOrigin, Implication (..),
+                   TcLclEnv (tcl_lie), TcPlugin(..), TcPluginResult(..),
+                   WantedConstraints (..), ctEvidence, ctEvPred, ctPred,
                    ctLoc, ctLocOrigin, isGiven, isWanted, mkNonCanonical)
-import TcSMonad   (runTcS,newGivenEvVar)
+import TcSMonad   (newGivenEvVar, runTcS)
 import TcType     (mkEqPred, typeKind)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
                    TyVar, classifyPredType, mkTyVarTy)
 import TysWiredIn (typeNatKind)
+import VarSet     (mkVarSet,minusVarSet,isEmptyVarSet,varSetElems)
 
 -- internal
+import GHC.Extra.Instances () -- Ord instance for Ct
 import GHC.TypeLits.Normalise.Unify
 
 -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
 import Control.Monad (unless)
-import Data.IORef    (readIORef)
 import StaticFlags   (initStaticOpts, v_opt_C_ready)
-import TcPluginM     (tcPluginIO)
 
 -- | To use the plugin, add
 --
@@ -92,14 +101,15 @@ plugin = defaultPlugin { tcPlugin = const $ Just normalisePlugin }
 
 normalisePlugin :: TcPlugin
 normalisePlugin = tracePlugin "ghc-typelits-natnormalise"
-  TcPlugin { tcPluginInit  = return ()
+  TcPlugin { tcPluginInit  = tcPluginIO $ newIORef Set.empty
            , tcPluginSolve = decideEqualSOP
            , tcPluginStop  = const (return ())
            }
 
-decideEqualSOP :: () -> [Ct] -> [Ct] -> [Ct] -> TcPluginM TcPluginResult
+decideEqualSOP :: IORef (Set Ct) -> [Ct] -> [Ct] -> [Ct]
+               -> TcPluginM TcPluginResult
 decideEqualSOP _ _givens _deriveds []      = return (TcPluginOk [] [])
-decideEqualSOP _ givens  _deriveds wanteds = do
+decideEqualSOP discharged givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
@@ -107,29 +117,85 @@ decideEqualSOP _ givens  _deriveds wanteds = do
       [] -> return (TcPluginOk [] [])
       _  -> do
         unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
-        sr <- simplifyNats (unit_givens ++ unit_wanteds)
+        (solvedDists,disprovenDists) <- solvedDischarged discharged
+        sr <- simplifyNats solvedDists disprovenDists (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
-          Simplified subst evs ->
-            TcPluginOk (filter (isWanted . ctEvidence . snd) evs) <$>
-              (catMaybes <$> mapM (substItemToCt wanteds') (filter (isWanted . ctEvidence . siNote) subst))
+          Simplified subst evs -> do
+            let solved     = filter (isWanted . ctEvidence . snd) evs
+            -- Create new wanted constraints
+            let newWanteds = filter (isWanted . ctEvidence . siNote) subst
+            discharedWanteds <- tcPluginIO (readIORef discharged)
+            let existingWanteds = wanteds' ++ (Set.toList discharedWanteds)
+            newWantedConstraints <- catMaybes <$>
+                                    mapM (substItemToCt existingWanteds) newWanteds
+            -- update set of discharged wanteds
+            tcPluginIO (modifyIORef discharged (Set.union (Set.fromList newWantedConstraints)))
+            -- return
+            return (TcPluginOk solved newWantedConstraints)
           Impossible eq  -> return (TcPluginContradiction [fromNatEquality eq])
 
-substItemToCt :: [Ct] -> UnifyItem TyVar Type Ct -> TcPluginM (Maybe Ct)
-substItemToCt wanteds si
-  | isGiven (ctEvidence ct)             = Just <$> newSimpleGiven loc predicate (ty1,ty2)
-  | predicate `notElem` (map ctPred wanteds) = Just <$> newSimpleWanted (ctLocOrigin loc) predicate
-  | otherwise                           = return Nothing
+solvedDischarged :: IORef (Set Ct) -- ^ Discharged wanteds
+                 -> TcPluginM ([Ct],[Ct]) -- ^ Solved discharged wanteds
+solvedDischarged dischargedR = do
+  -- Get the disproved discharged wanteds
+  (_,lclEnv) <- getEnvs
+  lies       <- tcPluginIO (readIORef (tcl_lie lclEnv))
+  let insols = bagToList $ wc_insol lies
+  discharged <- Set.toList <$> tcPluginIO (readIORef dischargedR)
+  let disproven = discharged `intersect` insols
+
+  -- get the proven discharged wanteds
+  let implcs = bagToList (wc_impl lies)
+      bnds   = map ic_binds implcs
+  maps <- mapM ((\(EvBindsVar ref _) -> tcPluginIO $ readIORef ref)) bnds
+  let vars  = concatMap (bagToList . evBindMapBinds) maps
+      vars' = map (\v -> (v,isClosedEvBind vars v)) vars
+      closedVars = map ((\(EvBind v _) -> v) . fst) $ filter snd vars'
+      solved = filter ((`elem` closedVars) . ctev_evar . ctEvidence) discharged
+  tcPluginTrace ("solvedDischarged " ++ show (length vars)) (ppr vars')
+
+  return (solved,disproven)
+
+isClosedEvBind :: [EvBind]
+               -> EvBind
+               -> Bool
+isClosedEvBind ebs (EvBind _ t)
+    | isEmptyVarSet vs = True
+    | not (isEmptyVarSet (vs `minusVarSet` (mkVarSet evs))) = False
+    | otherwise  = all (isClosedEvBind ebs) used
   where
-    predicate = mkEqPred ty1 ty2
-    ty1  = case si of
-             (SubstItem {..}) -> mkTyVarTy siVar
-             (UnifyItem {..}) -> reifySOP siLHS
-    ty2  = case si of
-             (SubstItem {..}) -> reifySOP siSOP
-             (UnifyItem {..}) -> reifySOP siRHS
-    ct   = siNote si
-    loc  = ctLoc ct
+    vs   = evVarsOfTerm t
+    vs'  = varSetElems vs
+    evs  = map (\(EvBind v' _) -> v') ebs
+    used = filter (\(EvBind v' _) -> v' `elem` vs') ebs
+
+substItemToCt :: [Ct] -- ^ Existing wanteds wanted
+              -> UnifyItem TyVar Type Ct
+              -> TcPluginM (Maybe Ct)
+substItemToCt wanteds si
+  | isGiven (ctEvidence ct)
+  = Just <$> newSimpleGiven loc predicate (ty1,ty2)
+
+  | predicate  `notElem` wantedPreds
+  , predicateS `notElem` wantedPreds
+  = Just <$> newSimpleWanted (ctLocOrigin loc) predicate
+
+  | otherwise
+  = return Nothing
+  where
+    predicate   = mkEqPred ty1 ty2
+    predicateS  = mkEqPred ty2 ty1
+    wantedPreds = map ctPred wanteds
+
+    ty1       = case si of
+                  (SubstItem {..}) -> mkTyVarTy siVar
+                  (UnifyItem {..}) -> reifySOP siLHS
+    ty2       = case si of
+                  (SubstItem {..}) -> reifySOP siSOP
+                  (UnifyItem {..}) -> reifySOP siRHS
+    ct        = siNote si
+    loc       = ctLoc ct
 
 type NatEquality = (Ct,CoreSOP,CoreSOP)
 
@@ -144,8 +210,12 @@ instance Outputable SimplifyResult where
   ppr (Simplified subst evs) = text "Simplified" $$ ppr subst $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
-simplifyNats :: [NatEquality] -> TcPluginM SimplifyResult
-simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
+simplifyNats :: [Ct] -- ^ Solved discharged wanteds
+             -> [Ct] -- ^ Disproven discharged wanteds
+             -> [NatEquality]
+             -> TcPluginM SimplifyResult
+simplifyNats solved disproven eqs =
+    tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
     simples :: CoreUnify -> [Maybe (EvTerm, Ct)] -> [NatEquality]
             -> [NatEquality] -> TcPluginM SimplifyResult
@@ -156,11 +226,39 @@ simplifyNats eqs = tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eq
       case ur of
         Win         -> simples subst (((,) <$> evMagic ct <*> pure ct):evs) []
                                (xs ++ eqs')
-        Lose        -> return  (Impossible eq)
+        Lose        -> return (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs'
-        Draw subst' -> simples (substsSubst subst' subst ++ subst')
-                               (((,) <$> evMagic ct <*> pure ct):evs) []
-                               (xs ++ eqs')
+        Draw subst' -> do alreadySolved <- unifiersSolved solved disproven subst'
+                          case alreadySolved of
+                            Win -> simples (substsSubst subst' subst ++ subst')
+                                           (((,) <$> evMagic ct <*> pure ct):evs)
+                                           [] (xs ++ eqs')
+                            Lose -> return (Impossible eq)
+                            _    -> simples (substsSubst subst' subst ++ subst')
+                                            evs [eq] (xs ++ eqs')
+
+unifiersSolved :: [Ct]      -- ^ Solved wanted contraints
+               -> [Ct]      -- ^ Disproven wanted constraints
+               -> CoreUnify -- ^ List of derived unifiers
+               -> TcPluginM UnifyResult
+unifiersSolved solved disproven subst = do
+    wantedConstraintsS <- catMaybes <$>
+                          mapM (substItemToCt solved) wantedUnifiers
+    wantedConstraintsD <- catMaybes <$>
+                          mapM (substItemToCt disproven) wantedUnifiers
+    tcPluginTrace "unifiersSolved" (text "solved:" <+> ppr solved $$
+                                    text "disproven:" <+> ppr disproven $$
+                                    text "subst:" <+> ppr subst $$
+                                    text "wantedS:" <+> ppr wantedConstraintsS $$
+                                    text "wantedD:" <+> ppr wantedConstraintsD)
+
+    if (length wantedConstraintsD < length wantedUnifiers)
+       then return Lose
+       else if (null wantedConstraintsS)
+               then return Win
+               else return (Draw [])
+  where
+    wantedUnifiers = filter (isWanted . ctEvidence . siNote) subst
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Maybe NatEquality
@@ -185,12 +283,14 @@ newSimpleGiven :: CtLoc -> PredType -> (Type,Type) -> TcPluginM Ct
 newSimpleGiven loc predicate (ty1,ty2)= do
   (ev,_) <- unsafeTcPluginTcM $ runTcS
                               $ newGivenEvVar loc
-                                  (predicate, evByFiat "units" (ty1, ty2))
+                                  (predicate
+                                  ,evByFiat "ghc-typelits-natnormalise" (ty1, ty2)
+                                  )
   return (mkNonCanonical ev)
 
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
-    EqPred NomEq t1 t2 -> Just (evByFiat "tylits_magic" (t1, t2))
+    EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise_magic" (t1, t2))
     _                  -> Nothing
 
 evByFiat :: String -> (Type, Type) -> EvTerm
