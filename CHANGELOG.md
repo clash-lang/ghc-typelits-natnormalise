@@ -2,7 +2,7 @@
 
 ## 0.2.2
 * Find more unifications:
-  * `<TyApp xs> + x ~ 2 + x` ==> [<TyApp xs> ~ 2]
+  * `<TyApp xs> + x ~ 2 + x ==> [<TyApp xs> ~ 2]`
 
 ## 0.2.1 *May 6th 2015*
 * Update `Eq` instance of `SOP`: Empty SOP is equal to 0
