@@ -58,11 +58,13 @@ import FastString (fsLit)
 import Outputable (Outputable (..), (<+>), ($$), empty, text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
+import TcMType    (newEvVar)
 import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, unsafeTcPluginTcM,
                    zonkCt)
-import TcRnTypes  (Ct, CtLoc, TcPlugin(..), TcPluginResult(..), ctEvidence,
-                   ctEvPred, ctPred, ctLoc, isGiven, isWanted, mkNonCanonical)
-import TcSMonad   (newGivenEvVar, newWantedEvVarNC, runTcS)
+import TcRnTypes  (Ct, CtEvidence(..), CtLoc, CtOrigin (TypeEqOrigin),
+                   TcPlugin(..), TcPluginResult(..), ctEvidence, ctEvPred,
+                   ctPred, ctLoc, isGiven, isWanted, mkNonCanonical,
+                   setCtLocOrigin)
 import TcType     (mkEqPred, typeKind)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
                    TyVar, classifyPredType, mkTyVarTy)
@@ -131,7 +133,7 @@ substItemToCt existingWanteds si
   -- Only create new wanteds
   | predicate  `notElem` wantedPreds
   , predicateS `notElem` wantedPreds
-  = Just <$> newSimpleWanted loc predicate
+  = Just <$> newSimpleWanted ct predicate
 
   | otherwise
   = return Nothing
@@ -194,21 +196,37 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind = (== typeNatKind)
 
 -- Utils
-newSimpleWanted :: CtLoc -> PredType -> TcPluginM Ct
-newSimpleWanted loc p = do
-  (ev,_) <- unsafeTcPluginTcM $ runTcS
-                              $ newWantedEvVarNC loc p
-  let ct'   = mkNonCanonical ev
+newSimpleWanted :: Ct -> PredType -> TcPluginM Ct
+newSimpleWanted ct p = do
+  let loc    = ctLoc ct
+      (ty1,ty2) = case classifyPredType $ ctEvPred $ ctEvidence ct of
+                    EqPred _ t1 t2 -> (t1,t2)
+                    _              -> error "impossible: not EqPred"
+      origin = TypeEqOrigin ty1 ty2
+      loc'   = setCtLocOrigin loc origin
+  ev <- unsafeTcPluginTcM $ newEvVar p
+  let ctE = CtWanted {ctev_pred = p, ctev_evar = ev, ctev_loc = loc'}
+      ct' = mkNonCanonical ctE
+  -- (ev,_) <- unsafeTcPluginTcM $ runTcS
+  --                             $ newWantedEvVarNC loc p
+  -- let ct'   = mkNonCanonical ev
   return ct'
 
 newSimpleGiven :: CtLoc -> PredType -> (Type,Type) -> TcPluginM Ct
-newSimpleGiven loc predicate (ty1,ty2)= do
-  (ev,_) <- unsafeTcPluginTcM $ runTcS
-                              $ newGivenEvVar loc
-                                  (predicate
-                                  ,evByFiat "ghc-typelits-natnormalise" (ty1, ty2)
-                                  )
-  return (mkNonCanonical ev)
+newSimpleGiven loc predicate (ty1,ty2) = do
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
+  ev <- unsafeTcPluginTcM $ newEvVar p
+#endif
+  let ctE = CtGiven { ctev_pred = predicate
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
+                    , ctev_evar = ev
+#else
+                    , ctev_evtm = evByFiat "ghc-typelits-natnormalise" (ty1, ty2)
+#endif
+                    , ctev_loc  = loc
+                    }
+      ct  = mkNonCanonical ctE
+  return ct
 
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
