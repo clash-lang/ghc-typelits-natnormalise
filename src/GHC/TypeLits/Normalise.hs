@@ -65,16 +65,11 @@ import TcEvidence (EvBind (..), EvBindsVar (..), EvTerm (EvCoercion),
                    TcCoercion (..), evBindMapBinds, evVarsOfTerm)
 import TcPluginM  (TcPluginM, getEnvs, tcPluginIO, tcPluginTrace,
                    unsafeTcPluginTcM, zonkCt)
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
-import qualified  Inst
-#else
-import qualified  TcMType
-#endif
 import TcRnTypes  (Ct, CtEvidence (..), CtLoc, CtOrigin, Implication (..),
-                   TcLclEnv (tcl_lie), TcPlugin(..), TcPluginResult(..),
-                   WantedConstraints (..), ctEvidence, ctEvPred, ctPred,
+                   TcLclEnv (tcl_lie, tcl_loc), TcPlugin(..), TcPluginResult(..),
+                   WantedConstraints (..), ctEvidence, ctEvPred, ctPred, ctLocEnv,
                    ctLoc, ctLocOrigin, isGiven, isWanted, mkNonCanonical)
-import TcSMonad   (newGivenEvVar, runTcS)
+import TcSMonad   (newGivenEvVar, newWantedEvVarNC, runTcS)
 import TcType     (mkEqPred, typeKind)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
                    TyVar, classifyPredType, mkTyVarTy)
@@ -173,20 +168,20 @@ isClosedEvBind ebs (EvBind _ t)
 substItemToCt :: [Ct] -- ^ Existing wanteds wanted
               -> UnifyItem TyVar Type Ct
               -> TcPluginM (Maybe Ct)
-substItemToCt wanteds si
+substItemToCt existingWanteds si
   | isGiven (ctEvidence ct)
   = Just <$> newSimpleGiven loc predicate (ty1,ty2)
 
   | predicate  `notElem` wantedPreds
   , predicateS `notElem` wantedPreds
-  = Just <$> newSimpleWanted (ctLocOrigin loc) predicate
+  = Just <$> newSimpleWanted loc predicate
 
   | otherwise
   = return Nothing
   where
     predicate   = mkEqPred ty1 ty2
     predicateS  = mkEqPred ty2 ty1
-    wantedPreds = map ctPred wanteds
+    wantedPreds = map ctPred existingWanteds
 
     ty1       = case si of
                   (SubstItem {..}) -> mkTyVarTy siVar
@@ -275,12 +270,14 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind = (== typeNatKind)
 
 -- Utils
-newSimpleWanted :: CtOrigin -> PredType -> TcPluginM Ct
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
-newSimpleWanted orig = fmap mkNonCanonical . unsafeTcPluginTcM . Inst.newWanted orig
-#else
-newSimpleWanted orig = unsafeTcPluginTcM . TcMType.newSimpleWanted orig
-#endif
+newSimpleWanted :: CtLoc -> PredType -> TcPluginM Ct
+newSimpleWanted loc p = do
+  (ev,_) <- unsafeTcPluginTcM $ runTcS
+                              $ newWantedEvVarNC loc p
+  let ct  = mkNonCanonical ev
+      loc = tcl_loc (ctLocEnv (ctLoc ct))
+  tcPluginTrace "newSimpleWanted" (ppr ct $$ ppr loc)
+  return ct
 
 newSimpleGiven :: CtLoc -> PredType -> (Type,Type) -> TcPluginM Ct
 newSimpleGiven loc predicate (ty1,ty2)= do
