@@ -215,7 +215,7 @@ newSimpleWanted ct p = do
 newSimpleGiven :: CtLoc -> PredType -> (Type,Type) -> TcPluginM Ct
 newSimpleGiven loc predicate (ty1,ty2) = do
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
-  ev <- unsafeTcPluginTcM $ newEvVar p
+  ev <- unsafeTcPluginTcM $ newEvVar predicate
 #endif
   let ctE = CtGiven { ctev_pred = predicate
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
