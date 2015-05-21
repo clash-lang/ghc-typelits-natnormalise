@@ -16,8 +16,11 @@ before_install:
 
 install:
   - travis_retry cabal update
+  - git clone https://github.com/clash-lang/ghc-tcplugins-extra.git
+  - cabal sandbox init
+  - cabal sandbox add-source ghc-tcplugins-extra
   - cabal install --dependencies-only --enable-tests
-  - cabal configure --enable-tests
+  - cabal configure --enable-tests -fdeverror
 
 script:
   - cabal build
