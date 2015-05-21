@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.2.2
+## 0.3
 * Find more unifications:
   * `<TyApp xs> + x ~ 2 + x ==> [<TyApp xs> ~ 2]`
 
