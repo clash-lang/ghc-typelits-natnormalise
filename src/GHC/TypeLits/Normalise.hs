@@ -49,34 +49,26 @@ module GHC.TypeLits.Normalise
 where
 
 -- external
-import Data.IORef (IORef, newIORef,readIORef, modifyIORef)
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.IORef          (IORef, newIORef,readIORef, modifyIORef)
+import Data.Maybe          (catMaybes, mapMaybe)
+import GHC.TcPluginM.Extra (evByFiat, failWithProvenace, newSimpleGiven,
+                            newWantedWithProvenance, tracePlugin)
 
 -- GHC API
-import Coercion   (Role (Nominal), mkUnivCo)
-import FastString (fsLit)
-import Outputable (Outputable (..), (<+>), ($$), empty, text)
+import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
-import TcEvidence (EvTerm (EvCoercion), TcCoercion (..))
-import TcMType    (newEvVar)
-import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, unsafeTcPluginTcM,
-                   zonkCt)
-import TcRnTypes  (Ct, CtEvidence(..), CtLoc, CtOrigin (TypeEqOrigin),
-                   TcPlugin(..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   ctPred, ctLoc, isGiven, isWanted, mkNonCanonical,
-                   setCtLocOrigin)
+import TcEvidence (EvTerm)
+import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, zonkCt)
+import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
+                   ctPred, ctLoc, isGiven, isWanted)
 import TcType     (mkEqPred, typeKind)
-import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type,
-                   TyVar, classifyPredType, mkTyVarTy)
+import Type       (EqRel (NomEq), Kind, PredTree (EqPred), Type, TyVar,
+                   classifyPredType, mkTyVarTy)
 import TysWiredIn (typeNatKind)
 
 -- internal
 import GHC.Extra.Instances () -- Ord instance for Ct
 import GHC.TypeLits.Normalise.Unify
-
--- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
-import Control.Monad (unless)
-import StaticFlags   (initStaticOpts, v_opt_C_ready)
 
 -- | To use the plugin, add
 --
@@ -121,19 +113,19 @@ decideEqualSOP discharged givens  _deriveds wanteds = do
             tcPluginIO (modifyIORef discharged (++ newWantedConstraints))
             -- return
             return (TcPluginOk solved newWantedConstraints)
-          Impossible eq  -> return (TcPluginContradiction [fromNatEquality eq])
+          Impossible eq -> failWithProvenace $ fromNatEquality eq
 
 substItemToCt :: [Ct] -- ^ Existing wanteds wanted
               -> UnifyItem TyVar Type Ct
               -> TcPluginM (Maybe Ct)
 substItemToCt existingWanteds si
   | isGiven (ctEvidence ct)
-  = Just <$> newSimpleGiven loc predicate (ty1,ty2)
+  = Just <$> newSimpleGiven "ghc-typelits-natnormalise" loc predicate (ty1,ty2)
 
   -- Only create new wanteds
   | predicate  `notElem` wantedPreds
   , predicateS `notElem` wantedPreds
-  = Just <$> newSimpleWanted ct predicate
+  = Just <$> newWantedWithProvenance (ctEvidence ct) predicate
 
   | otherwise
   = return Nothing
@@ -195,79 +187,7 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind :: Kind -> Bool
     isNatKind = (== typeNatKind)
 
--- Utils
-newSimpleWanted :: Ct -> PredType -> TcPluginM Ct
-newSimpleWanted ct p = do
-  let loc    = ctLoc ct
-      (ty1,ty2) = case classifyPredType $ ctEvPred $ ctEvidence ct of
-                    EqPred _ t1 t2 -> (t1,t2)
-                    _              -> error "impossible: not EqPred"
-      origin = TypeEqOrigin ty1 ty2
-      loc'   = setCtLocOrigin loc origin
-  ev <- unsafeTcPluginTcM $ newEvVar p
-  let ctE = CtWanted {ctev_pred = p, ctev_evar = ev, ctev_loc = loc'}
-      ct' = mkNonCanonical ctE
-  -- (ev,_) <- unsafeTcPluginTcM $ runTcS
-  --                             $ newWantedEvVarNC loc p
-  -- let ct'   = mkNonCanonical ev
-  return ct'
-
-newSimpleGiven :: CtLoc -> PredType -> (Type,Type) -> TcPluginM Ct
-newSimpleGiven loc predicate (ty1,ty2) = do
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
-  ev <- unsafeTcPluginTcM $ newEvVar predicate
-#endif
-  let ctE = CtGiven { ctev_pred = predicate
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 711
-                    , ctev_evar = ev
-#else
-                    , ctev_evtm = evByFiat "ghc-typelits-natnormalise" (ty1, ty2)
-#endif
-                    , ctev_loc  = loc
-                    }
-      ct  = mkNonCanonical ctE
-  return ct
-
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise_magic" (t1, t2))
     _                  -> Nothing
-
-evByFiat :: String -> (Type, Type) -> EvTerm
-evByFiat name (t1,t2) = EvCoercion $ TcCoercion
-                      $ mkUnivCo (fsLit name) Nominal t1 t2
-
-tracePlugin :: String -> TcPlugin -> TcPlugin
-tracePlugin s TcPlugin{..} = TcPlugin { tcPluginInit  = traceInit
-                                      , tcPluginSolve = traceSolve
-                                      , tcPluginStop  = traceStop
-                                      }
-  where
-    traceInit    = do -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
-                      initializeStaticFlags
-                      tcPluginTrace ("tcPluginInit " ++ s) empty >> tcPluginInit
-    traceStop  z = do -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
-                      initializeStaticFlags
-                      tcPluginTrace ("tcPluginStop " ++ s) empty >> tcPluginStop z
-
-    traceSolve z given derived wanted = do
-        -- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
-        initializeStaticFlags
-        tcPluginTrace ("tcPluginSolve start " ++ s)
-                          (text "given   =" <+> ppr given
-                        $$ text "derived =" <+> ppr derived
-                        $$ text "wanted  =" <+> ppr wanted)
-        r <- tcPluginSolve z given derived wanted
-        case r of
-          TcPluginOk solved new     -> tcPluginTrace ("tcPluginSolve ok " ++ s)
-                                           (text "solved =" <+> ppr solved
-                                         $$ text "new    =" <+> ppr new)
-          TcPluginContradiction bad -> tcPluginTrace ("tcPluginSolve contradiction " ++ s)
-                                           (text "bad =" <+> ppr bad)
-        return r
-
--- workaround for https://ghc.haskell.org/trac/ghc/ticket/10301
-initializeStaticFlags :: TcPluginM ()
-initializeStaticFlags = tcPluginIO $ do
-  r <- readIORef v_opt_C_ready
-  unless r initStaticOpts
