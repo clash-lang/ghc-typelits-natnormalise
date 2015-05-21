@@ -108,7 +108,8 @@ decideEqualSOP discharged givens  _deriveds wanteds = do
             discharedWanteds <- tcPluginIO (readIORef discharged)
             let existingWanteds = wanteds' ++ discharedWanteds
             newWantedConstraints <- catMaybes <$>
-                                    mapM (substItemToCt existingWanteds) newWanteds
+                                    mapM (substItemToCt existingWanteds)
+                                         newWanteds
             -- update set of discharged wanteds
             tcPluginIO (modifyIORef discharged (++ newWantedConstraints))
             -- return
@@ -189,5 +190,5 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
 
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
-    EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise_magic" (t1, t2))
-    _                  -> Nothing
+  EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise" (t1, t2))
+  _                  -> Nothing
