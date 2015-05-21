@@ -121,7 +121,7 @@ substItemToCt :: [Ct] -- ^ Existing wanteds wanted
               -> TcPluginM (Maybe Ct)
 substItemToCt existingWanteds si
   | isGiven (ctEvidence ct)
-  = Just <$> newSimpleGiven "ghc-typelits-natnormalise" loc predicate (ty1,ty2)
+  = Just <$> newSimpleGiven "ghc-typelits-natnormalise" loc ty1 ty2
 
   -- Only create new wanteds
   | predicate  `notElem` wantedPreds
