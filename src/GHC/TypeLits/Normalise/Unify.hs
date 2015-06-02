@@ -243,9 +243,15 @@ unifiers' ct (S [P [I 0]]) (S [P ((I _):ps)]) = unifiers' ct (S [P ps]) (S [P [I
 --     | otherwise = []
 unifiers' ct (S [P ps1]) (S [P ps2])
     | null psx  = []
-    | otherwise = unifiers' ct (S [P (ps1 \\ psx)]) (S [P (ps2 \\ psx)])
+    | otherwise = unifiers' ct (S [P ps1'']) (S [P ps2''])
   where
-    psx = intersect ps1 ps2
+    ps1'  = ps1 \\ psx
+    ps2'  = ps2 \\ psx
+    ps1'' | null ps1' = [I 1]
+          | otherwise = ps1'
+    ps2'' | null ps2' = [I 1]
+          | otherwise = ps2'
+    psx  = intersect ps1 ps2
 
 -- (2 + a) ~ 5 ==> [a := 3]
 unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
