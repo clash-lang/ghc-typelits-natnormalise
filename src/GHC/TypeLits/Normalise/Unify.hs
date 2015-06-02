@@ -261,8 +261,14 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 -- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct (S ps1)       (S ps2)
     | null psx  = []
-    | otherwise = unifiers' ct (S (ps1 \\ psx)) (S (ps2 \\ psx))
+    | otherwise = unifiers' ct (S ps1'') (S ps2'')
   where
+    ps1'  = ps1 \\ psx
+    ps2'  = ps2 \\ psx
+    ps1'' | null ps1' = [P [I 0]]
+          | otherwise = ps1'
+    ps2'' | null ps2' = [P [I 0]]
+          | otherwise = ps2'
     psx = intersect ps1 ps2
 
 -- | Find the 'TyVar' in a 'CoreSOP'
