@@ -83,4 +83,5 @@ test-suite test-ghc-typelits-natnormalise
                        tasty-hunit >= 0.9
   hs-source-dirs:      tests
   default-language:    Haskell2010
-  ghc-options:         -O0 -dcore-lint
+  if flag(deverror)
+    ghc-options:       -O0 -dcore-lint
