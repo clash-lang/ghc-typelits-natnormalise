@@ -51,7 +51,7 @@ where
 -- external
 import Data.IORef          (IORef, newIORef,readIORef, modifyIORef)
 import Data.Maybe          (catMaybes, mapMaybe)
-import GHC.TcPluginM.Extra (evByFiat, failWithProvenace, newSimpleGiven,
+import GHC.TcPluginM.Extra (evByFiat, failWithProvenace, newGiven,
                             newWantedWithProvenance, tracePlugin)
 
 -- GHC API
@@ -60,7 +60,7 @@ import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm)
 import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, zonkCt)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   ctPred, ctLoc, isGiven, isWanted)
+                   ctPred, ctLoc, isGiven, isWanted, mkNonCanonical)
 import TcType     (mkEqPred, typeKind)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), Type, TyVar,
                    classifyPredType, mkTyVarTy)
@@ -121,12 +121,12 @@ substItemToCt :: [Ct] -- ^ Existing wanteds wanted
               -> TcPluginM (Maybe Ct)
 substItemToCt existingWanteds si
   | isGiven (ctEvidence ct)
-  = Just <$> newSimpleGiven "ghc-typelits-natnormalise" loc ty1 ty2
+  = Just <$> mkNonCanonical <$> newGiven loc predicate evTm
 
   -- Only create new wanteds
   | predicate  `notElem` wantedPreds
   , predicateS `notElem` wantedPreds
-  = Just <$> newWantedWithProvenance (ctEvidence ct) predicate
+  = Just <$> mkNonCanonical <$> newWantedWithProvenance (ctEvidence ct) predicate
 
   | otherwise
   = return Nothing
@@ -143,6 +143,7 @@ substItemToCt existingWanteds si
                   (UnifyItem {..}) -> reifySOP siRHS
     ct        = siNote si
     loc       = ctLoc ct
+    evTm      = evByFiat "ghc-typelits-natnormalise" ty1 ty2
 
 type NatEquality = (Ct,CoreSOP,CoreSOP)
 
@@ -190,5 +191,5 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
 
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
-  EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise" (t1, t2))
+  EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise" t1 t2)
   _                  -> Nothing
