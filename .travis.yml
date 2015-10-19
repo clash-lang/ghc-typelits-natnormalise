@@ -32,6 +32,7 @@ install:
       rm -f $HOME/.cabal-sandbox/$GHCVER/packages/00-index.tar
     fi
   - $CABAL sandbox init --sandbox=$HOME/.cabal-sandbox/$GHCVER
+  - git clone https://github.com/clash-lang/ghc-tcplugins-extra.git
   - $CABAL sandbox add-source ghc-tcplugins-extra
   - $CABAL install $JOPTS --enable-tests --dependencies-only
 
