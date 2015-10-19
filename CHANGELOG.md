@@ -1,5 +1,10 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.3.2
+* Find more unifications:
+  * `(z ^ a) ~ (z ^ b) ==> [a := b]`
+  * `(i ^ a) ~ j ==> [a := round (logBase i j)]`, when `i` and `j` are integers, and `ceiling (logBase i j) == floor (logBase i j)`.
+
 ## 0.3.1 *October 19th 2015*
 * Find more unifications:
   * `(i * a) ~ j ==> [a := div j i]`, when `i` and `j` are integers, and `mod j i == 0`.

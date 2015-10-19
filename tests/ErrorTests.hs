@@ -56,3 +56,17 @@ testProxy5Errors =
   ["Expected type: Proxy 7 -> ()"
   ,"Actual type: Proxy ((2 * y1) + 4) -> ()"
   ]
+
+proxyFun6 :: Proxy (2^k) -> Proxy (2^k)
+proxyFun6 = const Proxy
+
+testProxy6 :: Proxy 7
+testProxy6 = proxyFun6 (Proxy :: Proxy 7)
+
+testProxy6Errors =
+  ["Expected type: Proxy (2 ^ k0)"
+  ,"Actual type: Proxy 7"
+  ]
+
+proxyFun7 :: Proxy (2^k) -> Proxy k
+proxyFun7 = const Proxy

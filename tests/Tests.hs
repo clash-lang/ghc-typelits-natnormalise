@@ -266,6 +266,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "show (proxyFun4 (Proxy :: Proxy 8))" $
       show (proxyFun4 (Proxy :: Proxy 8)) @?=
       "()"
+    , testCase "show (proxyFun7 (Proxy :: Proxy 8) :: Proxy 3)" $
+      show (proxyFun7 (Proxy :: Proxy 8) :: Proxy 3) @?=
+      "Proxy"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
@@ -273,6 +276,7 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"x + x + x\" with \"8\"" $ testProxy3 `throws` testProxy3Errors
     , testCase "Unify \"(2*x)+4\" with \"2\"" $ testProxy4 `throws` testProxy4Errors
     , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
+    , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     ]
   ]
 

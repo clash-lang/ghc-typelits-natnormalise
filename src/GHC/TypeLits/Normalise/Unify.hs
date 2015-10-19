@@ -233,6 +233,31 @@ unifiers' ct s             (S [P [V x]]) = [SubstItem x s ct]
 unifiers' ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2 ct]
 unifiers' ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2 ct]
 
+
+-- (z ^ a) ~ (z ^ b) ==> [a := b]
+unifiers' ct (S [P [E s1 p1]]) (S [P [E s2 p2]])
+  | s1 == s2 = unifiers' ct (S [p1]) (S [p2])
+
+-- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
+-- and `ceiling (logBase i j) == floor (logBase i j)`
+unifiers' ct (S [P [E (S [P [I i]]) p]]) (S [P [I j]])
+    = if kC == kF
+         then unifiers' ct (S [p]) (S [P [I kC]])
+         else []
+  where
+    k  = logBase (fromInteger i :: Double) (fromInteger j)
+    kC = ceiling k :: Integer
+    kF = floor k :: Integer
+
+unifiers' ct (S [P [I j]]) (S [P [E (S [P [I i]]) p]])
+    = if kC == kF
+         then unifiers' ct (S [p]) (S [P [I kC]])
+         else []
+  where
+    k  = logBase (fromInteger i :: Double) (fromInteger j)
+    kC = ceiling k :: Integer
+    kF = floor k :: Integer
+
 -- (i * a) ~ j ==> [a := div j i]
 -- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
 unifiers' ct (S [P ((I i):ps)]) (S [P [I j]]) =
