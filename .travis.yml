@@ -17,6 +17,7 @@ cache:
 
 before_cache:
   - rm -f $HOME/.cabal-sandbox/$GHCVER/packages/00-index.tar
+  - $CABAL sandbox hc-pkg -- unregister ghc-typelits-natnormalise
 
 before_install:
   - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$PATH
