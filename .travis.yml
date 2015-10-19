@@ -11,6 +11,13 @@ matrix:
   allow_failures:
     - env: GHCVER=head CABALVER=head JOPTS="-j2"
 
+cache:
+  directories:
+  - $HOME/.cabal-sandbox
+
+before_cache:
+  - rm -f $HOME/.cabal-sandbox/$GHCVER/packages/00-index.tar
+
 before_install:
   - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$PATH
   - export CABAL=cabal-$CABALVER
@@ -19,14 +26,13 @@ before_install:
   - travis_retry $CABAL update
 
 install:
-  # if we are building on head, test against development versions of
-  # relevant dependencies
   - |
-    if [ $GHCVER = "head" ]; then
-      git clone https://github.com/clash-lang/ghc-tcplugins-extra.git
-      $CABAL sandbox init
-      $CABAL sandbox add-source ghc-tcplugins-extra
+    if [ -f $HOME/.cabal-sandbox/$GHCVER/packages/00-index.tar ]; then
+      echo "Deleting invalid install cache"
+      rm -f $HOME/.cabal-sandbox/$GHCVER/packages/00-index.tar
     fi
+  - $CABAL sandbox init --sandbox=$HOME/.cabal-sandbox/$GHCVER
+  - $CABAL sandbox add-source ghc-tcplugins-extra
   - $CABAL install $JOPTS --enable-tests --dependencies-only
 
 script:
