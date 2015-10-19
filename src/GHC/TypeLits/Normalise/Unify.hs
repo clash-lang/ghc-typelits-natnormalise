@@ -189,7 +189,7 @@ unifyNats' ct u v
 -- (a + c) ~ (b + c)  ==>  \[a := b\]
 -- (2*a) ~ (2*b)      ==>  [a := b]
 -- (2 + a) ~ 5        ==>  [a := 3]
--- (3 * a) ~ 0        ==>  [a := 0]
+-- (i * a) ~ j        ==>  [a := div j i], when (mod j i == 0)
 -- @
 --
 -- However, given a wanted:
@@ -233,9 +233,17 @@ unifiers' ct s             (S [P [V x]]) = [SubstItem x s ct]
 unifiers' ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2 ct]
 unifiers' ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2 ct]
 
--- (3 * a) ~ 0 ==> [a := 0]
-unifiers' ct (S [P ((I _):ps)]) (S [P [I 0]]) = unifiers' ct (S [P ps]) (S [P [I 0]])
-unifiers' ct (S [P [I 0]]) (S [P ((I _):ps)]) = unifiers' ct (S [P ps]) (S [P [I 0]])
+-- (i * a) ~ j ==> [a := div j i]
+-- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
+unifiers' ct (S [P ((I i):ps)]) (S [P [I j]]) =
+  case safeDiv j i of
+    Just k  -> unifiers' ct (S [P ps]) (S [P [I k]])
+    _       -> []
+
+unifiers' ct (S [P [I j]]) (S [P ((I i):ps)]) =
+  case safeDiv j i of
+    Just k  -> unifiers' ct (S [P ps]) (S [P [I k]])
+    _       -> []
 
 -- (2*a) ~ (2*b) ==> [a := b]
 -- unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
@@ -289,3 +297,10 @@ eqFV = (==) `on` fvSOP
 
 containsConstants :: CoreSOP -> Bool
 containsConstants = any (any (\c -> case c of {(C _) -> True; _ -> False}) . unP) . unS
+
+safeDiv :: Integer -> Integer -> Maybe Integer
+safeDiv i j
+  | j == 0    = Just 0
+  | otherwise = case divMod i j of
+                  (k,0) -> Just k
+                  _     -> Nothing

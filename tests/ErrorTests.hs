@@ -26,3 +26,33 @@ testProxy2Errors =
   ["Expected type: Proxy (GCD 6 8 + x) -> Proxy (x + GCD 9 6)"
   ,"Actual type: Proxy (x + 3) -> Proxy (x + 3)"
   ]
+
+proxyFun3 :: Proxy (x + x + x) -> ()
+proxyFun3 = const ()
+
+testProxy3 :: Proxy 8 -> ()
+testProxy3 = proxyFun3
+
+testProxy3Errors =
+  ["Expected type: Proxy 8 -> ()"
+  ,"Actual type: Proxy ((x0 + x0) + x0) -> ()"
+  ]
+
+proxyFun4 :: Proxy ((2*y)+4) -> ()
+proxyFun4 = const ()
+
+testProxy4 :: Proxy 2 -> ()
+testProxy4 = proxyFun4
+
+testProxy4Errors =
+  ["Expected type: Proxy 2 -> ()"
+  ,"Actual type: Proxy ((2 * y0) + 4) -> ()"
+  ]
+
+testProxy5 :: Proxy 7 -> ()
+testProxy5 = proxyFun4
+
+testProxy5Errors =
+  ["Expected type: Proxy 7 -> ()"
+  ,"Actual type: Proxy ((2 * y1) + 4) -> ()"
+  ]

@@ -102,7 +102,13 @@ data Symbol v c
   deriving (Eq,Ord)
 
 newtype Product v c = P { unP :: [Symbol v c] }
-  deriving (Eq,Ord)
+  deriving (Eq)
+
+instance (Ord v, Ord c) => Ord (Product v c) where
+  compare (P [x])   (P [y])   = compare x y
+  compare (P [_])   (P (_:_)) = LT
+  compare (P (_:_)) (P [_])   = GT
+  compare (P xs)    (P ys)    = compare xs ys
 
 newtype SOP v c = S { unS :: [Product v c] }
   deriving (Ord)

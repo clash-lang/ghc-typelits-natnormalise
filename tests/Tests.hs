@@ -260,10 +260,19 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil))" $
       show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil)) @?=
       "<<1,2,3,4>,<5,6,7,8>,<9,10,11,12>>"
+    , testCase "show (proxyFun3 (Proxy :: Proxy 9))" $
+      show (proxyFun3 (Proxy :: Proxy 9)) @?=
+      "()"
+    , testCase "show (proxyFun4 (Proxy :: Proxy 8))" $
+      show (proxyFun4 (Proxy :: Proxy 8)) @?=
+      "()"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
     , testCase "GCD 6 8 + x ~ x + GCD 9 6" $ testProxy2 `throws` testProxy2Errors
+    , testCase "Unify \"x + x + x\" with \"8\"" $ testProxy3 `throws` testProxy3Errors
+    , testCase "Unify \"(2*x)+4\" with \"2\"" $ testProxy4 `throws` testProxy4Errors
+    , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
     ]
   ]
 
