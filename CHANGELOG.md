@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.3.1
+## 0.3.1 *October 19th 2015*
 * Find more unifications:
   * `(i * a) ~ j ==> [a := div j i]`, when `i` and `j` are integers, and `mod j i == 0`.
   * `(i * a) + j ~ k  ==> [a := div (k-j) i]`, when `i`, `j`, and `k` are integers, and `k-j >= 0` and `mod (k-j) i == 0`.
