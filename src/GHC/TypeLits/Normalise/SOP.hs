@@ -284,10 +284,12 @@ simplifySOP
   . mergeWith mergeP
   . map (P . sort . map reduceExp . mergeWith mergeS . unP)
   . unS
+{-# INLINEABLE simplifySOP #-}  
 
 -- | Merge two SOP terms by additions
 mergeSOPAdd :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 mergeSOPAdd (S sop1) (S sop2) = simplifySOP $ S (sop1 ++ sop2)
+{-# INLINEABLE mergeSOPAdd #-}
 
 -- | Merge two SOP terms by multiplication
 mergeSOPMul :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
@@ -295,3 +297,4 @@ mergeSOPMul (S sop1) (S sop2)
   = simplifySOP
   . S
   $ concatMap (zipWith (\p1 p2 -> P (unP p1 ++ unP p2)) sop1 . repeat) sop2
+{-# INLINEABLE mergeSOPMul #-}

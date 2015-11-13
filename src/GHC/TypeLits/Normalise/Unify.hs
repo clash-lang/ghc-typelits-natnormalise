@@ -147,6 +147,7 @@ substsSubst s = map subt
   where
     subt si@(SubstItem {..}) = si {siSOP = substsSOP s siSOP}
     subt si@(UnifyItem {..}) = si {siLHS = substsSOP s siLHS, siRHS = substsSOP s siRHS}
+{-# INLINEABLE substsSubst #-}
 
 -- | Result of comparing two 'SOP' terms, returning a potential substitution
 -- list under which the two terms are equal.
