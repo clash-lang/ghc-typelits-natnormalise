@@ -61,7 +61,12 @@ import TcEvidence (EvTerm)
 import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, zonkCt)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
                    ctPred, ctLoc, isGiven, isWanted, mkNonCanonical)
+#if __GLASGOW_HASKELL__ >= 711
+import TcType     (typeKind)
+import Type       (mkPrimEqPred)
+#else
 import TcType     (mkEqPred, typeKind)
+#endif
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), Type, TyVar,
                    classifyPredType, mkTyVarTy)
 import TysWiredIn (typeNatKind)
@@ -131,8 +136,13 @@ substItemToCt existingWanteds si
   | otherwise
   = return Nothing
   where
+#if __GLASGOW_HASKELL__ >= 711
+    predicate   = mkPrimEqPred ty1 ty2
+    predicateS  = mkPrimEqPred ty2 ty1
+#else
     predicate   = mkEqPred ty1 ty2
     predicateS  = mkEqPred ty2 ty1
+#endif
     wantedPreds = map ctPred existingWanteds
 
     ty1       = case si of

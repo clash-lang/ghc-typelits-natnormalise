@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 
@@ -36,8 +37,12 @@ import TcPluginM     (TcPluginM, tcPluginTrace)
 import TcRnMonad     (Ct, ctEvidence, isGiven)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon)
-import Type          (TyVar, mkNumLitTy, mkTyConApp, mkTyVarTy, tcView)
+import Type          (TyVar, coreView, mkNumLitTy, mkTyConApp, mkTyVarTy)
+#if __GLASGOW_HASKELL__ >= 711
+import TyCoRep       (Type (..), TyLit (..))
+#else
 import TypeRep       (Type (..), TyLit (..))
+#endif
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
@@ -60,7 +65,7 @@ type CoreSymbol  = Symbol TyVar Type
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
 normaliseNat :: Type -> CoreSOP
-normaliseNat ty | Just ty1 <- tcView ty = normaliseNat ty1
+normaliseNat ty | Just ty1 <- coreView ty = normaliseNat ty1
 normaliseNat (TyVarTy v)          = S [P [V v]]
 normaliseNat (LitTy (NumTyLit i)) = S [P [I i]]
 normaliseNat (TyConApp tc [x,y])

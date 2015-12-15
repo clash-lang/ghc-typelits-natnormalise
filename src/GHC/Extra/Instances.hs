@@ -10,7 +10,10 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 module GHC.Extra.Instances where
 
-import Type          (Type,cmpType)
+import Type          (Type,eqType,cmpType)
+
+instance Eq Type where
+  (==) = eqType
 
 instance Ord Type where
   compare = cmpType
