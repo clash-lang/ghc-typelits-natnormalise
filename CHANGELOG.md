@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.4
+* Stop using 'provenance' hack to create conditional evidence (GHC 8.0+ only)
+
 ## 0.3.2
 * Find more unifications:
   * `(z ^ a) ~ (z ^ b) ==> [a := b]`

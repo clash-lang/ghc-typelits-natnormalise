@@ -110,7 +110,8 @@ reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
-type CoreUnify     = TyUnify TyVar Type Ct
+type CoreUnify a = TyUnify TyVar Type a
+
 type TyUnify v c n = [UnifyItem v c n]
 
 data UnifyItem v c n = SubstItem { siVar  :: v
@@ -159,7 +160,7 @@ substsSubst s = map subt
 data UnifyResult
   = Win            -- ^ Two terms are equal
   | Lose           -- ^ Two terms are /not/ equal
-  | Draw CoreUnify -- ^ Two terms are only equal if the given substitution holds
+  | Draw (CoreUnify Ct) -- ^ Two terms are only equal if the given substitution holds
 
 instance Outputable UnifyResult where
   ppr Win          = text "Win"
@@ -218,7 +219,7 @@ unifyNats' ct u v
 -- @
 -- [a := b]
 -- @
-unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreUnify
+unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
 unifiers ct (S [P [V x]]) s
   | isGiven (ctEvidence ct) = [SubstItem x s ct]
   | otherwise               = []
@@ -229,7 +230,7 @@ unifiers _ (S [P [C _]]) _  = []
 unifiers _ _ (S [P [C _]])  = []
 unifiers ct u v             = unifiers' ct u v
 
-unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify
+unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
 unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
 unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
 

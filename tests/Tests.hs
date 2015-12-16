@@ -8,7 +8,6 @@
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
-import Data.Proxy
 import GHC.TypeLits
 import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)

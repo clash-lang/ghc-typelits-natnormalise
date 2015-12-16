@@ -1,11 +1,21 @@
 {-# LANGUAGE DataKinds, KindSignatures, TypeFamilies, TypeOperators #-}
+-- FIXME: remove the following once GHC Trac #11230 is fixed
+-- https://ghc.haskell.org/trac/ghc/ticket/11230
+{-# LANGUAGE PolyKinds, RoleAnnotations #-}
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 module ErrorTests where
 
-import Data.Proxy
 import GHC.TypeLits
+
+-- FIXME: replace by "import Data.Proxy"
+-- Currently needed on GHC HEAD to work around:
+-- https://ghc.haskell.org/trac/ghc/ticket/11230
+data Proxy k = Proxy
+type role Proxy nominal
+instance Show (Proxy k) where
+  show _ = "Proxy"
 
 testProxy1 :: Proxy (x + 1) -> Proxy (2 + x)
 testProxy1 = id

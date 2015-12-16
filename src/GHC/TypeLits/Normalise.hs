@@ -5,6 +5,10 @@
 
 {-# OPTIONS_HADDOCK show-extensions #-}
 
+#if __GLASGOW_HASKELL__ < 711
+{-# OPTIONS_GHC -fno-warn-deprecations #-}
+#endif
+
 {-|
 Copyright  :  (C) 2015, University of Twente
 License    :  BSD2 (see the file LICENSE)
@@ -51,25 +55,32 @@ where
 -- external
 import Data.IORef          (IORef, newIORef,readIORef, modifyIORef)
 import Data.Maybe          (catMaybes, mapMaybe)
-import GHC.TcPluginM.Extra (evByFiat, failWithProvenace, newGiven,
-                            newWantedWithProvenance, tracePlugin)
+import GHC.TcPluginM.Extra (evByFiat, newGiven, tracePlugin)
 
 -- GHC API
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
-import TcEvidence (EvTerm)
+import TcEvidence (EvTerm (..))
 import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, zonkCt)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
                    ctPred, ctLoc, isGiven, isWanted, mkNonCanonical)
-#if __GLASGOW_HASKELL__ >= 711
-import TcType     (typeKind)
-import Type       (mkPrimEqPred)
-#else
-import TcType     (mkEqPred, typeKind)
-#endif
-import Type       (EqRel (NomEq), Kind, PredTree (EqPred), Type, TyVar,
-                   classifyPredType, mkTyVarTy)
+import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type, TyVar,
+                   classifyPredType, getEqPredTys, mkTyVarTy)
 import TysWiredIn (typeNatKind)
+
+#if __GLASGOW_HASKELL__ >= 711
+import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
+                   mkNomReflCo, mkUnivCo)
+import TcPluginM  (newCoercionHole, newFlexiTyVar)
+import TcRnTypes  (CtEvidence (..), TcEvDest (..))
+import TyCoRep    (UnivCoProvenance (..))
+import Type       (mkPrimEqPred)
+import TcType     (typeKind)
+#else
+import TcType              (mkEqPred, typeKind)
+import GHC.TcPluginM.Extra (newWantedWithProvenance, failWithProvenace)
+#endif
+
 
 -- internal
 import GHC.Extra.Instances () -- Ord instance for Ct
@@ -109,7 +120,11 @@ decideEqualSOP discharged givens  _deriveds wanteds = do
           Simplified subst evs -> do
             let solved     = filter (isWanted . ctEvidence . snd) evs
             -- Create new wanted constraints
+#if __GLASGOW_HASKELL__ >= 711
+            let newWanteds = filter (isWanted . ctEvidence . snd . siNote) subst
+#else
             let newWanteds = filter (isWanted . ctEvidence . siNote) subst
+#endif
             discharedWanteds <- tcPluginIO (readIORef discharged)
             let existingWanteds = wanteds' ++ discharedWanteds
             newWantedConstraints <- catMaybes <$>
@@ -119,10 +134,14 @@ decideEqualSOP discharged givens  _deriveds wanteds = do
             tcPluginIO (modifyIORef discharged (++ newWantedConstraints))
             -- return
             return (TcPluginOk solved newWantedConstraints)
-          Impossible eq -> failWithProvenace $ fromNatEquality eq
+#if __GLASGOW_HASKELL__ >= 711
+          Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
+#else
+          Impossible eq -> failWithProvenace (fromNatEquality eq)
+#endif
 
 substItemToCt :: [Ct] -- ^ Existing wanteds wanted
-              -> UnifyItem TyVar Type Ct
+              -> UnifyItem TyVar Type CoreNote
               -> TcPluginM (Maybe Ct)
 substItemToCt existingWanteds si
   | isGiven (ctEvidence ct)
@@ -131,37 +150,57 @@ substItemToCt existingWanteds si
   -- Only create new wanteds
   | predicate  `notElem` wantedPreds
   , predicateS `notElem` wantedPreds
+#if __GLASGOW_HASKELL__ >= 711
+  = return (Just (mkNonCanonical (CtWanted predicate (HoleDest ev) loc)))
+#else
   = Just <$> mkNonCanonical <$> newWantedWithProvenance (ctEvidence ct) predicate
+#endif
 
   | otherwise
   = return Nothing
   where
+    predicate   = unifyItemToPredType si
+    (ty1,ty2)   = getEqPredTys predicate
 #if __GLASGOW_HASKELL__ >= 711
-    predicate   = mkPrimEqPred ty1 ty2
-    predicateS  = mkPrimEqPred ty2 ty1
+    predicateS    = mkPrimEqPred ty2 ty1
+    ((ev,_,_),ct) = siNote si
 #else
-    predicate   = mkEqPred ty1 ty2
     predicateS  = mkEqPred ty2 ty1
+    ct          = siNote si
 #endif
     wantedPreds = map ctPred existingWanteds
 
-    ty1       = case si of
-                  (SubstItem {..}) -> mkTyVarTy siVar
-                  (UnifyItem {..}) -> reifySOP siLHS
-    ty2       = case si of
-                  (SubstItem {..}) -> reifySOP siSOP
-                  (UnifyItem {..}) -> reifySOP siRHS
-    ct        = siNote si
     loc       = ctLoc ct
     evTm      = evByFiat "ghc-typelits-natnormalise" ty1 ty2
+
+unifyItemToPredType :: UnifyItem TyVar Type a -> PredType
+unifyItemToPredType ui =
+#if __GLASGOW_HASKELL__ >= 711
+    mkPrimEqPred ty1 ty2
+#else
+    mkEqPred ty1 ty2
+#endif
+  where
+    ty1 = case ui of
+            SubstItem {..} -> mkTyVarTy siVar
+            UnifyItem {..} -> reifySOP siLHS
+    ty2 = case ui of
+            SubstItem {..} -> reifySOP siSOP
+            UnifyItem {..} -> reifySOP siRHS
 
 type NatEquality = (Ct,CoreSOP,CoreSOP)
 
 fromNatEquality :: NatEquality -> Ct
 fromNatEquality (ct, _, _) = ct
 
+#if __GLASGOW_HASKELL__ >= 711
+type CoreNote = ((CoercionHole,TyVar,PredType), Ct)
+#else
+type CoreNote = Ct
+#endif
+
 data SimplifyResult
-  = Simplified CoreUnify [(EvTerm,Ct)]
+  = Simplified (CoreUnify CoreNote) [(EvTerm,Ct)]
   | Impossible NatEquality
 
 instance Outputable SimplifyResult where
@@ -173,20 +212,38 @@ simplifyNats :: [NatEquality]
 simplifyNats eqs =
     tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples :: CoreUnify -> [Maybe (EvTerm, Ct)] -> [NatEquality]
+    simples :: CoreUnify CoreNote -> [Maybe (EvTerm, Ct)] -> [NatEquality]
             -> [NatEquality] -> TcPluginM SimplifyResult
     simples subst evs _xs [] = return (Simplified subst (catMaybes evs))
     simples subst evs xs (eq@(ct,u,v):eqs') = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
+#if __GLASGOW_HASKELL__ >= 711
+        Win         -> simples subst (((,) <$> evMagic ct [] <*> pure ct):evs) []
+                               (xs ++ eqs')
+        Lose        -> return (Impossible eq)
+        Draw []     -> simples subst evs (eq:xs) eqs'
+        Draw subst' -> do
+          newEvs <- mapM (\si -> (,,) <$> newCoercionHole
+                                      <*> newFlexiTyVar typeNatKind
+                                      <*> pure (unifyItemToPredType si))
+                         subst'
+          let subst'' = zipWith (\si ev -> si {siNote = (ev,siNote si)})
+                                subst' newEvs
+          simples (substsSubst subst'' subst ++ subst'')
+            (((,) <$> evMagic ct newEvs <*> pure ct):evs)
+            [] (xs ++ eqs')
+#else
         Win         -> simples subst (((,) <$> evMagic ct <*> pure ct):evs) []
                                (xs ++ eqs')
         Lose        -> return (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs'
-        Draw subst' -> simples (substsSubst subst' subst ++ subst')
-                               (((,) <$> evMagic ct <*> pure ct):evs)
-                               [] (xs ++ eqs')
+        Draw subst' -> do
+          simples (substsSubst subst' subst ++ subst')
+                  (((,) <$> evMagic ct <*> pure ct):evs)
+                  [] (xs ++ eqs')
+#endif
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Maybe NatEquality
@@ -199,7 +256,22 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind :: Kind -> Bool
     isNatKind = (== typeNatKind)
 
+#if __GLASGOW_HASKELL__ >= 711
+evMagic :: Ct -> [(CoercionHole, TyVar, PredType)] -> Maybe EvTerm
+evMagic ct evs = case classifyPredType $ ctEvPred $ ctEvidence ct of
+  EqPred NomEq t1 t2 ->
+    let ctEv = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
+        (holes,tvs,preds) = unzip3 evs
+        holeEvs = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p))
+                          holes preds
+        natReflCo = mkNomReflCo typeNatKind
+        forallEv = mkForAllCos (map (,natReflCo) tvs) ctEv
+        finalEv = foldl mkInstCo forallEv holeEvs
+    in  Just (EvCoercion finalEv)
+  _ -> Nothing
+#else
 evMagic :: Ct -> Maybe EvTerm
 evMagic ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
   EqPred NomEq t1 t2 -> Just (evByFiat "ghc-typelits-natnormalise" t1 t2)
   _                  -> Nothing
+#endif
