@@ -35,9 +35,11 @@ import Data.List     ((\\), intersect)
 import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
 import TcRnMonad     (Ct, ctEvidence, isGiven)
+import TcRnTypes     (ctEvPred)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon)
-import Type          (TyVar, coreView, mkNumLitTy, mkTyConApp, mkTyVarTy)
+import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
+                      coreView, mkNumLitTy, mkTyConApp, mkTyVarTy)
 #if __GLASGOW_HASKELL__ >= 711
 import TyCoRep       (Type (..), TyLit (..))
 #else
@@ -179,12 +181,15 @@ unifyNats ct u v = do
 
 unifyNats' :: Ct -> CoreSOP -> CoreSOP -> UnifyResult
 unifyNats' ct u v
-  | eqFV u v
-  , not (containsConstants u)
-  , not (containsConstants v)
-  = if u == v then Win else Lose
-  | otherwise
-  = Draw (unifiers ct u v)
+  = if eqFV u v
+       then if containsConstants u || containsConstants v
+               then if u == v
+                       then Win
+                       else Draw (unifiers ct u v)
+               else if u == v
+                       then Win
+                       else Lose
+       else Draw (unifiers ct u v)
 
 -- | Find unifiers for two SOP terms
 --
@@ -220,14 +225,26 @@ unifyNats' ct u v
 -- [a := b]
 -- @
 unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
-unifiers ct (S [P [V x]]) s
-  | isGiven (ctEvidence ct) = [SubstItem x s ct]
-  | otherwise               = []
-unifiers ct s (S [P [V x]])
-  | isGiven (ctEvidence ct) = [SubstItem x s ct]
-  | otherwise               = []
-unifiers _ (S [P [C _]]) _  = []
-unifiers _ _ (S [P [C _]])  = []
+unifiers ct u@(S [P [V x]]) v
+  = case classifyPredType $ ctEvPred $ ctEvidence ct of
+      EqPred NomEq t1 _
+        | reifySOP u /= t1 || isGiven (ctEvidence ct) -> [SubstItem x v ct]
+      _ -> []
+unifiers ct u v@(S [P [V x]])
+  = case classifyPredType $ ctEvPred $ ctEvidence ct of
+      EqPred NomEq _ t2
+        | reifySOP v /= t2 || isGiven (ctEvidence ct) -> [SubstItem x u ct]
+      _ -> []
+unifiers ct u@(S [P [C _]]) v
+  = case classifyPredType $ ctEvPred $ ctEvidence ct of
+      EqPred NomEq t1 t2
+        | reifySOP u /= t1 || reifySOP v /= t2 -> [UnifyItem u v ct]
+      _ -> []
+unifiers ct u v@(S [P [C _]])
+  = case classifyPredType $ ctEvPred $ ctEvidence ct of
+      EqPred NomEq t1 t2
+        | reifySOP u /= t1 || reifySOP v /= t2 -> [UnifyItem u v ct]
+      _ -> []
 unifiers ct u v             = unifiers' ct u v
 
 unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
