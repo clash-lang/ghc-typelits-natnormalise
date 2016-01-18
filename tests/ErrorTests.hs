@@ -80,3 +80,11 @@ testProxy6Errors =
 
 proxyFun7 :: Proxy (2^k) -> Proxy k
 proxyFun7 = const Proxy
+
+testProxy8 :: Proxy x -> Proxy (y + x)
+testProxy8 = id
+
+testProxy8Errors =
+  ["Expected type: Proxy x -> Proxy (y + x)"
+  ,"Actual type: Proxy x -> Proxy x"
+  ]
