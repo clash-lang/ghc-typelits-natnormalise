@@ -1,4 +1,4 @@
-# ghc-tynat-normalise
+# ghc-typelits-natnormalise
 
 [![Build Status](https://secure.travis-ci.org/clash-lang/ghc-typelits-natnormalise.png?branch=master)](http://travis-ci.org/clash-lang/ghc-typelits-natnormalise)
 [![Hackage](https://img.shields.io/hackage/v/ghc-typelits-natnormalise.svg)](https://hackage.haskell.org/package/ghc-typelits-natnormalise)
