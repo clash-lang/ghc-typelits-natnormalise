@@ -1,7 +1,5 @@
-{-# LANGUAGE CPP #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-|
-Copyright  :  (C) 2015, University of Twente
+Copyright  :  (C) 2015-2016, University of Twente
 License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
@@ -9,6 +7,10 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
 * 'Ord' instance for 'Type' and 'Ct'
 -}
+
+{-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module GHC.Extra.Instances where
 
 import Type (Type,cmpType)

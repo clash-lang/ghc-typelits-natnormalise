@@ -1,12 +1,13 @@
+{-|
+Copyright  :  (C) 2015-2016, University of Twente
+License    :  BSD2 (see the file LICENSE)
+Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
+-}
+
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 
-{-|
-Copyright  :  (C) 2015, University of Twente
-License    :  BSD2 (see the file LICENSE)
-Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
--}
 module GHC.TypeLits.Normalise.Unify
   ( -- * 'Nat' expressions \<-\> 'SOP' terms
     CoreSOP

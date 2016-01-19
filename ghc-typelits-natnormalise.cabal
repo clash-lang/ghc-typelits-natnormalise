@@ -41,7 +41,7 @@ license:             BSD2
 license-file:        LICENSE
 author:              Christiaan Baaij
 maintainer:          christiaan.baaij@gmail.com
-copyright:           Copyright © 2015 University of Twente
+copyright:           Copyright © 2015-2016 University of Twente
 category:            Type System
 build-type:          Simple
 extra-source-files:  README.md
@@ -82,7 +82,7 @@ test-suite test-ghc-typelits-natnormalise
   main-is:             Tests.hs
   Other-Modules:       ErrorTests
   build-depends:       base >=4.8 && <5,
-                       ghc-typelits-natnormalise >= 0.1,
+                       ghc-typelits-natnormalise >= 0.4,
                        tasty >= 0.10,
                        tasty-hunit >= 0.9
   hs-source-dirs:      tests

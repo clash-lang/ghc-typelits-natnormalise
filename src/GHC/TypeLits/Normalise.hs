@@ -1,16 +1,5 @@
-{-# LANGUAGE CPP             #-}
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TupleSections   #-}
-
-{-# OPTIONS_HADDOCK show-extensions #-}
-
-#if __GLASGOW_HASKELL__ < 711
-{-# OPTIONS_GHC -fno-warn-deprecations #-}
-#endif
-
 {-|
-Copyright  :  (C) 2015, University of Twente
+Copyright  :  (C) 2015-2016, University of Twente
 License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
