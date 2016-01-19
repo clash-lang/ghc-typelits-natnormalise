@@ -37,6 +37,18 @@ To use the plugin, add
 
 To the header of your file.
 -}
+
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections   #-}
+
+{-# OPTIONS_HADDOCK show-extensions #-}
+
+#if __GLASGOW_HASKELL__ < 711
+{-# OPTIONS_GHC -fno-warn-deprecations #-}
+#endif
+
 module GHC.TypeLits.Normalise
   ( plugin )
 where
