@@ -284,7 +284,7 @@ simplifySOP
   . mergeWith mergeP
   . map (P . sort . map reduceExp . mergeWith mergeS . unP)
   . unS
-{-# INLINEABLE simplifySOP #-}  
+{-# INLINEABLE simplifySOP #-}
 
 -- | Merge two SOP terms by additions
 mergeSOPAdd :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
