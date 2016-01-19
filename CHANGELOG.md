@@ -2,6 +2,8 @@
 
 ## 0.4
 * Stop using 'provenance' hack to create conditional evidence (GHC 8.0+ only)
+* Find more unifications:
+  * `F x + 2 - 1 - 1 ~ F x` ==> [F x := F x], where `F` can be any type function with result `Nat`.
 
 ## 0.3.2
 * Find more unifications:
