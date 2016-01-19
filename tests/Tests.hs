@@ -14,6 +14,7 @@ import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
 
 import Data.List (isInfixOf)
+import Data.Proxy
 import Control.Exception
 import Test.Tasty
 import Test.Tasty.HUnit
