@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.4
+## 0.4 *January 19th 2016*
 * Stop using 'provenance' hack to create conditional evidence (GHC 8.0+ only)
 * Find more unifications:
   * `F x + 2 - 1 - 1 ~ F x` ==> [F x := F x], where `F` can be any type function with result `Nat`.
