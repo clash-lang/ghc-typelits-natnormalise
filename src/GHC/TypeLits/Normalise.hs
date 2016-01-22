@@ -55,6 +55,7 @@ where
 
 -- external
 import Data.IORef          (IORef, newIORef,readIORef, modifyIORef)
+import Data.List           (intersect)
 import Data.Maybe          (catMaybes, mapMaybe)
 import GHC.TcPluginM.Extra (evByFiat, newGiven, tracePlugin)
 
@@ -81,6 +82,13 @@ import TcType     (typeKind)
 import TcType              (mkEqPred, typeKind)
 import GHC.TcPluginM.Extra (newWantedWithProvenance, failWithProvenace)
 #endif
+#if __GLASGOW_HASKELL__ >= 711
+import TyCoRep       (Type (..))
+#else
+import TypeRep       (Type (..))
+#endif
+import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
+                      typeNatSubTyCon)
 
 
 -- internal
@@ -250,10 +258,23 @@ simplifyNats eqs =
 toNatEquality :: Ct -> Maybe NatEquality
 toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2
-      | isNatKind (typeKind t1) || isNatKind (typeKind t1)
-      -> Just (ct,normaliseNat t1,normaliseNat t2)
+      -> go t1 t2
     _ -> Nothing
   where
+    go (TyConApp tc xs) (TyConApp tc' ys)
+      | tc == tc'
+      , null ([tc,tc'] `intersect` [typeNatAddTyCon,typeNatSubTyCon
+                                   ,typeNatMulTyCon,typeNatExpTyCon])
+      = case filter (uncurry (/=)) (zip xs ys) of
+          [(x,y)] | isNatKind (typeKind x) &&  isNatKind (typeKind y)
+                  -> Just (ct, normaliseNat x, normaliseNat y)
+          _ -> Nothing
+    go x y
+      | isNatKind (typeKind x) && isNatKind (typeKind y)
+      = Just (ct,normaliseNat x,normaliseNat y)
+      | otherwise
+      = Nothing
+
     isNatKind :: Kind -> Bool
     isNatKind = (== typeNatKind)
 

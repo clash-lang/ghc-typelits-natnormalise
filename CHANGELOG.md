@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.4.1
+* Find more unifications:
+  * `F x y k z ~ F x y (k-1+1) z` ==> [k := k], where `F` can be any type function
+
 ## 0.4 *January 19th 2016*
 * Stop using 'provenance' hack to create conditional evidence (GHC 8.0+ only)
 * Find more unifications:
