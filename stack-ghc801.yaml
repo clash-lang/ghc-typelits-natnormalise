@@ -21,3 +21,7 @@ extra-deps:
 - text-1.2.2.0
 - transformers-compat-0.5.1.4
 - unbounded-delays-0.1.0.9
+
+flags:
+  ghc-typelits-natnormalise:
+    deverror: true

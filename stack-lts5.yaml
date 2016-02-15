@@ -2,3 +2,7 @@ resolver: lts-5.0
 
 packages:
 - .
+
+flags:
+  ghc-typelits-natnormalise:
+    deverror: true
