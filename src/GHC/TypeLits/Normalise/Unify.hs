@@ -354,6 +354,7 @@ unifiers' ct (S ps1)       (S ps2)
           | otherwise = ps2'
     psx = intersect ps1 ps2
 
+unifiers'' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
 unifiers'' ct (S [P [I i],P [V v]]) s2
   | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]])) ct]
 unifiers'' ct s1 (S [P [I i],P [V v]])
