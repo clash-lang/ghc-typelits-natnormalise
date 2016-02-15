@@ -4,7 +4,7 @@
 * Find more unifications:
   * `(2*e ^ d) ~ (2*e*a*c) ==> [a*c := 2*e ^ (d-1)]`
   * `a^d * a^e ~ a^c ==> [c := d + e]`
-  * `x+5 ~ y ==> [x := y - 5]`
+  * `x+5 ~ y ==> [x := y - 5]`, but only when `x+5 ~ y` is a given constraint
 
 ## 0.4.1 *February 4th 2016*
 * Find more unifications:

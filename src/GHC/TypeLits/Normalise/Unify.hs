@@ -341,12 +341,9 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
     | i < j     = unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
     | i > j     = unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
 
-unifiers' ct (S [P [I i],P [V v]]) s2 = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]])) ct]
-unifiers' ct s1 (S [P [I i],P [V v]]) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]])) ct]
-
 -- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct (S ps1)       (S ps2)
-    | null psx  = []
+    | null psx  = unifiers'' ct (S ps1) (S ps2)
     | otherwise = unifiers' ct (S ps1'') (S ps2'')
   where
     ps1'  = ps1 \\ psx
@@ -356,6 +353,12 @@ unifiers' ct (S ps1)       (S ps2)
     ps2'' | null ps2' = [P [I 0]]
           | otherwise = ps2'
     psx = intersect ps1 ps2
+
+unifiers'' ct (S [P [I i],P [V v]]) s2
+  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]])) ct]
+unifiers'' ct s1 (S [P [I i],P [V v]])
+  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]])) ct]
+unifiers'' _ _ _ = []
 
 collectBases :: CoreProduct -> Maybe ([CoreSOP],[CoreProduct])
 collectBases = fmap unzip . traverse go . unP
