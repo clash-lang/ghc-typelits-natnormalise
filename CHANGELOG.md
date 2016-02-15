@@ -1,5 +1,11 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.4.2
+* Find more unifications:
+  * `(2*e ^ d) ~ (2*e*a*c) ==> [a*c := 2*e ^ (d-1)]`
+  * `a^d * a^e ~ a^c ==> [c := d + e]`
+  * `x+5 ~ y ==> [x := y - 5]`
+
 ## 0.4.1 *February 4th 2016*
 * Find more unifications:
   * `F x y k z ~ F x y (k-1+1) z` ==> [k := k], where `F` can be any type function

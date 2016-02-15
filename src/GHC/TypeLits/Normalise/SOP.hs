@@ -272,18 +272,30 @@ zeroP :: Product v c -> Bool
 zeroP (P ((I 0):_)) = True
 zeroP _             = False
 
+mkNonEmpty :: SOP v c -> SOP v c
+mkNonEmpty (S []) = S [P [(I 0)]]
+mkNonEmpty s      = s
+
 -- | Simplifies SOP terms using
 --
 -- * 'mergeS'
 -- * 'mergeP'
 -- * 'reduceExp'
 simplifySOP :: (Ord v, Ord c) => SOP v c -> SOP v c
-simplifySOP
-  = S
-  . sort . filter (not . zeroP)
-  . mergeWith mergeP
-  . map (P . sort . map reduceExp . mergeWith mergeS . unP)
-  . unS
+simplifySOP = repeatF go
+  where
+    go = mkNonEmpty
+       . S
+       . sort . filter (not . zeroP)
+       . mergeWith mergeP
+       . map (P . sort . map reduceExp . mergeWith mergeS . unP)
+       . unS
+
+    repeatF f x =
+      let x' = f x
+      in  if x' == x
+             then x
+             else repeatF f x'
 {-# INLINEABLE simplifySOP #-}
 
 -- | Merge two SOP terms by additions

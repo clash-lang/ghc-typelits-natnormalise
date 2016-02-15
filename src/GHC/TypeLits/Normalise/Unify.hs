@@ -6,6 +6,7 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE RecordWildCards #-}
+
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 
 module GHC.TypeLits.Normalise.Unify
@@ -30,7 +31,7 @@ where
 
 -- External
 import Data.Function (on)
-import Data.List     ((\\), intersect)
+import Data.List     ((\\), intersect, mapAccumL)
 
 -- GHC API
 import Outputable    (Outputable (..), (<+>), ($$), text)
@@ -85,7 +86,7 @@ reifySOP :: CoreSOP -> Type
 reifySOP = combineP . map negateP . unS
   where
     negateP :: CoreProduct -> Either CoreProduct CoreProduct
-    negateP (P ((I i):ps)) | i < 0 = Left  (P ps)
+    negateP (P ((I i):ps)) | i < 0 = Left  (P ((I (abs i)):ps))
     negateP ps                     = Right ps
 
     combineP :: [Either CoreProduct CoreProduct] -> Type
@@ -263,6 +264,19 @@ unifiers' ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2 ct]
 unifiers' ct (S [P [E s1 p1]]) (S [P [E s2 p2]])
   | s1 == s2 = unifiers' ct (S [p1]) (S [p2])
 
+-- (2*e ^ d) ~ (2*e*a*c) ==> [a*c := 2*e ^ (d-1)]
+unifiers' ct (S [P [E (S [P s1]) p1]]) (S [P p2])
+  | all (`elem` p2) s1
+  = let base = intersect s1 p2
+        diff = p2 \\ s1
+    in  unifiers ct (S [P diff]) (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]])
+
+unifiers' ct (S [P p2]) (S [P [E (S [P s1]) p1]])
+  | all (`elem` p2) s1
+  = let base = intersect s1 p2
+        diff = p2 \\ s1
+    in  unifiers ct (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]]) (S [P diff])
+
 -- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
 -- and `ceiling (logBase i j) == floor (logBase i j)`
 unifiers' ct (S [P [E (S [P [I i]]) p]]) (S [P [I j]])
@@ -282,6 +296,17 @@ unifiers' ct (S [P [I j]]) (S [P [E (S [P [I i]]) p]])
     k  = logBase (fromInteger i :: Double) (fromInteger j)
     kC = ceiling k :: Integer
     kF = floor k :: Integer
+
+-- a^d * a^e ~ a^c ==> [c := d + e]
+unifiers' ct (S [P [E s1 p1]]) (S [p2]) = case collectBases p2 of
+  Just (b:bs,ps) | all (== s1) (b:bs) ->
+    unifiers' ct (S [p1]) (S ps)
+  _ -> []
+
+unifiers' ct (S [p2]) (S [P [E s1 p1]]) = case collectBases p2 of
+  Just (b:bs,ps) | all (== s1) (b:bs) ->
+    unifiers' ct (S ps) (S [p1])
+  _ -> []
 
 -- (i * a) ~ j ==> [a := div j i]
 -- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
@@ -316,6 +341,9 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
     | i < j     = unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
     | i > j     = unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
 
+unifiers' ct (S [P [I i],P [V v]]) s2 = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]])) ct]
+unifiers' ct s1 (S [P [I i],P [V v]]) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]])) ct]
+
 -- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct (S ps1)       (S ps2)
     | null psx  = []
@@ -328,6 +356,12 @@ unifiers' ct (S ps1)       (S ps2)
     ps2'' | null ps2' = [P [I 0]]
           | otherwise = ps2'
     psx = intersect ps1 ps2
+
+collectBases :: CoreProduct -> Maybe ([CoreSOP],[CoreProduct])
+collectBases = fmap unzip . traverse go . unP
+  where
+    go (E s1 p1) = Just (s1,p1)
+    go _         = Nothing
 
 -- | Find the 'TyVar' in a 'CoreSOP'
 fvSOP :: CoreSOP -> UniqSet TyVar
