@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.4.3 *July 18th 2016*
+* Fixes bugs:
+  * False positive: "f :: (CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => Proxy n -> Proxy (n+d)"
+
 ## 0.4.2 *July 8th 2016*
 * Find more unifications:
   * `(2*e ^ d) ~ (2*e*a*c) ==> [a*c := 2*e ^ (d-1)]`

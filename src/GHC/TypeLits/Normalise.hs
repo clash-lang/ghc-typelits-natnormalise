@@ -54,10 +54,14 @@ module GHC.TypeLits.Normalise
 where
 
 -- external
+import Control.Arrow       (second)
 import Data.IORef          (IORef, newIORef,readIORef, modifyIORef)
 import Data.List           (intersect)
 import Data.Maybe          (catMaybes, mapMaybe)
-import GHC.TcPluginM.Extra (evByFiat, newGiven, tracePlugin)
+import GHC.TcPluginM.Extra (tracePlugin)
+#if __GLASGOW_HASKELL__ < 711
+import GHC.TcPluginM.Extra (evByFiat)
+#endif
 
 -- GHC API
 import Outputable (Outputable (..), (<+>), ($$), text)
@@ -65,7 +69,7 @@ import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (..))
 import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, zonkCt)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   ctPred, ctLoc, isGiven, isWanted, mkNonCanonical)
+                   ctPred, isWanted, mkNonCanonical)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, Type, TyVar,
                    classifyPredType, getEqPredTys, mkTyVarTy)
 import TysWiredIn (typeNatKind)
@@ -74,7 +78,7 @@ import TysWiredIn (typeNatKind)
 import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
 import TcPluginM  (newCoercionHole, newFlexiTyVar)
-import TcRnTypes  (CtEvidence (..), TcEvDest (..))
+import TcRnTypes  (CtEvidence (..), TcEvDest (..), ctLoc)
 import TyCoRep    (UnivCoProvenance (..))
 import Type       (mkPrimEqPred)
 import TcType     (typeKind)
@@ -126,45 +130,54 @@ decideEqualSOP discharged givens  _deriveds wanteds = do
         sr <- simplifyNats (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
-          Simplified subst evs -> do
-            let solved     = filter (isWanted . ctEvidence . snd) evs
-            -- Create new wanted constraints
-#if __GLASGOW_HASKELL__ >= 711
-            let newWanteds = filter (isWanted . ctEvidence . snd . siNote) subst
-#else
-            let newWanteds = filter (isWanted . ctEvidence . siNote) subst
-#endif
+          Simplified _subst evs -> do
+            let solved     = filter (isWanted . ctEvidence . (\(_,x,_) -> x)) evs
             discharedWanteds <- tcPluginIO (readIORef discharged)
             let existingWanteds = wanteds' ++ discharedWanteds
-            newWantedConstraints <- catMaybes <$>
-                                    mapM (substItemToCt existingWanteds)
-                                         newWanteds
+            -- Create new wanted constraints
+            (solved',newWanteds) <- (second concat . unzip . catMaybes) <$>
+                                    mapM (evItemToCt existingWanteds) solved
             -- update set of discharged wanteds
-            tcPluginIO (modifyIORef discharged (++ newWantedConstraints))
+            tcPluginIO (modifyIORef discharged (++ newWanteds))
             -- return
-            return (TcPluginOk solved newWantedConstraints)
+            return (TcPluginOk solved' newWanteds)
 #if __GLASGOW_HASKELL__ >= 711
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 #else
           Impossible eq -> failWithProvenace (fromNatEquality eq)
 #endif
 
+evItemToCt :: [Ct] -- ^ Existing wanteds
+           -> (EvTerm,Ct,CoreUnify CoreNote)
+           -> TcPluginM (Maybe ((EvTerm,Ct),[Ct]))
+evItemToCt existingWanteds (ev,ct,subst)
+    | null newWanteds = return (Just ((ev,ct),[]))
+    | otherwise = do
+        newWanteds' <- catMaybes <$> mapM (substItemToCt existingWanteds) newWanteds
+        -- only allow new (conditional) evidence if conditional wanted constraints
+        -- can be added as new work
+        if length newWanteds == length newWanteds'
+           then return (Just ((ev,ct),newWanteds'))
+           else return Nothing
+  where
+#if __GLASGOW_HASKELL__ >= 711
+    newWanteds = filter (isWanted . ctEvidence . snd . siNote) subst
+#else
+    newWanteds = filter (isWanted . ctEvidence . siNote) subst
+#endif
+
+
 substItemToCt :: [Ct] -- ^ Existing wanteds wanted
               -> UnifyItem TyVar Type CoreNote
               -> TcPluginM (Maybe Ct)
 substItemToCt existingWanteds si
-  | isGiven (ctEvidence ct)
-  = Just <$> mkNonCanonical <$> newGiven loc predicate evTm
-
-  -- Only create new wanteds
   | predicate  `notElem` wantedPreds
   , predicateS `notElem` wantedPreds
 #if __GLASGOW_HASKELL__ >= 711
-  = return (Just (mkNonCanonical (CtWanted predicate (HoleDest ev) loc)))
+  = return (Just (mkNonCanonical (CtWanted predicate (HoleDest ev) (ctLoc ct))))
 #else
   = Just <$> mkNonCanonical <$> newWantedWithProvenance (ctEvidence ct) predicate
 #endif
-
   | otherwise
   = return Nothing
   where
@@ -178,9 +191,6 @@ substItemToCt existingWanteds si
     ct          = siNote si
 #endif
     wantedPreds = map ctPred existingWanteds
-
-    loc       = ctLoc ct
-    evTm      = evByFiat "ghc-typelits-natnormalise" ty1 ty2
 
 unifyItemToPredType :: UnifyItem TyVar Type a -> PredType
 unifyItemToPredType ui =
@@ -209,7 +219,7 @@ type CoreNote = Ct
 #endif
 
 data SimplifyResult
-  = Simplified (CoreUnify CoreNote) [(EvTerm,Ct)]
+  = Simplified (CoreUnify CoreNote) [(EvTerm,Ct,CoreUnify CoreNote)]
   | Impossible NatEquality
 
 instance Outputable SimplifyResult where
@@ -221,7 +231,7 @@ simplifyNats :: [NatEquality]
 simplifyNats eqs =
     tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples :: CoreUnify CoreNote -> [Maybe (EvTerm, Ct)] -> [NatEquality]
+    simples :: CoreUnify CoreNote -> [Maybe (EvTerm, Ct, CoreUnify CoreNote)] -> [NatEquality]
             -> [NatEquality] -> TcPluginM SimplifyResult
     simples subst evs _xs [] = return (Simplified subst (catMaybes evs))
     simples subst evs xs (eq@(ct,u,v):eqs') = do
@@ -229,7 +239,7 @@ simplifyNats eqs =
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
 #if __GLASGOW_HASKELL__ >= 711
-        Win         -> simples subst (((,) <$> evMagic ct [] <*> pure ct):evs) []
+        Win         -> simples subst (((,,) <$> evMagic ct [] <*> pure ct <*> pure []):evs) []
                                (xs ++ eqs')
         Lose        -> return (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs'
@@ -241,17 +251,18 @@ simplifyNats eqs =
           let subst'' = zipWith (\si ev -> si {siNote = (ev,siNote si)})
                                 subst' newEvs
           simples (substsSubst subst'' subst ++ subst'')
-            (((,) <$> evMagic ct newEvs <*> pure ct):evs)
+            (((,,) <$> evMagic ct newEvs <*> pure ct <*> pure subst''):evs)
             [] (xs ++ eqs')
 #else
-        Win         -> simples subst (((,) <$> evMagic ct <*> pure ct):evs) []
+        Win         -> simples subst (((,,) <$> evMagic ct <*> pure ct <*> pure []):evs) []
                                (xs ++ eqs')
         Lose        -> return (Impossible eq)
         Draw []     -> simples subst evs (eq:xs) eqs'
         Draw subst' -> do
           simples (substsSubst subst' subst ++ subst')
-                  (((,) <$> evMagic ct <*> pure ct):evs)
+                  (((,,) <$> evMagic ct <*> pure ct <*> pure subst'):evs)
                   [] (xs ++ eqs')
+
 #endif
 
 -- Extract the Nat equality constraints
