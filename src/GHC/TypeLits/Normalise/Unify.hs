@@ -5,6 +5,7 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 
 {-# LANGUAGE CPP             #-}
+{-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE RecordWildCards #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
@@ -32,6 +33,10 @@ where
 -- External
 import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL)
+
+import GHC.Base               (isTrue#,(==#))
+import GHC.Integer            (smallInteger)
+import GHC.Integer.Logarithms (integerLogBase#)
 
 -- GHC API
 import Outputable    (Outputable (..), (<+>), ($$), text)
@@ -280,22 +285,14 @@ unifiers' ct (S [P p2]) (S [P [E (S [P s1]) p1]])
 -- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
 -- and `ceiling (logBase i j) == floor (logBase i j)`
 unifiers' ct (S [P [E (S [P [I i]]) p]]) (S [P [I j]])
-    = if kC == kF
-         then unifiers' ct (S [p]) (S [P [I kC]])
-         else []
-  where
-    k  = logBase (fromInteger i :: Double) (fromInteger j)
-    kC = ceiling k :: Integer
-    kF = floor k :: Integer
+  = case integerLogBase i j of
+      Just k  -> unifiers' ct (S [p]) (S [P [I k]])
+      Nothing -> []
 
 unifiers' ct (S [P [I j]]) (S [P [E (S [P [I i]]) p]])
-    = if kC == kF
-         then unifiers' ct (S [p]) (S [P [I kC]])
-         else []
-  where
-    k  = logBase (fromInteger i :: Double) (fromInteger j)
-    kC = ceiling k :: Integer
-    kF = floor k :: Integer
+  = case integerLogBase i j of
+      Just k  -> unifiers' ct (S [p]) (S [P [I k]])
+      Nothing -> []
 
 -- a^d * a^e ~ a^c ==> [c := d + e]
 unifiers' ct (S [P [E s1 p1]]) (S [p2]) = case collectBases p2 of
@@ -392,3 +389,15 @@ safeDiv i j
   | otherwise = case divMod i j of
                   (k,0) -> Just k
                   _     -> Nothing
+
+-- | Given `x` and `y`, return `Just n` when
+--
+-- `ceiling (logBase x y) == floor (logBase x y)`
+integerLogBase :: Integer -> Integer -> Maybe Integer
+integerLogBase x y | x > 1 && y > 0 =
+  let z1 = integerLogBase# x y
+      z2 = integerLogBase# x (y-1)
+  in  if isTrue# (z1 ==# z2)
+         then Nothing
+         else Just (smallInteger z1)
+integerLogBase _ _ = Nothing
