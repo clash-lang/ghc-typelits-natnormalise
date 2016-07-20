@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.4.5 *July 20th 2016*
+* Fixes bugs:
+  * Reifying negative exponent causes GHC panic
+
 ## 0.4.4 *July 19th 2016*
 * Fixes bugs:
   * Rounding error in `logBase` calculation

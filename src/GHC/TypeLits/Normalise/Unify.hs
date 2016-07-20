@@ -107,14 +107,37 @@ reifySOP = combineP . map negateP . unS
                                  p
 
 reifyProduct :: CoreProduct -> Type
-reifyProduct = foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2])
-             . map reifySymbol . unP
+reifyProduct (P ps) =
+    let ps' = map reifySymbol (foldr mergeExp [] ps)
+    in  foldr (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2]) (head ps') (tail ps')
+  where
+    -- "2 ^ -1 * 2 ^ a" must be merged into "2 ^ (a-1)", otherwise GHC barfs
+    -- at the "2 ^ -1" because of the negative exponent.
+    mergeExp :: CoreSymbol -> [Either CoreSymbol (CoreSOP,CoreProduct,Integer)]
+                           -> [Either CoreSymbol (CoreSOP,CoreProduct,Integer)]
+    mergeExp (E s1 (P [I i])) (y:ys)
+      | i < 0
+      , Left (E s2 p2) <- y
+      , s1 == s2
+      = Right (s1,p2,negate i) : ys
+      | i < 0
+      , Right (s2,p2,j) <- y
+      , s1 == s2
+      = Right (s1,p2,j+negate i) : ys
+    mergeExp x ys = Left x:ys
 
-reifySymbol :: CoreSymbol -> Type
-reifySymbol (I i)   = mkNumLitTy i
-reifySymbol (C c)   = c
-reifySymbol (V v)   = mkTyVarTy v
-reifySymbol (E s p) = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
+reifySymbol :: Either CoreSymbol (CoreSOP,CoreProduct,Integer) -> Type
+reifySymbol (Left (I i)  )  = mkNumLitTy i
+reifySymbol (Left (C c)  )  = c
+reifySymbol (Left (V v)  )  = mkTyVarTy v
+reifySymbol (Left (E s p))  = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
+reifySymbol (Right (s,p,i)) = mkTyConApp typeNatExpTyCon
+                                         [reifySOP s
+                                         ,mkTyConApp typeNatSubTyCon
+                                                     [reifyProduct p
+                                                     ,mkNumLitTy i
+                                                     ]
+                                         ]
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
