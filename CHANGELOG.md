@@ -1,6 +1,7 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
 ## 0.4.6 *July 21th 2016*
+* Reduce "x^(-y) * x^y" to 1
 * Fixes bugs:
   * Subtraction in exponent induces infinite loop
 

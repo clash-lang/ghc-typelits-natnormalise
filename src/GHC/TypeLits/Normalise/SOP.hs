@@ -205,6 +205,20 @@ mergeS l r
       (S [P [e]]) -> Left  e
       _           -> Right l
 
+-- x^y * x^(-y) ==> 1
+mergeS (E s1 (P p1)) (E s2 (P (I i:p2)))
+  | i == (-1)
+  , s1 == s2
+  , p1 == p2
+  = Left (I 1)
+
+-- x^(-y) * x^y ==> 1
+mergeS (E s1 (P (I i:p1))) (E s2 (P p2))
+  | i == (-1)
+  , s1 == s2
+  , p1 == p2
+  = Left (I 1)
+
 mergeS l _ = Right l
 
 -- | Merge two products of a SOP term
