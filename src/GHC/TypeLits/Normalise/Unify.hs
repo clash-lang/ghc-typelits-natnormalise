@@ -91,20 +91,39 @@ reifySOP :: CoreSOP -> Type
 reifySOP = combineP . map negateP . unS
   where
     negateP :: CoreProduct -> Either CoreProduct CoreProduct
-    negateP (P ((I i):ps)) | i < 0 = Left  (P ((I (abs i)):ps))
-    negateP ps                     = Right ps
+    negateP (P ((I i):ps@(_:_))) | i == (-1) = Left  (P ps)
+    negateP (P ((I i):ps)) | i < 0           = Left  (P ((I (abs i)):ps))
+    negateP ps                               = Right ps
 
     combineP :: [Either CoreProduct CoreProduct] -> Type
     combineP []     = mkNumLitTy 0
     combineP [p]    = either (\p' -> mkTyConApp typeNatSubTyCon
                                                 [mkNumLitTy 0, reifyProduct p'])
                              reifyProduct p
-    combineP (p:ps) = let es = combineP ps
-                      in  either (\x -> mkTyConApp typeNatSubTyCon
-                                                   [es, reifyProduct x])
-                                 (\x -> mkTyConApp typeNatAddTyCon
-                                                  [reifyProduct x, es])
-                                 p
+    combineP [p1,p2] = either
+      (\x -> either
+               -- x neg, y neg
+               (\y -> let r = mkTyConApp typeNatSubTyCon [reifyProduct x
+                                                         ,reifyProduct y]
+                      in  mkTyConApp typeNatSubTyCon [mkNumLitTy 0, r])
+               -- x neg, y pos
+               (\y -> mkTyConApp typeNatSubTyCon [reifyProduct y, reifyProduct x])
+               p2)
+      (\x -> either
+               -- x pos, y neg
+               (\y -> mkTyConApp typeNatSubTyCon [reifyProduct x, reifyProduct y])
+               -- x pos, y pos
+               (\y -> mkTyConApp typeNatAddTyCon [reifyProduct x, reifyProduct y])
+               p2)
+      p1
+
+
+    combineP (p:ps)  = let es = combineP ps
+                       in  either (\x -> mkTyConApp typeNatSubTyCon
+                                                    [es, reifyProduct x])
+                                  (\x -> mkTyConApp typeNatAddTyCon
+                                                   [reifyProduct x, es])
+                                  p
 
 reifyProduct :: CoreProduct -> Type
 reifyProduct (P ps) =
@@ -113,30 +132,25 @@ reifyProduct (P ps) =
   where
     -- "2 ^ -1 * 2 ^ a" must be merged into "2 ^ (a-1)", otherwise GHC barfs
     -- at the "2 ^ -1" because of the negative exponent.
-    mergeExp :: CoreSymbol -> [Either CoreSymbol (CoreSOP,CoreProduct,Integer)]
-                           -> [Either CoreSymbol (CoreSOP,CoreProduct,Integer)]
-    mergeExp (E s1 (P [I i])) (y:ys)
-      | i < 0
-      , Left (E s2 p2) <- y
+    mergeExp :: CoreSymbol -> [Either CoreSymbol (CoreSOP,[CoreProduct])]
+                           -> [Either CoreSymbol (CoreSOP,[CoreProduct])]
+    mergeExp (E s p)   []     = [Right (s,[p])]
+    mergeExp (E s1 p1) (y:ys)
+      | Right (s2,p2) <- y
       , s1 == s2
-      = Right (s1,p2,negate i) : ys
-      | i < 0
-      , Right (s2,p2,j) <- y
-      , s1 == s2
-      = Right (s1,p2,j+negate i) : ys
-    mergeExp x ys = Left x:ys
+      = Right (s1,(p1:p2)) : ys
+      | otherwise
+      = Right (s1,[p1]) : ys
+    mergeExp x ys = Left x : ys
 
-reifySymbol :: Either CoreSymbol (CoreSOP,CoreProduct,Integer) -> Type
+reifySymbol :: Either CoreSymbol (CoreSOP,[CoreProduct]) -> Type
 reifySymbol (Left (I i)  )  = mkNumLitTy i
 reifySymbol (Left (C c)  )  = c
 reifySymbol (Left (V v)  )  = mkTyVarTy v
 reifySymbol (Left (E s p))  = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
-reifySymbol (Right (s,p,i)) = mkTyConApp typeNatExpTyCon
-                                         [reifySOP s
-                                         ,mkTyConApp typeNatSubTyCon
-                                                     [reifyProduct p
-                                                     ,mkNumLitTy i
-                                                     ]
+reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
+                                         [reifySOP s1
+                                         ,reifySOP (S s2)
                                          ]
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
