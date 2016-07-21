@@ -259,7 +259,9 @@ normaliseExp b (S [P [(I i)]]) =
   foldr1 mergeSOPMul (replicate (fromInteger i) b)
 
 -- (x + 2)^(2x) ==> (x^2 + 4xy + 4)^x
-normaliseExp b (S [P (e@(I _):es)]) =
+normaliseExp b (S [P (e@(I i):es)]) | i >= 0 =
+  -- Without the "| i >= 0" guard, normaliseExp can loop with itself
+  -- for exponentials such as: 2^(n-k)
   normaliseExp (normaliseExp b (S [P [e]])) (S [P es])
 
 -- (x + 2)^(xy) ==> (x+2)^(xy)

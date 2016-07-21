@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.4.6 *July 21th 2016*
+* Fixes bugs:
+  * Subtraction in exponent induces infinite loop
+
 ## 0.4.5 *July 20th 2016*
 * Fixes bugs:
   * Reifying negative exponent causes GHC panic
