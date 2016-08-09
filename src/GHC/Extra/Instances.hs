@@ -10,10 +10,13 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
 {-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+#if __GLASGOW_HASKELL__ < 801
+#define nonDetCmpType cmpType
+#endif
 
 module GHC.Extra.Instances where
 
-import Type (Type,cmpType)
+import Type (Type,nonDetCmpType)
 #if __GLASGOW_HASKELL__ >= 711
 import Type (eqType)
 #endif
@@ -24,4 +27,4 @@ instance Eq Type where
 #endif
 
 instance Ord Type where
-  compare = cmpType
+  compare = nonDetCmpType
