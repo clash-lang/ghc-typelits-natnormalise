@@ -234,6 +234,21 @@ drop n = snd . splitAt n
 at :: SNat m -> Vec (m + (n + 1)) a -> a
 at n xs = head $ snd $ splitAt n xs
 
+proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
+proxyInEq1 = proxyInEq
+
+proxyInEq2 :: Proxy ((a+1) :: Nat) -> Proxy a -> ()
+proxyInEq2 = proxyInEq'
+
+proxyInEq3 :: Proxy (a :: Nat) -> Proxy (a+b) -> ()
+proxyInEq3 = proxyInEq
+
+proxyInEq4 :: Proxy (2*a) -> Proxy (4*a) -> ()
+proxyInEq4 = proxyInEq
+
+proxyInEq5 :: Proxy 1 -> Proxy (2^a) -> ()
+proxyInEq5 = proxyInEq
+
 main :: IO ()
 main = defaultMain tests
 
@@ -271,6 +286,23 @@ tests = testGroup "ghc-typelits-natnormalise"
       show (proxyFun7 (Proxy :: Proxy 8) :: Proxy 3) @?=
       "Proxy"
     ]
+  , testGroup "Inequality"
+    [ testCase "a <= a+1" $
+      show (proxyInEq1 (Proxy :: Proxy 2) (Proxy :: Proxy 3)) @?=
+      "()"
+    , testCase "(a+1 <=? a) ~ False" $
+      show (proxyInEq2 (Proxy :: Proxy 3) (Proxy :: Proxy 2)) @?=
+      "()"
+    , testCase "a <= a+b" $
+      show (proxyInEq3 (Proxy :: Proxy 2) (Proxy :: Proxy 2)) @?=
+      "()"
+    , testCase "2a <= 4a" $
+      show (proxyInEq4 (Proxy :: Proxy 2) (Proxy :: Proxy 4)) @?=
+      "()"
+    , testCase "1 <= 2^a" $
+      show (proxyInEq5 (Proxy :: Proxy 1) (Proxy :: Proxy 1)) @?=
+      "()"
+    ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
     , testCase "GCD 6 8 + x ~ x + GCD 9 6" $ testProxy2 `throws` testProxy2Errors
@@ -279,6 +311,10 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
     , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
+    , testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
+    , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
+    , testCase "(a <=? a) ~ False" $ testProxy11 `throws` testProxy11Errors
+    , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
     ]
   ]
 

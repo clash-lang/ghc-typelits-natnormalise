@@ -78,3 +78,37 @@ testProxy8Errors =
   ["Expected type: Proxy x -> Proxy (y + x)"
   ,"Actual type: Proxy x -> Proxy x"
   ]
+
+proxyInEq :: (a <= b) => Proxy a -> Proxy b -> ()
+proxyInEq _ _ = ()
+
+proxyInEq' :: ((a <=? b) ~ 'False) => Proxy a -> Proxy b -> ()
+proxyInEq' _ _ = ()
+
+testProxy9 :: Proxy (a + 1) -> Proxy a -> ()
+testProxy9 = proxyInEq
+
+testProxy9Errors =
+  ["Couldn't match type ‘(a + 1) <=? a’ with ‘'True’"
+  ]
+
+testProxy10 :: Proxy (a :: Nat) -> Proxy (a + 2) -> ()
+testProxy10 = proxyInEq'
+
+testProxy10Errors =
+  ["Couldn't match type ‘a <=? (a + 2)’ with ‘'False’"
+  ]
+
+testProxy11 :: Proxy (a :: Nat) -> Proxy a -> ()
+testProxy11 = proxyInEq'
+
+testProxy11Errors =
+  ["Couldn't match type ‘'True’ with ‘'False’"
+  ]
+
+testProxy12 :: Proxy (a + b) -> Proxy (a + c) -> ()
+testProxy12 = proxyInEq
+
+testProxy12Errors =
+  ["Couldn't match type ‘(a + b) <=? (a + c)’ with ‘'True’"
+  ]

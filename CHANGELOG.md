@@ -1,5 +1,11 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5
+* Solve simple inequalities, i.e.:
+  * `a  <= a + 1`
+  * `2a <= 3a`
+  * `1  <= a^b`
+
 ## 0.4.6 *July 21th 2016*
 * Reduce "x^(-y) * x^y" to 1
 * Fixes bugs:

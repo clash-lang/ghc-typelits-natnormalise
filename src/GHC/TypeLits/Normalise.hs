@@ -94,6 +94,9 @@ import TypeRep       (Type (..))
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon)
 
+import TcTypeNats    (typeNatLeqTyCon)
+import Type          (mkNumLitTy,mkTyConApp)
+import TysWiredIn    (promotedFalseDataCon, promotedTrueDataCon)
 
 -- internal
 import GHC.Extra.Instances () -- Ord instance for Ct
@@ -207,10 +210,12 @@ unifyItemToPredType ui =
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
 
-type NatEquality = (Ct,CoreSOP,CoreSOP)
+type NatEquality   = (Ct,CoreSOP,CoreSOP)
+type NatInEquality = (Ct,CoreSOP)
 
-fromNatEquality :: NatEquality -> Ct
-fromNatEquality (ct, _, _) = ct
+fromNatEquality :: Either NatEquality NatInEquality -> Ct
+fromNatEquality (Left  (ct, _, _)) = ct
+fromNatEquality (Right (ct, _))    = ct
 
 #if __GLASGOW_HASKELL__ >= 711
 type CoreNote = ((CoercionHole,TyVar,PredType), Ct)
@@ -220,21 +225,24 @@ type CoreNote = Ct
 
 data SimplifyResult
   = Simplified (CoreUnify CoreNote) [(EvTerm,Ct,CoreUnify CoreNote)]
-  | Impossible NatEquality
+  | Impossible (Either NatEquality NatInEquality)
 
 instance Outputable SimplifyResult where
   ppr (Simplified subst evs) = text "Simplified" $$ ppr subst $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
-simplifyNats :: [NatEquality]
+simplifyNats :: [Either NatEquality NatInEquality]
              -> TcPluginM SimplifyResult
 simplifyNats eqs =
     tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples :: CoreUnify CoreNote -> [Maybe (EvTerm, Ct, CoreUnify CoreNote)] -> [NatEquality]
-            -> [NatEquality] -> TcPluginM SimplifyResult
+    simples :: CoreUnify CoreNote
+            -> [Maybe (EvTerm, Ct, CoreUnify CoreNote)]
+            -> [Either NatEquality NatInEquality]
+            -> [Either NatEquality NatInEquality]
+            -> TcPluginM SimplifyResult
     simples subst evs _xs [] = return (Simplified subst (catMaybes evs))
-    simples subst evs xs (eq@(ct,u,v):eqs') = do
+    simples subst evs xs (eq@(Left (ct,u,v)):eqs') = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
@@ -264,9 +272,18 @@ simplifyNats eqs =
                   [] (xs ++ eqs')
 
 #endif
+    simples subst evs xs (eq@(Right (ct,u)):eqs') =
+      case isNatural u of
+#if __GLASGOW_HASKELL__ >= 711
+        Just True  -> simples subst (((,,) <$> evMagic ct [] <*> pure ct <*> pure []):evs) xs eqs'
+#else
+        Just True  -> simples subst (((,,) <$> evMagic ct <*> pure ct <*> pure []):evs) xs eqs'
+#endif
+        Just False -> return (Impossible eq)
+        Nothing    -> simples subst evs (eq:xs) eqs'
 
 -- Extract the Nat equality constraints
-toNatEquality :: Ct -> Maybe NatEquality
+toNatEquality :: Ct -> Maybe (Either NatEquality NatInEquality)
 toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2
       -> go t1 t2
@@ -278,11 +295,19 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
                                    ,typeNatMulTyCon,typeNatExpTyCon])
       = case filter (uncurry (/=)) (zip xs ys) of
           [(x,y)] | isNatKind (typeKind x) &&  isNatKind (typeKind y)
-                  -> Just (ct, normaliseNat x, normaliseNat y)
+                  -> Just (Left (ct, normaliseNat x, normaliseNat y))
           _ -> Nothing
+      | tc == typeNatLeqTyCon
+      , [x,y] <- xs
+      = if tc' == promotedTrueDataCon
+           then Just (Right (ct,normaliseNat (mkTyConApp typeNatSubTyCon [y,x])))
+           else if tc' == promotedFalseDataCon
+                then Just (Right (ct,normaliseNat (mkTyConApp typeNatSubTyCon [x,mkTyConApp typeNatAddTyCon [y,mkNumLitTy 1]])))
+                else Nothing
+
     go x y
       | isNatKind (typeKind x) && isNatKind (typeKind y)
-      = Just (ct,normaliseNat x,normaliseNat y)
+      = Just (Left (ct,normaliseNat x,normaliseNat y))
       | otherwise
       = Nothing
 

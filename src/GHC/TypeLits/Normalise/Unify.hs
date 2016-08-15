@@ -27,6 +27,8 @@ module GHC.TypeLits.Normalise.Unify
   , unifiers
     -- * Free variables in 'SOP' terms
   , fvSOP
+    -- * Properties
+  , isNatural
   )
 where
 
@@ -438,3 +440,21 @@ integerLogBase x y | x > 1 && y > 0 =
          then Nothing
          else Just (smallInteger z1)
 integerLogBase _ _ = Nothing
+
+isNatural :: CoreSOP -> Maybe Bool
+isNatural (S [])           = return True
+isNatural (S [P []])       = return True
+isNatural (S [P (I i:ps)])
+  | i >= 0    = isNatural (S [P ps])
+  | otherwise = return False
+isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
+-- This is a quick hack, it determines that
+--
+-- > a^b - 1
+--
+-- is a natural number as long as 'a' and 'b' are natural numbers.
+-- This used to assert that:
+--
+-- > (1 <=? a^b) ~ True
+isNatural (S [P [I (-1)],P [E s p]]) = (&&) <$> isNatural s <*> isNatural (S [p])
+isNatural _ = Nothing
