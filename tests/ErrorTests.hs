@@ -112,3 +112,17 @@ testProxy12 = proxyInEq
 testProxy12Errors =
   ["Couldn't match type ‘(a + b) <=? (a + c)’ with ‘'True’"
   ]
+
+testProxy13 :: Proxy (4*a) -> Proxy (2*a) ->()
+testProxy13 = proxyInEq
+
+testProxy13Errors =
+  ["Couldn't match type ‘(4 * a) <=? (2 * a)’ with ‘'True’"
+  ]
+
+testProxy14 :: Proxy (2*a) -> Proxy (4*a) -> ()
+testProxy14 = proxyInEq'
+
+testProxy14Errors =
+  ["Couldn't match type ‘(2 * a) <=? (4 * a)’ with ‘'False’"
+  ]

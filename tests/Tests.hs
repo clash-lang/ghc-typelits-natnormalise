@@ -310,10 +310,14 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
     , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
-    , testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
-    , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
-    , testCase "(a <=? a) ~ False" $ testProxy11 `throws` testProxy11Errors
-    , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
+    , testGroup "Inequality"
+      [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
+      , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
+      , testCase "(a <=? a) ~ False" $ testProxy11 `throws` testProxy11Errors
+      , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
+      , testCase "4a <= 2a" $ testProxy13 `throws` testProxy13Errors
+      , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
+      ]
     ]
   ]
 
