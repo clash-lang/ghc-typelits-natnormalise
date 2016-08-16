@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
@@ -326,11 +325,7 @@ throws v xs = do
   result <- try (evaluate v)
   case result of
     Right _ -> assertFailure "No exception!"
-#if MIN_VERSION_base(4,9,0)
     Left (TypeError msg) ->
-#else
-    Left (ErrorCall msg) ->
-#endif
       if all (`isInfixOf` msg) xs
          then return ()
          else assertFailure msg

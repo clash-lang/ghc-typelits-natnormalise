@@ -4,15 +4,20 @@ License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 
-{-# LANGUAGE CPP             #-}
-{-# LANGUAGE MagicHash       #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE CPP                        #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MagicHash                  #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
+#if __GLASGOW_HASKELL__ < 801
+#define nonDetCmpType cmpType
+#endif
 
 module GHC.TypeLits.Normalise.Unify
   ( -- * 'Nat' expressions \<-\> 'SOP' terms
-    CoreSOP
+    CType (..)
+  , CoreSOP
   , normaliseNat
   , reifySOP
     -- * Substitution on 'SOP' terms
@@ -48,26 +53,31 @@ import TcRnTypes     (ctEvPred)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon)
 import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
-                      coreView, mkNumLitTy, mkTyConApp, mkTyVarTy)
-#if __GLASGOW_HASKELL__ >= 711
+                      coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
+                      nonDetCmpType)
 import TyCoRep       (Type (..), TyLit (..))
-#else
-import TypeRep       (Type (..), TyLit (..))
-#endif
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
 -- Internal
-import GHC.Extra.Instances () -- Ord instance for Type
 import GHC.TypeLits.Normalise.SOP
 
 -- Used for haddock
 import GHC.TypeLits (Nat)
 
+newtype CType = CType { unCType :: Type }
+  deriving Outputable
+
+instance Eq CType where
+  (CType ty1) == (CType ty2) = eqType ty1 ty2
+
+instance Ord CType where
+  compare (CType ty1) (CType ty2) = nonDetCmpType ty1 ty2
+
 -- | 'SOP' with 'TyVar' variables
-type CoreSOP     = SOP TyVar Type
-type CoreProduct = Product TyVar Type
-type CoreSymbol  = Symbol TyVar Type
+type CoreSOP     = SOP TyVar CType
+type CoreProduct = Product TyVar CType
+type CoreSymbol  = Symbol TyVar CType
 
 -- | Convert a type of /kind/ 'GHC.TypeLits.Nat' to an 'SOP' term, but
 -- only when the type is constructed out of:
@@ -86,7 +96,7 @@ normaliseNat (TyConApp tc [x,y])
                                                      (normaliseNat y))
   | tc == typeNatMulTyCon = mergeSOPMul (normaliseNat x) (normaliseNat y)
   | tc == typeNatExpTyCon = normaliseExp (normaliseNat x) (normaliseNat y)
-normaliseNat t = S [P [C t]]
+normaliseNat t = S [P [C (CType t)]]
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
@@ -147,7 +157,7 @@ reifyProduct (P ps) =
 
 reifySymbol :: Either CoreSymbol (CoreSOP,[CoreProduct]) -> Type
 reifySymbol (Left (I i)  )  = mkNumLitTy i
-reifySymbol (Left (C c)  )  = c
+reifySymbol (Left (C c)  )  = unCType c
 reifySymbol (Left (V v)  )  = mkTyVarTy v
 reifySymbol (Left (E s p))  = mkTyConApp typeNatExpTyCon [reifySOP s,reifyProduct p]
 reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
@@ -158,7 +168,7 @@ reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
-type CoreUnify a = TyUnify TyVar Type a
+type CoreUnify a = TyUnify TyVar CType a
 
 type TyUnify v c n = [UnifyItem v c n]
 
@@ -274,22 +284,22 @@ unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
 unifiers ct u@(S [P [V x]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 _
-        | reifySOP u /= t1 || isGiven (ctEvidence ct) -> [SubstItem x v ct]
+        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct) -> [SubstItem x v ct]
       _ -> []
 unifiers ct u v@(S [P [V x]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq _ t2
-        | reifySOP v /= t2 || isGiven (ctEvidence ct) -> [SubstItem x u ct]
+        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct) -> [SubstItem x u ct]
       _ -> []
 unifiers ct u@(S [P [C _]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | reifySOP u /= t1 || reifySOP v /= t2 -> [UnifyItem u v ct]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v ct]
       _ -> []
 unifiers ct u v@(S [P [C _]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | reifySOP u /= t1 || reifySOP v /= t2 -> [UnifyItem u v ct]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v ct]
       _ -> []
 unifiers ct u v             = unifiers' ct u v
 
