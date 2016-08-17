@@ -4,7 +4,7 @@
 * Fixes bugs:
   * Cannot solve an equality for the second time in a definition group
 
-## 0.5
+## 0.5 *August 17th 2016*
 * Solve simple inequalities, i.e.:
   * `a  <= a + 1`
   * `2a <= 3a`
