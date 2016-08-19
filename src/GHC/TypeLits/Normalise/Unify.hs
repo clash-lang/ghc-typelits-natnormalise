@@ -241,11 +241,15 @@ unifyNats' ct u v
        then if containsConstants u || containsConstants v
                then if u == v
                        then Win
-                       else Draw (unifiers ct u v)
+                       else Draw (filter diffFromConstraint (unifiers ct u v))
                else if u == v
                        then Win
                        else Lose
-       else Draw (unifiers ct u v)
+       else Draw (filter diffFromConstraint (unifiers ct u v))
+  where
+    -- A unifier is only a unifier if differs from the original constraint
+    diffFromConstraint (UnifyItem x y _) = not (x == u && y == v)
+    diffFromConstraint _                 = True
 
 -- | Find unifiers for two SOP terms
 --
