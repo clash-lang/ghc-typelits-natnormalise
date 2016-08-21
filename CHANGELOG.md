@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5.1
+* Fixes bugs:
+  * Cannot solve an equality for the second time in a definition group
+
 ## 0.5
 * Solve simple inequalities, i.e.:
   * `a  <= a + 1`

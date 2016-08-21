@@ -22,7 +22,6 @@ module GHC.TypeLits.Normalise.Unify
   , reifySOP
     -- * Substitution on 'SOP' terms
   , UnifyItem (..)
-  , TyUnify
   , CoreUnify
   , substsSOP
   , substsSubst
@@ -168,25 +167,21 @@ reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
-type CoreUnify a = TyUnify TyVar CType a
+type CoreUnify = UnifyItem TyVar CType
 
-type TyUnify v c n = [UnifyItem v c n]
+data UnifyItem v c = SubstItem { siVar  :: v
+                               , siSOP  :: SOP v c
+                               }
+                   | UnifyItem { siLHS  :: SOP v c
+                               , siRHS  :: SOP v c
+                               }
 
-data UnifyItem v c n = SubstItem { siVar  :: v
-                                 , siSOP  :: SOP v c
-                                 , siNote :: n
-                                 }
-                     | UnifyItem { siLHS  :: SOP v c
-                                 , siRHS  :: SOP v c
-                                 , siNote :: n
-                                 }
-
-instance (Outputable v, Outputable c) => Outputable (UnifyItem v c n) where
+instance (Outputable v, Outputable c) => Outputable (UnifyItem v c) where
   ppr (SubstItem {..}) = ppr siVar <+> text " := " <+> ppr siSOP
   ppr (UnifyItem {..}) = ppr siLHS <+> text " :~ " <+> ppr siRHS
 
 -- | Apply a substitution to a single normalised 'SOP' term
-substsSOP :: (Ord v, Ord c) => TyUnify v c n -> SOP v c -> SOP v c
+substsSOP :: (Ord v, Ord c) => [UnifyItem v c] -> SOP v c -> SOP v c
 substsSOP []                   u = u
 substsSOP ((SubstItem {..}):s) u = substsSOP s (substSOP siVar siSOP u)
 substsSOP ((UnifyItem {}):s)   u = substsSOP s u
@@ -206,7 +201,7 @@ substSymbol tv e (V tv')
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
 -- | Apply a substitution to a substitution
-substsSubst :: (Ord v, Ord c) => TyUnify v c n -> TyUnify v c n -> TyUnify v c n
+substsSubst :: (Ord v, Ord c) => [UnifyItem v c] -> [UnifyItem v c] -> [UnifyItem v c]
 substsSubst s = map subt
   where
     subt si@(SubstItem {..}) = si {siSOP = substsSOP s siSOP}
@@ -216,9 +211,9 @@ substsSubst s = map subt
 -- | Result of comparing two 'SOP' terms, returning a potential substitution
 -- list under which the two terms are equal.
 data UnifyResult
-  = Win            -- ^ Two terms are equal
-  | Lose           -- ^ Two terms are /not/ equal
-  | Draw (CoreUnify Ct) -- ^ Two terms are only equal if the given substitution holds
+  = Win              -- ^ Two terms are equal
+  | Lose             -- ^ Two terms are /not/ equal
+  | Draw [CoreUnify] -- ^ Two terms are only equal if the given substitution holds
 
 instance Outputable UnifyResult where
   ppr Win          = text "Win"
@@ -241,11 +236,15 @@ unifyNats' ct u v
        then if containsConstants u || containsConstants v
                then if u == v
                        then Win
-                       else Draw (unifiers ct u v)
+                       else Draw (filter diffFromConstraint (unifiers ct u v))
                else if u == v
                        then Win
                        else Lose
-       else Draw (unifiers ct u v)
+       else Draw (filter diffFromConstraint (unifiers ct u v))
+  where
+    -- A unifier is only a unifier if differs from the original constraint
+    diffFromConstraint (UnifyItem x y) = not (x == u && y == v)
+    diffFromConstraint _               = True
 
 -- | Find unifiers for two SOP terms
 --
@@ -280,38 +279,38 @@ unifyNats' ct u v
 -- @
 -- [a := b]
 -- @
-unifiers :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
+unifiers :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
 unifiers ct u@(S [P [V x]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 _
-        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct) -> [SubstItem x v ct]
+        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct) -> [SubstItem x v]
       _ -> []
 unifiers ct u v@(S [P [V x]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq _ t2
-        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct) -> [SubstItem x u ct]
+        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct) -> [SubstItem x u]
       _ -> []
 unifiers ct u@(S [P [C _]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v ct]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v]
       _ -> []
 unifiers ct u v@(S [P [C _]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v ct]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v]
       _ -> []
 unifiers ct u v             = unifiers' ct u v
 
-unifiers' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
-unifiers' ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]]) ct]
-unifiers' ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]]) ct]
+unifiers' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+unifiers' _ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]])]
+unifiers' _ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]])]
 
-unifiers' ct (S [P [V x]]) s             = [SubstItem x s ct]
-unifiers' ct s             (S [P [V x]]) = [SubstItem x s ct]
+unifiers' _ct (S [P [V x]]) s             = [SubstItem x s]
+unifiers' _ct s             (S [P [V x]]) = [SubstItem x s]
 
-unifiers' ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2 ct]
-unifiers' ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2 ct]
+unifiers' _ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2]
+unifiers' _ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2]
 
 
 -- (z ^ a) ~ (z ^ b) ==> [a := b]
@@ -400,11 +399,11 @@ unifiers' ct (S ps1)       (S ps2)
           | otherwise = ps2'
     psx = intersect ps1 ps2
 
-unifiers'' :: Ct -> CoreSOP -> CoreSOP -> CoreUnify Ct
+unifiers'' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
 unifiers'' ct (S [P [I i],P [V v]]) s2
-  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]])) ct]
+  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]]))]
 unifiers'' ct s1 (S [P [I i],P [V v]])
-  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]])) ct]
+  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]]))]
 unifiers'' _ _ _ = []
 
 collectBases :: CoreProduct -> Maybe ([CoreSOP],[CoreProduct])

@@ -50,26 +50,26 @@ where
 
 -- external
 import Control.Arrow       (second)
-import Data.IORef          (IORef, newIORef,readIORef, modifyIORef)
+import Control.Monad       (replicateM)
 import Data.List           (intersect)
-import Data.Maybe          (catMaybes, mapMaybe)
+import Data.Maybe          (mapMaybe)
 import GHC.TcPluginM.Extra (tracePlugin)
 
 -- GHC API
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (..))
-import TcPluginM  (TcPluginM, tcPluginIO, tcPluginTrace, zonkCt)
+import TcPluginM  (TcPluginM, tcPluginTrace, zonkCt)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   ctPred, isWanted, mkNonCanonical)
-import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, TyVar,
+                   isWanted, mkNonCanonical)
+import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType,
                    classifyPredType, eqType, getEqPredTys, mkTyVarTy)
 import TysWiredIn (typeNatKind)
 
 import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
 import TcPluginM  (newCoercionHole, newFlexiTyVar)
-import TcRnTypes  (CtEvidence (..), TcEvDest (..), ctLoc)
+import TcRnTypes  (CtEvidence (..), CtLoc, TcEvDest (..), ctLoc)
 import TyCoRep    (UnivCoProvenance (..))
 import Type       (mkPrimEqPred)
 import TcType     (typeKind)
@@ -96,15 +96,15 @@ plugin = defaultPlugin { tcPlugin = const $ Just normalisePlugin }
 
 normalisePlugin :: TcPlugin
 normalisePlugin = tracePlugin "ghc-typelits-natnormalise"
-  TcPlugin { tcPluginInit  = tcPluginIO $ newIORef []
-           , tcPluginSolve = decideEqualSOP
+  TcPlugin { tcPluginInit  = return ()
+           , tcPluginSolve = const decideEqualSOP
            , tcPluginStop  = const (return ())
            }
 
-decideEqualSOP :: IORef [Ct] -> [Ct] -> [Ct] -> [Ct]
+decideEqualSOP :: [Ct] -> [Ct] -> [Ct]
                -> TcPluginM TcPluginResult
-decideEqualSOP _          _givens _deriveds []      = return (TcPluginOk [] [])
-decideEqualSOP discharged givens  _deriveds wanteds = do
+decideEqualSOP _givens _deriveds []      = return (TcPluginOk [] [])
+decideEqualSOP givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
@@ -115,51 +115,26 @@ decideEqualSOP discharged givens  _deriveds wanteds = do
         sr <- simplifyNats (unit_givens ++ unit_wanteds)
         tcPluginTrace "normalised" (ppr sr)
         case sr of
-          Simplified _subst evs -> do
-            let solved     = filter (isWanted . ctEvidence . (\(_,x,_) -> x)) evs
-            discharedWanteds <- tcPluginIO (readIORef discharged)
-            let existingWanteds = wanteds' ++ discharedWanteds
-            -- Create new wanted constraints
-            (solved',newWanteds) <- (second concat . unzip . catMaybes) <$>
-                                    mapM (evItemToCt existingWanteds) solved
-            -- update set of discharged wanteds
-            tcPluginIO (modifyIORef discharged (++ newWanteds))
-            -- return
+          Simplified evs -> do
+            let solved = filter (isWanted . ctEvidence . (\(_,x,_) -> x)) evs
+                (solved',newWanteds) = second concat . unzip $ map evItemToCt solved
             return (TcPluginOk solved' newWanteds)
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
-evItemToCt :: [Ct] -- ^ Existing wanteds
-           -> (EvTerm,Ct,CoreUnify CoreNote)
-           -> TcPluginM (Maybe ((EvTerm,Ct),[Ct]))
-evItemToCt existingWanteds (ev,ct,subst)
-    | null newWanteds = return (Just ((ev,ct),[]))
-    | otherwise = do
-        newWanteds' <- catMaybes <$> mapM (substItemToCt existingWanteds) newWanteds
-        -- only allow new (conditional) evidence if conditional wanted constraints
-        -- can be added as new work
-        if length newWanteds == length newWanteds'
-           then return (Just ((ev,ct),newWanteds'))
-           else return Nothing
+evItemToCt :: (EvTerm,Ct,[(CoreUnify,CoercionHole)])
+           -> ((EvTerm,Ct),[Ct])
+evItemToCt (ev,ct,subst) = ((ev,ct),newWanteds)
   where
-    newWanteds = filter (isWanted . ctEvidence . snd . siNote) subst
+    newWanteds = map (substItemToCt (ctLoc ct)) subst
 
-substItemToCt :: [Ct] -- ^ Existing wanteds wanted
-              -> UnifyItem TyVar CType CoreNote
-              -> TcPluginM (Maybe Ct)
-substItemToCt existingWanteds si
-  | CType predicate  `notElem` wantedPreds
-  , CType predicateS `notElem` wantedPreds
-  = return (Just (mkNonCanonical (CtWanted predicate (HoleDest ev) (ctLoc ct))))
-  | otherwise
-  = return Nothing
+substItemToCt :: CtLoc
+              -> (CoreUnify,CoercionHole)
+              -> Ct
+substItemToCt ct_loc (si,hole) = mkNonCanonical (CtWanted predicate (HoleDest hole) ct_loc)
   where
-    predicate     = unifyItemToPredType si
-    (ty1,ty2)     = getEqPredTys predicate
-    predicateS    = mkPrimEqPred ty2 ty1
-    ((ev,_,_),ct) = siNote si
-    wantedPreds   = map (CType . ctPred) existingWanteds
+    predicate = unifyItemToPredType si
 
-unifyItemToPredType :: UnifyItem TyVar CType a -> PredType
+unifyItemToPredType :: CoreUnify -> PredType
 unifyItemToPredType ui =
     mkPrimEqPred ty1 ty2
   where
@@ -177,14 +152,12 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-type CoreNote = ((CoercionHole,TyVar,PredType), Ct)
-
 data SimplifyResult
-  = Simplified (CoreUnify CoreNote) [(EvTerm,Ct,CoreUnify CoreNote)]
+  = Simplified [(EvTerm,Ct,[(CoreUnify,CoercionHole)])]
   | Impossible (Either NatEquality NatInEquality)
 
 instance Outputable SimplifyResult where
-  ppr (Simplified subst evs) = text "Simplified" $$ ppr subst $$ ppr evs
+  ppr (Simplified evs) = text "Simplified" $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
 simplifyNats :: [Either NatEquality NatInEquality]
@@ -192,33 +165,34 @@ simplifyNats :: [Either NatEquality NatInEquality]
 simplifyNats eqs =
     tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples :: CoreUnify CoreNote
-            -> [Maybe (EvTerm, Ct, CoreUnify CoreNote)]
+    simples :: [CoreUnify]
+            -> [(EvTerm, Ct, [(CoreUnify,CoercionHole)])]
             -> [Either NatEquality NatInEquality]
             -> [Either NatEquality NatInEquality]
             -> TcPluginM SimplifyResult
-    simples subst evs _xs [] = return (Simplified subst (catMaybes evs))
+    simples _subst evs _xs [] = return (Simplified evs)
     simples subst evs xs (eq@(Left (ct,u,v)):eqs') = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
-        Win         -> simples subst (((,,) <$> evMagic ct [] <*> pure ct <*> pure []):evs) []
-                               (xs ++ eqs')
-        Lose        -> return (Impossible eq)
-        Draw []     -> simples subst evs (eq:xs) eqs'
+        Win -> do
+          evs' <- maybe evs ((:evs) . (,ct,[]) . fst) <$> evMagic ct []
+          simples subst evs' [] (xs ++ eqs')
+        Lose -> return (Impossible eq)
+        Draw [] -> simples subst evs (eq:xs) eqs'
         Draw subst' -> do
-          newEvs <- mapM (\si -> (,,) <$> newCoercionHole
-                                      <*> newFlexiTyVar typeNatKind
-                                      <*> pure (unifyItemToPredType si))
-                         subst'
-          let subst'' = zipWith (\si ev -> si {siNote = (ev,siNote si)})
-                                subst' newEvs
-          simples (substsSubst subst'' subst ++ subst'')
-            (((,,) <$> evMagic ct newEvs <*> pure ct <*> pure subst''):evs)
-            [] (xs ++ eqs')
+          evM <- evMagic ct (map unifyItemToPredType subst')
+          case evM of
+            Nothing -> simples subst evs xs eqs'
+            Just (ev,holes) ->
+              let subst'' = zip subst' holes
+              in  simples (substsSubst subst' subst ++ subst')
+                  ((ev,ct,subst''):evs) [] (xs ++ eqs')
     simples subst evs xs (eq@(Right (ct,u)):eqs') =
       case isNatural u of
-        Just True  -> simples subst (((,,) <$> evMagic ct [] <*> pure ct <*> pure []):evs) xs eqs'
+        Just True  -> do
+          evs' <- maybe evs ((:evs) . (,ct,[]) . fst) <$> evMagic ct []
+          simples subst evs' xs eqs'
         Just False -> return (Impossible eq)
         Nothing    -> simples subst evs (eq:xs) eqs'
 
@@ -254,15 +228,15 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind :: Kind -> Bool
     isNatKind = (`eqType` typeNatKind)
 
-evMagic :: Ct -> [(CoercionHole, TyVar, PredType)] -> Maybe EvTerm
-evMagic ct evs = case classifyPredType $ ctEvPred $ ctEvidence ct of
-  EqPred NomEq t1 t2 ->
-    let ctEv = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
-        (holes,tvs,preds) = unzip3 evs
-        holeEvs = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p))
-                          holes preds
+evMagic :: Ct -> [PredType] -> TcPluginM (Maybe (EvTerm, [CoercionHole]))
+evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
+  EqPred NomEq t1 t2 -> do
+    holes <- replicateM (length preds) newCoercionHole
+    let ctEv    = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
+        holeEvs = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes preds
         natReflCo = mkNomReflCo typeNatKind
-        forallEv = mkForAllCos (map (,natReflCo) tvs) ctEv
-        finalEv = foldl mkInstCo forallEv holeEvs
-    in  Just (EvCoercion finalEv)
-  _ -> Nothing
+        natCoBndr = (,natReflCo) <$> (newFlexiTyVar typeNatKind)
+    forallEv <- mkForAllCos <$> (replicateM (length preds) natCoBndr) <*> pure ctEv
+    let finalEv = foldl mkInstCo forallEv holeEvs
+    return (Just (EvCoercion finalEv,holes))
+  _ -> return Nothing

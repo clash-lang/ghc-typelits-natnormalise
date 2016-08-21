@@ -148,3 +148,14 @@ testProxy14Errors =
           then litE $ stringL "Couldn't match type ‘(2 * a) <=? (4 * a)’ with ‘'False’"
           else litE $ stringL "Couldn't match type `(2 * a) <=? (4 * a)' with 'False"
     )]
+
+type family CLog (b :: Nat) (x :: Nat) :: Nat
+type instance CLog 2 2 = 1
+
+testProxy15 :: (CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => Proxy n -> Proxy (n+d)
+testProxy15 = id
+
+testProxy15Errors =
+  ["Expected type: Proxy n -> Proxy (n + d)"
+  ,"Actual type: Proxy n -> Proxy n"
+  ]
