@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, KindSignatures, TypeFamilies, TypeOperators #-}
+{-# LANGUAGE DataKinds, KindSignatures, TemplateHaskell, TypeFamilies, TypeOperators #-}
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
@@ -6,6 +6,10 @@ module ErrorTests where
 
 import Data.Proxy
 import GHC.TypeLits
+
+import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
+import Language.Haskell.TH        (litE, stringL)
+import Language.Haskell.TH.Syntax (runIO)
 
 testProxy1 :: Proxy (x + 1) -> Proxy (2 + x)
 testProxy1 = id
@@ -89,40 +93,58 @@ testProxy9 :: Proxy (a + 1) -> Proxy a -> ()
 testProxy9 = proxyInEq
 
 testProxy9Errors =
-  ["Couldn't match type ‘(a + 1) <=? a’ with ‘'True’"
-  ]
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘(a + 1) <=? a’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `(a + 1) <=? a' with 'True"
+    )]
 
 testProxy10 :: Proxy (a :: Nat) -> Proxy (a + 2) -> ()
 testProxy10 = proxyInEq'
 
 testProxy10Errors =
-  ["Couldn't match type ‘a <=? (a + 2)’ with ‘'False’"
-  ]
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘a <=? (a + 2)’ with ‘'False’"
+          else litE $ stringL "Couldn't match type `a <=? (a + 2)' with 'False"
+    )]
 
 testProxy11 :: Proxy (a :: Nat) -> Proxy a -> ()
 testProxy11 = proxyInEq'
 
 testProxy11Errors =
-  ["Couldn't match type ‘'True’ with ‘'False’"
-  ]
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘'True’ with ‘'False’"
+          else litE $ stringL "Couldn't match type 'True with 'False"
+    )]
 
 testProxy12 :: Proxy (a + b) -> Proxy (a + c) -> ()
 testProxy12 = proxyInEq
 
 testProxy12Errors =
-  ["Couldn't match type ‘(a + b) <=? (a + c)’ with ‘'True’"
-  ]
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘(a + b) <=? (a + c)’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `(a + b) <=? (a + c)' with 'True"
+    )]
 
 testProxy13 :: Proxy (4*a) -> Proxy (2*a) ->()
 testProxy13 = proxyInEq
 
 testProxy13Errors =
-  ["Couldn't match type ‘(4 * a) <=? (2 * a)’ with ‘'True’"
-  ]
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘(4 * a) <=? (2 * a)’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `(4 * a) <=? (2 * a)' with 'True"
+    )]
 
 testProxy14 :: Proxy (2*a) -> Proxy (4*a) -> ()
 testProxy14 = proxyInEq'
 
 testProxy14Errors =
-  ["Couldn't match type ‘(2 * a) <=? (4 * a)’ with ‘'False’"
-  ]
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘(2 * a) <=? (4 * a)’ with ‘'False’"
+          else litE $ stringL "Couldn't match type `(2 * a) <=? (4 * a)' with 'False"
+    )]
