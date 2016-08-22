@@ -116,34 +116,10 @@ decideEqualSOP givens  _deriveds wanteds = do
         tcPluginTrace "normalised" (ppr sr)
         case sr of
           Simplified evs -> do
-            let solved = filter (isWanted . ctEvidence . (\(_,x,_) -> x)) evs
-                (solved',newWanteds) = second concat . unzip $ map evItemToCt solved
+            let solved = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
+                (solved',newWanteds) = second concat (unzip solved)
             return (TcPluginOk solved' newWanteds)
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
-
-evItemToCt :: (EvTerm,Ct,[(CoreUnify,CoercionHole)])
-           -> ((EvTerm,Ct),[Ct])
-evItemToCt (ev,ct,subst) = ((ev,ct),newWanteds)
-  where
-    newWanteds = map (substItemToCt (ctLoc ct)) subst
-
-substItemToCt :: CtLoc
-              -> (CoreUnify,CoercionHole)
-              -> Ct
-substItemToCt ct_loc (si,hole) = mkNonCanonical (CtWanted predicate (HoleDest hole) ct_loc)
-  where
-    predicate = unifyItemToPredType si
-
-unifyItemToPredType :: CoreUnify -> PredType
-unifyItemToPredType ui =
-    mkPrimEqPred ty1 ty2
-  where
-    ty1 = case ui of
-            SubstItem {..} -> mkTyVarTy siVar
-            UnifyItem {..} -> reifySOP siLHS
-    ty2 = case ui of
-            SubstItem {..} -> reifySOP siSOP
-            UnifyItem {..} -> reifySOP siRHS
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,CoreSOP)
@@ -153,7 +129,7 @@ fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
 data SimplifyResult
-  = Simplified [(EvTerm,Ct,[(CoreUnify,CoercionHole)])]
+  = Simplified [((EvTerm,Ct),[Ct])]
   | Impossible (Either NatEquality NatInEquality)
 
 instance Outputable SimplifyResult where
@@ -166,7 +142,7 @@ simplifyNats eqs =
     tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
     simples :: [CoreUnify]
-            -> [(EvTerm, Ct, [(CoreUnify,CoercionHole)])]
+            -> [((EvTerm, Ct), [Ct])]
             -> [Either NatEquality NatInEquality]
             -> [Either NatEquality NatInEquality]
             -> TcPluginM SimplifyResult
@@ -176,7 +152,7 @@ simplifyNats eqs =
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
-          evs' <- maybe evs ((:evs) . (,ct,[]) . fst) <$> evMagic ct []
+          evs' <- maybe evs (:evs) <$> evMagic ct []
           simples subst evs' [] (xs ++ eqs')
         Lose -> return (Impossible eq)
         Draw [] -> simples subst evs (eq:xs) eqs'
@@ -184,14 +160,13 @@ simplifyNats eqs =
           evM <- evMagic ct (map unifyItemToPredType subst')
           case evM of
             Nothing -> simples subst evs xs eqs'
-            Just (ev,holes) ->
-              let subst'' = zip subst' holes
-              in  simples (substsSubst subst' subst ++ subst')
-                  ((ev,ct,subst''):evs) [] (xs ++ eqs')
+            Just ev ->
+              simples (substsSubst subst' subst ++ subst')
+                      (ev:evs) [] (xs ++ eqs')
     simples subst evs xs (eq@(Right (ct,u)):eqs') =
       case isNatural u of
         Just True  -> do
-          evs' <- maybe evs ((:evs) . (,ct,[]) . fst) <$> evMagic ct []
+          evs' <- maybe evs (:evs) <$> evMagic ct []
           simples subst evs' xs eqs'
         Just False -> return (Impossible eq)
         Nothing    -> simples subst evs (eq:xs) eqs'
@@ -228,15 +203,33 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind :: Kind -> Bool
     isNatKind = (`eqType` typeNatKind)
 
-evMagic :: Ct -> [PredType] -> TcPluginM (Maybe (EvTerm, [CoercionHole]))
+unifyItemToPredType :: CoreUnify -> PredType
+unifyItemToPredType ui =
+    mkPrimEqPred ty1 ty2
+  where
+    ty1 = case ui of
+            SubstItem {..} -> mkTyVarTy siVar
+            UnifyItem {..} -> reifySOP siLHS
+    ty2 = case ui of
+            SubstItem {..} -> reifySOP siSOP
+            UnifyItem {..} -> reifySOP siRHS
+
+evMagic :: Ct -> [PredType] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
 evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
   EqPred NomEq t1 t2 -> do
     holes <- replicateM (length preds) newCoercionHole
-    let ctEv    = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
-        holeEvs = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes preds
+    let newWanted = zipWith (unifyItemToCt (ctLoc ct)) preds holes
+        ctEv      = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
+        holeEvs   = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes preds
         natReflCo = mkNomReflCo typeNatKind
         natCoBndr = (,natReflCo) <$> (newFlexiTyVar typeNatKind)
     forallEv <- mkForAllCos <$> (replicateM (length preds) natCoBndr) <*> pure ctEv
     let finalEv = foldl mkInstCo forallEv holeEvs
-    return (Just (EvCoercion finalEv,holes))
+    return (Just ((EvCoercion finalEv, ct),newWanted))
   _ -> return Nothing
+
+unifyItemToCt :: CtLoc
+              -> PredType
+              -> CoercionHole
+              -> Ct
+unifyItemToCt loc pred_type hole = mkNonCanonical (CtWanted pred_type (HoleDest hole) loc)
