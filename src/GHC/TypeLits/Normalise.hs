@@ -163,8 +163,10 @@ simplifyNats eqs =
             Just ev ->
               simples (substsSubst subst' subst ++ subst')
                       (ev:evs) [] (xs ++ eqs')
-    simples subst evs xs (eq@(Right (ct,u)):eqs') =
-      case isNatural u of
+    simples subst evs xs (eq@(Right (ct,u)):eqs') = do
+      let u' = substsSOP subst u
+      tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u'))
+      case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct []
           simples subst evs' xs eqs'
