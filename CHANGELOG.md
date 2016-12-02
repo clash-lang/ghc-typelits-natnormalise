@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5.2
+* Fixes bugs:
+  * Reification from SOP to Type sometimes loses product terms
+
 ## 0.5.1 *September 29th 2016*
 * Fixes bugs:
   * Cannot solve an equality for the second time in a definition group

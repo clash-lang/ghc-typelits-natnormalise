@@ -151,7 +151,7 @@ reifyProduct (P ps) =
       , s1 == s2
       = Right (s1,(p1:p2)) : ys
       | otherwise
-      = Right (s1,[p1]) : ys
+      = Right (s1,[p1]) : y : ys
     mergeExp x ys = Left x : ys
 
 reifySymbol :: Either CoreSymbol (CoreSOP,[CoreProduct]) -> Type
