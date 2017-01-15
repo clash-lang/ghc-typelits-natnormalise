@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.5.2
+## 0.5.2 *January 15th 2017*
 * Fixes bugs:
   * Reification from SOP to Type sometimes loses product terms
 
