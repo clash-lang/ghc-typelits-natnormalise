@@ -38,6 +38,7 @@ To use the plugin, add
 To the header of your file.
 -}
 
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections   #-}
@@ -70,6 +71,9 @@ import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
 import TcPluginM  (newCoercionHole, newFlexiTyVar)
 import TcRnTypes  (CtEvidence (..), CtLoc, TcEvDest (..), ctLoc)
+#if MIN_VERSION_ghc(8,2,0)
+import TcRnTypes  (ShadowInfo (WDeriv))
+#endif
 import TyCoRep    (UnivCoProvenance (..))
 import Type       (mkPrimEqPred)
 import TcType     (typeKind)
@@ -234,4 +238,12 @@ unifyItemToCt :: CtLoc
               -> PredType
               -> CoercionHole
               -> Ct
-unifyItemToCt loc pred_type hole = mkNonCanonical (CtWanted pred_type (HoleDest hole) loc)
+unifyItemToCt loc pred_type hole =
+  mkNonCanonical
+    (CtWanted
+      pred_type
+      (HoleDest hole)
+#if MIN_VERSION_ghc(8,2,0)
+      WDeriv
+#endif
+      loc)

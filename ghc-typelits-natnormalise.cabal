@@ -63,7 +63,7 @@ library
                        GHC.TypeLits.Normalise.SOP,
                        GHC.TypeLits.Normalise.Unify
   build-depends:       base                >=4.9   && <5,
-                       ghc                 >=8.0.1 && <8.2,
+                       ghc                 >=8.0.1 && <8.4,
                        ghc-tcplugins-extra >=0.2,
                        integer-gmp         >=1.0   && <1.1
   hs-source-dirs:      src
