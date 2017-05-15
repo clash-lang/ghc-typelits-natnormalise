@@ -57,9 +57,6 @@ import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
 import TyCoRep       (Type (..), TyLit (..))
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
-#if MIN_VERSION_ghc(8,2,0)
-import UniqSet       (nonDetEltsUniqSet)
-#endif
 
 -- Internal
 import GHC.TypeLits.Normalise.SOP
@@ -429,11 +426,7 @@ fvSymbol (V v)   = unitUniqSet v
 fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
 
 eqFV :: CoreSOP -> CoreSOP -> Bool
-#if MIN_VERSION_ghc(8,2,0)
-eqFV = (==) `on` (nonDetEltsUniqSet . fvSOP)
-#else
 eqFV = (==) `on` fvSOP
-#endif
 
 containsConstants :: CoreSOP -> Bool
 containsConstants = any (any (\c -> case c of {(C _) -> True; _ -> False}) . unP) . unS
