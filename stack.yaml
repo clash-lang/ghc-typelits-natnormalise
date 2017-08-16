@@ -1,7 +1,10 @@
-resolver: nightly-2016-08-06
+resolver: nightly-2017-08-15
 
 packages:
 - '.'
+
+extra-deps:
+- ghc-tcplugins-extra-0.2.1
 
 flags:
   ghc-typelits-natnormalise:

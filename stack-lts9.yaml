@@ -1,0 +1,8 @@
+resolver: lts-9.0
+
+packages:
+- .
+
+flags:
+  ghc-typelits-natnormalise:
+    deverror: true
