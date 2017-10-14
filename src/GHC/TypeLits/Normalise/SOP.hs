@@ -1,5 +1,6 @@
 {-|
-Copyright  :  (C) 2015-2016, University of Twente
+Copyright  :  (C) 2015-2016, University of Twente,
+                  2017     , QBayLogic B.V.
 License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
@@ -197,6 +198,11 @@ mergeS s (E (S [P [s']]) (P [I i]))
 mergeS (E (S [P [s']]) (P [I i])) s
   | s == s'
   = Left (E (S [P [s']]) (P [I (i + 1)]))
+
+-- 4^x * 2^x ==> 8^x
+mergeS (E (S [P [I i]]) p) (E (S [P [I j]]) p')
+  | p == p'
+  = Left (E (S [P [I (i*j)]]) p)
 
 -- y*y ==> y^2
 mergeS l r

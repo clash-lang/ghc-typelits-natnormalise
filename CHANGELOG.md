@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5.4 *October 14th 2017*
+* Perform normalisations such as: `2^x * 4^x ==> 8^x`
+
 ## 0.5.3 *May 15th 2017*
 * Add support for GHC 8.2
 
