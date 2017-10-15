@@ -38,7 +38,7 @@ where
 
 -- External
 import Data.Function (on)
-import Data.List     ((\\), intersect, mapAccumL)
+import Data.List     ((\\), intersect, mapAccumL, nub)
 
 import GHC.Base               (isTrue#,(==#))
 import GHC.Integer            (smallInteger)
@@ -175,6 +175,7 @@ data UnifyItem v c = SubstItem { siVar  :: v
                    | UnifyItem { siLHS  :: SOP v c
                                , siRHS  :: SOP v c
                                }
+  deriving Eq
 
 instance (Outputable v, Outputable c) => Outputable (UnifyItem v c) where
   ppr (SubstItem {..}) = ppr siVar <+> text " := " <+> ppr siSOP
@@ -388,7 +389,9 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 
 -- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct (S ps1)       (S ps2)
-    | null psx  = unifiers'' ct (S ps1) (S ps2)
+    | null psx  = case zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2 of
+                    [] -> unifiers'' ct (S ps1) (S ps2)
+                    ks -> nub (concat ks)
     | otherwise = unifiers' ct (S ps1'') (S ps2'')
   where
     ps1'  = ps1 \\ psx
