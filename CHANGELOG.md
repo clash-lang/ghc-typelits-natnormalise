@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.5.5
+## 0.5.5 *October 22nd 2017*
 * Find more unifications:
   * `8^x - 2*4^x ~ 8^y - 2*4^y ==> [x := y]`
 
