@@ -254,6 +254,18 @@ proxyEq1 = id
 proxyEq2 :: Proxy (((2 ^ x) - 2) * (2 ^ (x + x))) -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
 proxyEq2 = id
 
+proxyInEqImplication :: (2 <= (2 ^ (n + d)))
+  => Proxy d
+  -> Proxy n
+  -> Proxy n
+proxyInEqImplication = proxyInEqImplication'
+
+proxyInEqImplication' :: (2 <= (2 ^ (d + n)))
+  => Proxy d
+  -> Proxy n
+  -> Proxy n
+proxyInEqImplication' _ = id
+
 main :: IO ()
 main = defaultMain tests
 
@@ -315,6 +327,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "1 <= 2^a" $
       show (proxyInEq5 (Proxy :: Proxy 1) (Proxy :: Proxy 1)) @?=
       "()"
+    , testCase "`(2 <= (2 ^ (n + d)))` implies `(2 <= (2 ^ (d + n)))`" $
+      show (proxyInEqImplication (Proxy :: Proxy 3) (Proxy :: Proxy 4)) @?=
+      "Proxy"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors

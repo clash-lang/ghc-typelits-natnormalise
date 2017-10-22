@@ -52,6 +52,7 @@ where
 -- external
 import Control.Arrow       (second)
 import Control.Monad       (replicateM)
+import Data.Either         (rights)
 import Data.List           (intersect)
 import Data.Maybe          (mapMaybe)
 import GHC.TcPluginM.Extra (tracePlugin)
@@ -116,7 +117,7 @@ decideEqualSOP givens  _deriveds wanteds = do
       [] -> return (TcPluginOk [] [])
       _  -> do
         unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
-        sr <- simplifyNats (unit_givens ++ unit_wanteds)
+        sr <- simplifyNats unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         case sr of
           Simplified evs -> do
@@ -140,10 +141,15 @@ instance Outputable SimplifyResult where
   ppr (Simplified evs) = text "Simplified" $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
-simplifyNats :: [Either NatEquality NatInEquality]
-             -> TcPluginM SimplifyResult
-simplifyNats eqs =
-    tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
+simplifyNats
+  :: [Either NatEquality NatInEquality]
+  -- ^ Given constraints
+  -> [Either NatEquality NatInEquality]
+  -- ^ Wanted constraints
+  -> TcPluginM SimplifyResult
+simplifyNats eqsG eqsW =
+    let eqs = eqsG ++ eqsW
+    in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
     simples :: [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
@@ -175,7 +181,15 @@ simplifyNats eqs =
           evs' <- maybe evs (:evs) <$> evMagic ct []
           simples subst evs' xs eqs'
         Just False -> return (Impossible eq)
-        Nothing    -> simples subst evs (eq:xs) eqs'
+        Nothing    ->
+          -- This inequality is either a given constraint, or it is a wanted
+          -- constraint, which in normal form is equal to another given
+          -- constraint, hence it can be solved.
+          if u `elem` (map snd (rights eqsG))
+             then do
+               evs' <- maybe evs (:evs) <$> evMagic ct []
+               simples subst evs' xs eqs'
+             else simples subst evs (eq:xs) eqs'
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Maybe (Either NatEquality NatInEquality)

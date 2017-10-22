@@ -1,6 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
 ## 0.5.5 *October 22nd 2017*
+* Solve inequalities when their normal forms are the same, i.e.
+  * `(2 <= (2 ^ (n + d)))` implies `(2 <= (2 ^ (d + n)))`
 * Find more unifications:
   * `8^x - 2*4^x ~ 8^y - 2*4^y ==> [x := y]`
 
