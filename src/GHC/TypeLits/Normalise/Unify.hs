@@ -389,9 +389,9 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 
 -- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct (S ps1)       (S ps2)
-    | null psx  = case zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2 of
+    | null psx  = case concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2) of
                     [] -> unifiers'' ct (S ps1) (S ps2)
-                    ks -> nub (concat ks)
+                    ks -> nub ks
     | otherwise = unifiers' ct (S ps1'') (S ps2'')
   where
     ps1'  = ps1 \\ psx

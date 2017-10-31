@@ -254,6 +254,15 @@ proxyEq1 = id
 proxyEq2 :: Proxy (((2 ^ x) - 2) * (2 ^ (x + x))) -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
 proxyEq2 = id
 
+proxyEq3
+  :: forall x y
+   . ((x + 1) ~ (2 * y))
+  => Proxy x
+  -> Proxy y
+  -> Proxy (((2 * (y - 1)) + 1))
+  -> Proxy x
+proxyEq3 _ _ x = x
+
 proxyInEqImplication :: (2 <= (2 ^ (n + d)))
   => Proxy d
   -> Proxy n
@@ -309,6 +318,11 @@ tests = testGroup "ghc-typelits-natnormalise"
       "Proxy"
     , testCase "(((2 ^ x) - 2) * (2 ^ (x + x))) ~ ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))" $
       show (proxyEq2 Proxy) @?=
+      "Proxy"
+    ]
+  , testGroup "Implications"
+    [ testCase "(x + 1) ~ (2 * y)) implies (((2 * (y - 1)) + 1)) ~ x" $
+      show (proxyEq3 (Proxy :: Proxy 3) (Proxy :: Proxy 2) Proxy) @?=
       "Proxy"
     ]
   , testGroup "Inequality"

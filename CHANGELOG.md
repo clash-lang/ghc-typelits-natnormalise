@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5.6 *October 31st 2017*
+* Fixes bugs:
+  * `(x + 1) ~ (2 * y)` no longer implies `((2 * (y - 1)) + 1) ~ x`
+
 ## 0.5.5 *October 22nd 2017*
 * Solve inequalities when their normal forms are the same, i.e.
   * `(2 <= (2 ^ (n + d)))` implies `(2 <= (2 ^ (d + n)))`
