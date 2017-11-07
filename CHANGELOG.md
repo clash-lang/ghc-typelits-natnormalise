@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5.7 *November 7th 2017*
+* Solve inequalities such as: `1 <= a + 3`
+
 ## 0.5.6 *October 31st 2017*
 * Fixes bugs:
   * `(x + 1) ~ (2 * y)` no longer implies `((2 * (y - 1)) + 1) ~ x`

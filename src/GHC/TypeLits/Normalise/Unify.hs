@@ -469,4 +469,15 @@ isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
 --
 -- > (1 <=? a^b) ~ True
 isNatural (S [P [I (-1)],P [E s p]]) = (&&) <$> isNatural s <*> isNatural (S [p])
-isNatural _ = Nothing
+-- We give up for all other products for now
+isNatural (S [P _]) = Nothing
+-- Adding two natural numbers is also a natural number
+isNatural (S (p:ps)) = do
+  pN <- isNatural (S [p])
+  pK <- isNatural (S ps)
+  case (pN,pK) of
+    (True,True)   -> return True  -- both are natural
+    (False,False) -> return False -- both are non-natural
+    _             -> Nothing
+    -- if one is natural and the other isn't, then their sum *might* be natural,
+    -- but we simply cant be sure.

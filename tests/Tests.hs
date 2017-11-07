@@ -3,7 +3,9 @@
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE Rank2Types          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
@@ -233,6 +235,16 @@ drop n = snd . splitAt n
 at :: SNat m -> Vec (m + (n + 1)) a -> a
 at n xs = head $ snd $ splitAt n xs
 
+leToPlus
+  :: forall (k :: Nat) (n :: Nat) f r
+   . (k <= n)
+  => f n
+  -- ^ Argument with the @(k <= n)@ constraint
+  -> (forall m . f (m + k) -> r)
+  -- ^ Function with the @(n + k)@ constraint
+  -> r
+leToPlus a f = f @ (n-k) a
+
 proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
 proxyInEq1 = proxyInEq
 
@@ -247,6 +259,9 @@ proxyInEq4 = proxyInEq
 
 proxyInEq5 :: Proxy 1 -> Proxy (2^a) -> ()
 proxyInEq5 = proxyInEq
+
+proxyInEq6 :: Proxy 1 -> Proxy (a + 3) -> ()
+proxyInEq6 = proxyInEq
 
 proxyEq1 :: Proxy ((2 ^ x) * (2 ^ (x + x))) -> Proxy (2 * (2 ^ ((x + (x + x)) - 1)))
 proxyEq1 = id
@@ -344,6 +359,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "`(2 <= (2 ^ (n + d)))` implies `(2 <= (2 ^ (d + n)))`" $
       show (proxyInEqImplication (Proxy :: Proxy 3) (Proxy :: Proxy 4)) @?=
       "Proxy"
+    , testCase "1 <= a+3" $
+      show (proxyInEq6 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
+      "()"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
