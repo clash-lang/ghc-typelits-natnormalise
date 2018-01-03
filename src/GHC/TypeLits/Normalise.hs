@@ -290,10 +290,18 @@ unifyItemToPredType ui =
 evMagic :: Ct -> [PredType] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
 evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
   EqPred NomEq t1 t2 -> do
+#if MIN_VERSION_ghc(8,5,0)
+    holes <- mapM (newCoercionHole . uncurry mkPrimEqPred . getEqPredTys) preds
+#else
     holes <- replicateM (length preds) newCoercionHole
+#endif
     let newWanted = zipWith (unifyItemToCt (ctLoc ct)) preds holes
         ctEv      = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
+#if MIN_VERSION_ghc(8,5,0)
+        holeEvs   = map mkHoleCo holes
+#else
         holeEvs   = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes preds
+#endif
         natReflCo = mkNomReflCo typeNatKind
         natCoBndr = (,natReflCo) <$> (newFlexiTyVar typeNatKind)
     forallEv <- mkForAllCos <$> (replicateM (length preds) natCoBndr) <*> pure ctEv
