@@ -1,5 +1,5 @@
 name:                ghc-typelits-natnormalise
-version:             0.5.7
+version:             0.5.8
 synopsis:            GHC typechecker plugin for types of kind GHC.TypeLits.Nat
 description:
   A type checker plugin for GHC that can solve /equalities/ of types of kind
@@ -42,7 +42,7 @@ license-file:        LICENSE
 author:              Christiaan Baaij
 maintainer:          christiaan.baaij@gmail.com
 copyright:           Copyright © 2015-2016, University of Twente,
-                                 2017     , QBayLogic B.V.
+                                 2017-2018, QBayLogic B.V.
 category:            Type System
 build-type:          Simple
 extra-source-files:  README.md

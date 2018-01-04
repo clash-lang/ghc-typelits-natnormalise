@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.5.8 *January 4th 2018*
+* Add support for GHC 8.4.1-alpha1
+
 ## 0.5.7 *November 7th 2017*
 * Solve inequalities such as: `1 <= a + 3`
 
