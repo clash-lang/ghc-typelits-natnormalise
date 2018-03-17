@@ -54,15 +54,21 @@ where
 import Control.Arrow       (second)
 import Control.Monad       (replicateM)
 import Data.Either         (rights)
-import Data.List           (intersect, mapAccumR)
-import Data.Maybe          (catMaybes)
+import Data.List           (intersect)
+import Data.Maybe          (mapMaybe)
 import GHC.TcPluginM.Extra (tracePlugin)
+#if MIN_VERSION_ghc(8,4,0)
+import GHC.TcPluginM.Extra (flattenGivens)
+#endif
 
 -- GHC API
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (..))
-import TcPluginM  (TcPluginM, tcPluginTrace, zonkCt)
+#if !MIN_VERSION_ghc(8,4,0)
+import TcPluginM  (zonkCt)
+#endif
+import TcPluginM  (TcPluginM, tcPluginTrace)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
                    isWanted, mkNonCanonical)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType,
@@ -113,11 +119,15 @@ decideEqualSOP _givens _deriveds []      = return (TcPluginOk [] [])
 decideEqualSOP givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
-    let unit_wanteds = catMaybes . snd $ mapAccumR toNatEquality [] wanteds'
+    let unit_wanteds = mapMaybe toNatEquality wanteds'
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
       _  -> do
-        unit_givens <- catMaybes . snd . mapAccumR toNatEquality [] <$> mapM zonkCt givens
+#if MIN_VERSION_ghc(8,4,0)
+        let unit_givens = mapMaybe toNatEquality (givens ++ flattenGivens givens)
+#else
+        unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
+#endif
         sr <- simplifyNats unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         case sr of
@@ -148,90 +158,56 @@ simplifyNats
   -> [Either NatEquality NatInEquality]
   -- ^ Wanted constraints
   -> TcPluginM SimplifyResult
-simplifyNats givens wanteds =
-    let eqs = givens ++ wanteds
-    in  tcPluginTrace "simplifyNats" (ppr eqs) >>
-        simples [] [] [] [] givens wanteds
+simplifyNats eqsG eqsW =
+    let eqs = eqsG ++ eqsW
+    in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    simples
-      :: [CoreUnify]
-      -- Substitutions
-      -> [((EvTerm, Ct), [Ct])]
-      -- Evidence
-      -> [Either NatEquality NatInEquality]
-      -- Processed given constraints
-      -> [Either NatEquality NatInEquality]
-      -- Unsolved wanted constraints
-      -> [Either NatEquality NatInEquality]
-      -- Given constraints
-      -> [Either NatEquality NatInEquality]
-      -- Wanted constraints
-      -> TcPluginM SimplifyResult
-    -- Finished
-    simples _subst evs _eqGS _xs _eqG [] = return (Simplified evs)
-    -- Process all the givens (create substitutions)
-    simples subst evs eqGS xs (eq:eqs') ws
-      | Left (ct,u,v) <- eq = do
+    simples :: [CoreUnify]
+            -> [((EvTerm, Ct), [Ct])]
+            -> [Either NatEquality NatInEquality]
+            -> [Either NatEquality NatInEquality]
+            -> TcPluginM SimplifyResult
+    simples _subst evs _xs [] = return (Simplified evs)
+    simples subst evs xs (eq@(Left (ct,u,v)):eqs') = do
       ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
-      case ur of
-        Lose -> return (Impossible eq)
-        Draw subst'@(_:_) -> do
-          evM <- evMagic ct (map unifyItemToPredType subst')
-          case evM of
-            Nothing -> simples subst evs eqGS xs eqs' ws
-            Just ev ->
-              simples (substsSubst subst' subst ++ subst')
-                (ev:evs) eqGS xs eqs' ws
-        _ -> simples subst evs eqGS xs eqs' ws
-      | Right (ct,u) <- eq = do
-      let u' = substsSOP subst u
-      case isNatural u' of
-        Just False -> return (Impossible eq)
-        -- Add a processed given with substitution applied
-        _ -> simples subst evs (Right (ct,u'):eqGS) xs eqs' ws
-    -- Process all the wanteds (actually solve constraints)
-    simples subst evs eqGS xs [] (eq:eqs')
-      | Left (ct,u,v) <- eq = do
-      ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
+      tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
           evs' <- maybe evs (:evs) <$> evMagic ct []
-          simples subst evs' eqGS [] [] (xs ++ eqs')
+          simples subst evs' [] (xs ++ eqs')
         Lose -> return (Impossible eq)
-        Draw [] -> simples subst evs eqGS (eq:xs) [] eqs'
+        Draw [] -> simples subst evs (eq:xs) eqs'
         Draw subst' -> do
           evM <- evMagic ct (map unifyItemToPredType subst')
           case evM of
-            Nothing -> simples subst evs eqGS xs [] eqs'
+            Nothing -> simples subst evs xs eqs'
             Just ev ->
               simples (substsSubst subst' subst ++ subst')
-                      (ev:evs) eqGS [] [] (xs ++ eqs')
-      | Right (ct,u) <- eq = do
+                      (ev:evs) [] (xs ++ eqs')
+    simples subst evs xs (eq@(Right (ct,u)):eqs') = do
       let u' = substsSOP subst u
+      tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u'))
       case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct []
-          simples subst evs' eqGS xs [] eqs'
+          simples subst evs' xs eqs'
         Just False -> return (Impossible eq)
         Nothing    ->
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
-          if u' `elem` (map snd (rights eqGS))
+          if u `elem` (map snd (rights eqsG))
              then do
                evs' <- maybe evs (:evs) <$> evMagic ct []
-               simples subst evs' eqGS xs [] eqs'
-             else simples subst evs eqGS (eq:xs) [] eqs'
+               simples subst evs' xs eqs'
+             else simples subst evs (eq:xs) eqs'
 
 -- Extract the Nat equality constraints
-toNatEquality
-  :: [(CType,Bool)]
-  -> Ct
-  -> ([(CType,Bool)],Maybe (Either NatEquality NatInEquality))
-toNatEquality a ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
+toNatEquality :: Ct -> Maybe (Either NatEquality NatInEquality)
+toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2
       -> go t1 t2
-    _ -> (a,Nothing)
+    _ -> Nothing
   where
     go (TyConApp tc xs) (TyConApp tc' ys)
       | tc == tc'
@@ -239,40 +215,21 @@ toNatEquality a ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
                                    ,typeNatMulTyCon,typeNatExpTyCon])
       = case filter (not . uncurry eqType) (zip xs ys) of
           [(x,y)] | isNatKind (typeKind x) &&  isNatKind (typeKind y)
-                  -> (a,Just (Left (ct, normaliseNat x, normaliseNat y)))
-          _ -> (a,Nothing)
-
-    go (TyConApp tc xs) t2
+                  -> Just (Left (ct, normaliseNat x, normaliseNat y))
+          _ -> Nothing
       | tc == typeNatLeqTyCon
       , [x,y] <- xs
-      = let trueLEq  = (a,Just (Right (ct,normaliseNat
-                               (mkTyConApp typeNatSubTyCon [y,x]))))
-            falseLEq = (a,Just (Right (ct,normaliseNat
-                               (mkTyConApp typeNatSubTyCon
-                                  [x,mkTyConApp typeNatAddTyCon
-                                     [y,mkNumLitTy 1]]))))
-        in case t2 of
-          TyConApp tc' _
-            | tc' == promotedTrueDataCon
-            -> trueLEq
-            | tc' == promotedFalseDataCon
-            -> falseLEq
-          _ | Just b <- lookup (CType t2) a
-            -> if b then trueLEq else falseLEq
-            | otherwise
-            -> (a,Nothing)
-
-    go x (TyConApp tc _)
-      | tc == promotedTrueDataCon
-      = ((CType x,True):a,Nothing)
-      | tc == promotedFalseDataCon
-      = ((CType x,False):a,Nothing)
+      = if tc' == promotedTrueDataCon
+           then Just (Right (ct,normaliseNat (mkTyConApp typeNatSubTyCon [y,x])))
+           else if tc' == promotedFalseDataCon
+                then Just (Right (ct,normaliseNat (mkTyConApp typeNatSubTyCon [x,mkTyConApp typeNatAddTyCon [y,mkNumLitTy 1]])))
+                else Nothing
 
     go x y
       | isNatKind (typeKind x) && isNatKind (typeKind y)
-      = (a,Just (Left (ct,normaliseNat x,normaliseNat y)))
+      = Just (Left (ct,normaliseNat x,normaliseNat y))
       | otherwise
-      = (a,Nothing)
+      = Nothing
 
     isNatKind :: Kind -> Bool
     isNatKind = (`eqType` typeNatKind)
