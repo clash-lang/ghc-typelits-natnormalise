@@ -57,12 +57,18 @@ import Data.Either         (rights)
 import Data.List           (intersect)
 import Data.Maybe          (mapMaybe)
 import GHC.TcPluginM.Extra (tracePlugin)
+#if MIN_VERSION_ghc(8,4,0)
+import GHC.TcPluginM.Extra (flattenGivens)
+#endif
 
 -- GHC API
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (..))
-import TcPluginM  (TcPluginM, tcPluginTrace, zonkCt)
+#if !MIN_VERSION_ghc(8,4,0)
+import TcPluginM  (zonkCt)
+#endif
+import TcPluginM  (TcPluginM, tcPluginTrace)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
                    isWanted, mkNonCanonical)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType,
@@ -117,7 +123,11 @@ decideEqualSOP givens  _deriveds wanteds = do
     case unit_wanteds of
       [] -> return (TcPluginOk [] [])
       _  -> do
+#if MIN_VERSION_ghc(8,4,0)
+        let unit_givens = mapMaybe toNatEquality (givens ++ flattenGivens givens)
+#else
         unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
+#endif
         sr <- simplifyNats unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         case sr of
