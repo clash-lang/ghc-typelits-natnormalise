@@ -62,6 +62,9 @@ import GHC.TcPluginM.Extra (flattenGivens)
 #endif
 
 -- GHC API
+#if MIN_VERSION_ghc(8,5,0)
+import CoreSyn    (Expr (..))
+#endif
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 import TcEvidence (EvTerm (..))
@@ -264,7 +267,11 @@ evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
         natCoBndr = (,natReflCo) <$> (newFlexiTyVar typeNatKind)
     forallEv <- mkForAllCos <$> (replicateM (length preds) natCoBndr) <*> pure ctEv
     let finalEv = foldl mkInstCo forallEv holeEvs
+#if MIN_VERSION_ghc(8,5,0)
+    return (Just ((EvExpr (Coercion finalEv), ct),newWanted))
+#else
     return (Just ((EvCoercion finalEv, ct),newWanted))
+#endif
   _ -> return Nothing
 
 unifyItemToCt :: CtLoc
