@@ -40,6 +40,7 @@ where
 -- External
 import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
+import Control.Monad.Trans.Writer.Strict
 
 import GHC.Base               (isTrue#,(==#))
 import GHC.Integer            (smallInteger)
@@ -85,18 +86,19 @@ type CoreSymbol  = Symbol TyVar CType
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: Type -> CoreSOP
+normaliseNat :: Type -> Writer [(Type,Type)] CoreSOP
 normaliseNat ty | Just ty1 <- coreView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = S [P [V v]]
-normaliseNat (LitTy (NumTyLit i)) = S [P [I i]]
+normaliseNat (TyVarTy v)          = return (S [P [V v]])
+normaliseNat (LitTy (NumTyLit i)) = return (S [P [I i]])
 normaliseNat (TyConApp tc [x,y])
-  | tc == typeNatAddTyCon = mergeSOPAdd (normaliseNat x) (normaliseNat y)
-  | tc == typeNatSubTyCon = mergeSOPAdd (normaliseNat x)
-                                        (mergeSOPMul (S [P [I (-1)]])
-                                                     (normaliseNat y))
-  | tc == typeNatMulTyCon = mergeSOPMul (normaliseNat x) (normaliseNat y)
-  | tc == typeNatExpTyCon = normaliseExp (normaliseNat x) (normaliseNat y)
-normaliseNat t = S [P [C (CType t)]]
+  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatSubTyCon = do
+    tell [(x,y)]
+    mergeSOPAdd <$> normaliseNat x
+                <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
+  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
+normaliseNat t = return (S [P [C (CType t)]])
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type

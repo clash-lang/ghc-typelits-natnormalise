@@ -7,6 +7,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
 import GHC.TypeLits
@@ -14,6 +16,8 @@ import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
 
+import Data.Constraint
+import Data.Constraint.Nat
 import Data.List (isInfixOf)
 import Data.Proxy
 import Control.Exception
@@ -263,15 +267,32 @@ proxyInEq5 = proxyInEq
 proxyInEq6 :: Proxy 1 -> Proxy (a + 3) -> ()
 proxyInEq6 = proxyInEq
 
-proxyEq1 :: Proxy ((2 ^ x) * (2 ^ (x + x))) -> Proxy (2 * (2 ^ ((x + (x + x)) - 1)))
-proxyEq1 = id
+proxyEq1
+  :: forall x
+   . (1 <= x)
+  => Proxy ((2 ^ x) * (2 ^ (x + x)))
+  -> Proxy (2 * (2 ^ ((x + (x + x)) - 1)))
+proxyEq1
+  | Sub Dict <- timesMonotone2 @3 @1 @x
+  , Sub Dict <- leTrans @1 @3 @(3 * x)
+  = id
 
-proxyEq2 :: Proxy (((2 ^ x) - 2) * (2 ^ (x + x))) -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
-proxyEq2 = id
+proxyEq2
+  :: forall x
+   . (2 <= x)
+  => Proxy (((2 ^ x) - 2) * (2 ^ (x + x)))
+  -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
+proxyEq2
+  | Sub Dict <- leTrans @1 @2 @x
+  , Sub Dict <- timesMonotone2 @3 @1 @x
+  , Sub Dict <- leTrans @1 @3 @(3 * x)
+  , Sub Dict <- powMonotone2 @2 @1 @x
+  , Sub Dict <- powMonotone2 @2 @((2 * x) + 1) @((3 * x) - 1)
+  = id
 
 proxyEq3
   :: forall x y
-   . ((x + 1) ~ (2 * y))
+   . ((x + 1) ~ (2 * y), 1 <= y)
   => Proxy x
   -> Proxy y
   -> Proxy (((2 * (y - 1)) + 1))
@@ -329,10 +350,10 @@ tests = testGroup "ghc-typelits-natnormalise"
     ]
   , testGroup "Equality"
     [ testCase "((2 ^ x) * (2 ^ (x + x))) ~ (2 * (2 ^ ((x + (x + x)) - 1)))" $
-      show (proxyEq1 Proxy) @?=
+      show (proxyEq1 @1 Proxy) @?=
       "Proxy"
     , testCase "(((2 ^ x) - 2) * (2 ^ (x + x))) ~ ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))" $
-      show (proxyEq2 Proxy) @?=
+      show (proxyEq2 @2 Proxy) @?=
       "Proxy"
     ]
   , testGroup "Implications"
