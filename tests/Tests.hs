@@ -263,15 +263,21 @@ proxyInEq5 = proxyInEq
 proxyInEq6 :: Proxy 1 -> Proxy (a + 3) -> ()
 proxyInEq6 = proxyInEq
 
-proxyEq1 :: Proxy ((2 ^ x) * (2 ^ (x + x))) -> Proxy (2 * (2 ^ ((x + (x + x)) - 1)))
+proxyEq1
+  :: (1 <= x)
+  => Proxy ((2 ^ x) * (2 ^ (x + x)))
+  -> Proxy (2 * (2 ^ ((x + (x + x)) - 1)))
 proxyEq1 = id
 
-proxyEq2 :: Proxy (((2 ^ x) - 2) * (2 ^ (x + x))) -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
+proxyEq2
+  :: (2 <= x)
+  => Proxy (((2 ^ x) - 2) * (2 ^ (x + x)))
+  -> Proxy ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))
 proxyEq2 = id
 
 proxyEq3
   :: forall x y
-   . ((x + 1) ~ (2 * y))
+   . ((x + 1) ~ (2 * y), 1 <= y)
   => Proxy x
   -> Proxy y
   -> Proxy (((2 * (y - 1)) + 1))
@@ -329,10 +335,10 @@ tests = testGroup "ghc-typelits-natnormalise"
     ]
   , testGroup "Equality"
     [ testCase "((2 ^ x) * (2 ^ (x + x))) ~ (2 * (2 ^ ((x + (x + x)) - 1)))" $
-      show (proxyEq1 Proxy) @?=
+      show (proxyEq1 @1 Proxy) @?=
       "Proxy"
     , testCase "(((2 ^ x) - 2) * (2 ^ (x + x))) ~ ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))" $
-      show (proxyEq2 Proxy) @?=
+      show (proxyEq2 @2 Proxy) @?=
       "Proxy"
     ]
   , testGroup "Implications"

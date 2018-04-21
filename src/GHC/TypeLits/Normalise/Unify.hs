@@ -41,6 +41,7 @@ module GHC.TypeLits.Normalise.Unify
 where
 
 -- External
+import Control.Monad.Trans.Writer.Strict
 import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
 import Data.Maybe    (mapMaybe)
@@ -89,18 +90,19 @@ type CoreSymbol  = Symbol TyVar CType
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: Type -> CoreSOP
+normaliseNat :: Type -> Writer [(Type,Type)] CoreSOP
 normaliseNat ty | Just ty1 <- coreView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = S [P [V v]]
-normaliseNat (LitTy (NumTyLit i)) = S [P [I i]]
+normaliseNat (TyVarTy v)          = return (S [P [V v]])
+normaliseNat (LitTy (NumTyLit i)) = return (S [P [I i]])
 normaliseNat (TyConApp tc [x,y])
-  | tc == typeNatAddTyCon = mergeSOPAdd (normaliseNat x) (normaliseNat y)
-  | tc == typeNatSubTyCon = mergeSOPAdd (normaliseNat x)
-                                        (mergeSOPMul (S [P [I (-1)]])
-                                                     (normaliseNat y))
-  | tc == typeNatMulTyCon = mergeSOPMul (normaliseNat x) (normaliseNat y)
-  | tc == typeNatExpTyCon = normaliseExp (normaliseNat x) (normaliseNat y)
-normaliseNat t = S [P [C (CType t)]]
+  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatSubTyCon = do
+    tell [(x,y)]
+    mergeSOPAdd <$> normaliseNat x
+                <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
+  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
+  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
+normaliseNat t = return (S [P [C (CType t)]])
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
@@ -177,6 +179,14 @@ subtractIneq (x,y,isLE)
   = mergeSOPAdd y (mergeSOPMul (S [P [I (-1)]]) x)
   | otherwise
   = mergeSOPAdd x (mergeSOPMul (S [P [I (-1)]]) (mergeSOPAdd y (S [P [I 1]])))
+
+sopToIneq
+  :: CoreSOP
+  -> Maybe Ineq
+sopToIneq (S [P ((I i):l),r])
+  | i < 0
+  = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
+sopToIneq _ = Nothing
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
