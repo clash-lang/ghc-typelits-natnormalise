@@ -32,6 +32,9 @@ module GHC.TypeLits.Normalise.Unify
   , unifiers
     -- * Free variables in 'SOP' terms
   , fvSOP
+    -- * Inequalities
+  , subtractIneq
+  , solveIneq
     -- * Properties
   , isNatural
   )
@@ -40,6 +43,7 @@ where
 -- External
 import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
+import Data.Maybe    (mapMaybe)
 
 import GHC.Base               (isTrue#,(==#))
 import GHC.Integer            (smallInteger)
@@ -164,6 +168,15 @@ reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
                                          [reifySOP s1
                                          ,reifySOP (S s2)
                                          ]
+
+subtractIneq
+  :: (CoreSOP, CoreSOP, Bool)
+  -> CoreSOP
+subtractIneq (x,y,isLE)
+  | isLE
+  = mergeSOPAdd y (mergeSOPMul (S [P [I (-1)]]) x)
+  | otherwise
+  = mergeSOPAdd x (mergeSOPMul (S [P [I (-1)]]) (mergeSOPAdd y (S [P [I 1]])))
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
@@ -482,3 +495,234 @@ isNatural (S (p:ps)) = do
     _             -> Nothing
     -- if one is natural and the other isn't, then their sum *might* be natural,
     -- but we simply cant be sure.
+
+-- | Try to solve inequalities
+solveIneq
+  :: Word
+  -- ^ Solving depth
+  -> Ineq
+  -- ^ Inequality we want to solve
+  -> Ineq
+  -- ^ Given/proven inequality
+  -> Maybe Bool
+  -- ^ Solver result
+  --
+  -- * /Nothing/: exhausted solver steps
+  --
+  -- * /Just True/: inequality is solved
+  --
+  -- * /Just False/: solver is unable to solve inequality, note that this does
+  -- __not__ mean the wanted inequality does not hold.
+solveIneq 0 _ _ = Nothing
+solveIneq k want@(_,_,True) have@(_,_,True)
+  | want == have
+  = Just True
+  | null solved
+  = Nothing
+  | otherwise
+  = Just (or solved)
+  where
+    solved = mapMaybe (uncurry (solveIneq (k - 1))) new
+    new    = mapMaybe (\f -> f want have) ineqRules
+solveIneq _ _ _ = Just False
+
+type Ineq = (CoreSOP, CoreSOP, Bool)
+type IneqRule = Ineq -> Ineq  -> Maybe (Ineq,Ineq)
+
+ineqRules
+  :: [IneqRule]
+ineqRules =
+  [ leTrans
+  , plusMonotone
+  , timesMonotone
+  , powMonotone
+  , pow2MonotoneSpecial
+  ]
+
+-- | Transitivity of inequality
+leTrans :: IneqRule
+-- want: 1 <=? y ~ True
+-- have: 2 <=? y ~ True
+--
+-- new want: want
+-- new have: 1 <=? y ~ True
+leTrans want@(a,_,le) (x,y,_)
+  | S [P [I i]] <- a
+  , S [P [I j]] <- x
+  , j >= i
+  = Just (want,(a,y,le))
+  | otherwise
+  = Nothing
+
+-- | Monotonicity of addition
+--
+-- We use SOP normalization to apply this rule by e.g.:
+--
+-- * Given: (2*x+1) <= (3*x-1)
+-- * Turn to: (3*x-1) - (2*x+1)
+-- * SOP version: -2 + x
+-- * Convert back to inequality: 2 <= x
+plusMonotone :: IneqRule
+plusMonotone want have
+  | Just want' <- sopToIneq (subtractIneq want)
+  , want' /= want
+  = Just (want',have)
+  | Just have' <- sopToIneq (subtractIneq have)
+  , have' /= have
+  = Just (want,have')
+plusMonotone _ _ = Nothing
+
+-- | Monotonicity of multiplication
+timesMonotone :: IneqRule
+-- want: a <=? C*y ~ True
+-- have: a <=? x ~ True
+--
+-- new want: want
+-- new have: a <=? C*y ~ True
+timesMonotone want@(a,S [P b@(_:_:_)],le) (x,S [P y],_)
+  | a == x
+  , let b' = b \\ y
+  , not (null b')
+  = Just (want,(x,mergeSOPMul (S [P b']) (S [P y]),le))
+-- want: a <=? y ~ True
+-- have: a <=? C*x ~ True
+--
+-- new want: a <=? C*y ~ True
+-- new have: have
+timesMonotone (a,S [P b],le) have@(x,S [P y@(_:_:_)],_)
+  | a == x
+  , let y' = y \\ b
+  , not (null y')
+  = Just ((a,mergeSOPMul (S [P y']) (S [P b]),le),have)
+timesMonotone _ _ = Nothing
+
+
+-- | Monotonicity of exponentiation
+powMonotone :: IneqRule
+powMonotone (a@(S [P [E aS aP]]),S [P [E bS bP]],le)
+            (x@(S [P [E xS xP]]),S [P [E yS yP]],_)
+  -- want: 2^x <=? 2^(2 * y) ~ True
+  -- have: 2^x <=? y ~ True
+  --
+  -- new want: x <=? 2*y ~ True
+  -- new have: x <=? y ~ True
+  | a == x
+  , aS == bS
+  , aS == yS
+  = Just ((S [aP],S [bP],le),(S [xP],S [yP],le))
+  -- want: x^y <=? (2 + z)^y ~ True
+  -- have: x^y <=? z^y ~ True
+  --
+  -- new want: x <=? 2 + z ~ True
+  -- new have: x <=? z ~ True
+  | a == x
+  , aP == bP
+  , aP == yP
+  = Just ((aS,bS,le),(xS,yS,le))
+
+powMonotone want (x, S [P [E yS yP]],le)
+  = case x of
+      S [P [E xS xP]]
+        -- want: XXX
+        -- have: 2^x <=? 2^y ~ True
+        --
+        -- new want: want
+        -- new have: x <=? y ~ True
+        | xS == yS
+        -> Just (want,(S [xP],S [yP],le))
+        -- want: XXX
+        -- have: x^2 <=? y^2 ~ True
+        --
+        -- new want: want
+        -- new have: x <=? y ~ True
+        | xP == yP
+        -> Just (want,(xS,yS,le))
+        -- want: XXX
+        -- have: 2 <=? 2 ^ x ~ True
+        --
+        -- new want: want
+        -- new have: 1 <=? x ~ True
+      _ | x == yS
+        -> Just (want,(S [P [I 1]],S [yP],le))
+      _ -> Nothing
+
+powMonotone (a,S [P [E bS bP]],le) have
+  = case a of
+      S [P [E aS aP]]
+        -- want: 2^x <=? 2^y ~ True
+        -- have: XXX
+        --
+        -- new want: x <=? y ~ True
+        -- new have: have
+        | aS == bS
+        -> Just ((S [aP],S [bP],le),have)
+        -- want: x^2 <=? y^2 ~ True
+        -- have: XXX
+        --
+        -- new want: x <=? y ~ True
+        -- new have: have
+        | aP == bP
+        -> Just ((aS,bS,le),have)
+        -- want: 2 <=? 2 ^ x ~ True
+        -- have: XXX
+        --
+        -- new want: 1 <=? x ~ True
+        -- new have: XXX
+      _ | a == bS
+        -> Just ((S [P [I 1]],S [bP],le),have)
+      _ -> Nothing
+
+powMonotone _ _ = Nothing
+
+-- | Try to get the power-of-2 factors, and apply the monotonicity of
+-- exponentiation rule.
+--
+-- TODO: I wish we could generalize to find arbitrary factors, but currently
+-- I don't know how.
+pow2MonotoneSpecial :: IneqRule
+pow2MonotoneSpecial (a,b,le) have
+  -- want: 4 * 4^x <=? 8^x ~ True
+  -- have: XXX
+  --
+  -- want as pow 2 factors: 2^(2+2*x) <=? 2^(3*x) ~ True
+  --
+  -- new want: 2+2*x <=? 3*x ~ True
+  -- new have: have
+  | Just a' <- facSOP 2 a
+  , Just b' <- facSOP 2 b
+  = Just ((a',b',le),have)
+pow2MonotoneSpecial want (x,y,le)
+  -- want: XXX
+  -- have:4 * 4^x <=? 8^x ~ True
+  --
+  -- have as pow 2 factors: 2^(2+2*x) <=? 2^(3*x) ~ True
+  --
+  -- new want: want
+  -- new have: 2+2*x <=? 3*x ~ True
+  | Just x' <- facSOP 2 x
+  , Just y' <- facSOP 2 y
+  = Just (want,(x',y',le))
+pow2MonotoneSpecial _ _ = Nothing
+
+-- | Get the power of /N/ factors of a SOP term
+facSOP
+  :: Integer
+  -- ^ The power /N/
+  -> CoreSOP
+  -> Maybe CoreSOP
+facSOP n (S [P ps]) = fmap (S . concat . map unS) (traverse (facSymbol n) ps)
+facSOP _ _          = Nothing
+
+-- | Get the power of /N/ factors of a Symbol
+facSymbol
+  :: Integer
+  -- ^ The power
+  -> CoreSymbol
+  -> Maybe CoreSOP
+facSymbol n (I i)
+  | Just j <- integerLogBase n i
+  = Just (S [P [I j]])
+facSymbol n (E s p)
+  | Just s' <- facSOP n s
+  = Just (mergeSOPMul s' (S [p]))
+facSymbol _ _ = Nothing

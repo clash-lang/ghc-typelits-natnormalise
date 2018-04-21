@@ -93,7 +93,6 @@ import TcTypeNats (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                    typeNatSubTyCon)
 
 import TcTypeNats (typeNatLeqTyCon)
-import Type       (mkNumLitTy,mkTyConApp)
 import TysWiredIn (promotedFalseDataCon, promotedTrueDataCon)
 
 -- internal
@@ -141,7 +140,7 @@ decideEqualSOP givens  _deriveds wanteds = do
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
-type NatInEquality = (Ct,CoreSOP)
+type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
 
 fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
@@ -188,22 +187,25 @@ simplifyNats eqsG eqsW =
               simples (substsSubst subst' subst ++ subst')
                       (ev:evs) [] (xs ++ eqs')
     simples subst evs xs (eq@(Right (ct,u)):eqs') = do
-      let u' = substsSOP subst u
+      let u' = substsSOP subst (subtractIneq u)
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u'))
       case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct []
           simples subst evs' xs eqs'
         Just False -> return (Impossible eq)
-        Nothing    ->
+        Nothing
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
-          if u `elem` (map snd (rights eqsG))
-             then do
-               evs' <- maybe evs (:evs) <$> evMagic ct []
-               simples subst evs' xs eqs'
-             else simples subst evs (eq:xs) eqs'
+          | u `elem` ineqs || or (mapMaybe (solveIneq 5 u) ineqs)
+          -> do
+            evs' <- maybe evs (:evs) <$> evMagic ct []
+            simples subst evs' xs eqs'
+          | otherwise
+          -> simples subst evs (eq:xs) eqs'
+          where
+            ineqs = map snd (rights eqsG)
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Maybe (Either NatEquality NatInEquality)
@@ -222,11 +224,12 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
           _ -> Nothing
       | tc == typeNatLeqTyCon
       , [x,y] <- xs
-      = if tc' == promotedTrueDataCon
-           then Just (Right (ct,normaliseNat (mkTyConApp typeNatSubTyCon [y,x])))
-           else if tc' == promotedFalseDataCon
-                then Just (Right (ct,normaliseNat (mkTyConApp typeNatSubTyCon [x,mkTyConApp typeNatAddTyCon [y,mkNumLitTy 1]])))
-                else Nothing
+      = case tc' of
+         _ | tc' == promotedTrueDataCon
+           -> Just (Right (ct, (normaliseNat x, normaliseNat y, True)))
+         _ | tc' == promotedFalseDataCon
+           -> Just (Right (ct, (normaliseNat x, normaliseNat y, False)))
+         _ -> Nothing
 
     go x y
       | isNatKind (typeKind x) && isNatKind (typeKind y)
