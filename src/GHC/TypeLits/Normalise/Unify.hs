@@ -36,6 +36,7 @@ module GHC.TypeLits.Normalise.Unify
   , subtractIneq
   , solveIneq
   , ineqToSubst
+  , subtractionToPred
     -- * Properties
   , isNatural
   )
@@ -57,11 +58,12 @@ import TcPluginM     (TcPluginM, tcPluginTrace)
 import TcRnMonad     (Ct, ctEvidence, isGiven)
 import TcRnTypes     (ctEvPred)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
-                      typeNatSubTyCon)
+                      typeNatSubTyCon, typeNatLeqTyCon)
 import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
                       coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
-                      nonDetCmpType)
+                      nonDetCmpType, PredType, mkPrimEqPred)
 import TyCoRep       (Type (..), TyLit (..))
+import TysWiredIn    (promotedTrueDataCon)
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
@@ -217,6 +219,13 @@ ineqToSubst (x,S [P [V v]],True)
   = Just (SubstItem v x)
 ineqToSubst _
   = Nothing
+
+subtractionToPred
+  :: (Type,Type)
+  -> PredType
+subtractionToPred (x,y) =
+  mkPrimEqPred (mkTyConApp typeNatLeqTyCon [y,x])
+               (mkTyConApp promotedTrueDataCon [])
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being

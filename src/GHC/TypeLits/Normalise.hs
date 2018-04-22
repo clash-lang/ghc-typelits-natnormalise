@@ -198,7 +198,6 @@ import TcTypeNats (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                    typeNatSubTyCon)
 
 import TcTypeNats (typeNatLeqTyCon)
-import Type       (mkTyConApp)
 import TysWiredIn (promotedFalseDataCon, promotedTrueDataCon)
 
 -- internal
@@ -402,13 +401,6 @@ unifyItemToPredType ui =
     ty2 = case ui of
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
-
-subtractionToPred
-  :: (Type,Type)
-  -> PredType
-subtractionToPred (x,y) =
-  mkPrimEqPred (mkTyConApp typeNatLeqTyCon [y,x])
-               (mkTyConApp promotedTrueDataCon [])
 
 evMagic :: Ct -> [PredType] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
 evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
