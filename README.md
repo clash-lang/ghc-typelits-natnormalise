@@ -37,3 +37,10 @@ To use the plugin, add
 ```
 
 To the header of your file.
+
+If you believe, or need, subtraction of natural numbers to be associative,
+additionally add:
+
+```
+{-# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:subtraction-associative #-}
+```

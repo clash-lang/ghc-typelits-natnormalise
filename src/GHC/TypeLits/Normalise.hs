@@ -37,6 +37,13 @@ To use the plugin, add
 @
 
 To the header of your file.
+
+If you believe, or need, subtraction of natural numbers to be associative,
+additionally add:
+
+@
+{\-\# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:subtraction-associative \#-\}
+@
 -}
 
 {-# LANGUAGE CPP             #-}
@@ -107,20 +114,34 @@ import GHC.TypeLits.Normalise.Unify
 -- @
 --
 -- To the header of your file.
+--
+-- If you believe, or need, subtraction of natural numbers to be associative,
+-- additionally add:
+--
+-- @
+-- {\-\# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:subtraction-associative \#-\}
+-- @
 plugin :: Plugin
-plugin = defaultPlugin { tcPlugin = const $ Just normalisePlugin }
+plugin = defaultPlugin { tcPlugin = go }
+ where
+  go ["subtraction-associative"] = Just (normalisePlugin True)
+  go _ = Just (normalisePlugin False)
 
-normalisePlugin :: TcPlugin
-normalisePlugin = tracePlugin "ghc-typelits-natnormalise"
+normalisePlugin :: Bool -> TcPlugin
+normalisePlugin subAssoc = tracePlugin "ghc-typelits-natnormalise"
   TcPlugin { tcPluginInit  = return ()
-           , tcPluginSolve = const decideEqualSOP
+           , tcPluginSolve = const (decideEqualSOP subAssoc)
            , tcPluginStop  = const (return ())
            }
 
-decideEqualSOP :: [Ct] -> [Ct] -> [Ct]
-               -> TcPluginM TcPluginResult
-decideEqualSOP _givens _deriveds []      = return (TcPluginOk [] [])
-decideEqualSOP givens  _deriveds wanteds = do
+decideEqualSOP
+  :: Bool
+  -> [Ct]
+  -> [Ct]
+  -> [Ct]
+  -> TcPluginM TcPluginResult
+decideEqualSOP _subAssoc _givens _deriveds []      = return (TcPluginOk [] [])
+decideEqualSOP subAssoc  givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
@@ -132,7 +153,7 @@ decideEqualSOP givens  _deriveds wanteds = do
 #else
         unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
 #endif
-        sr <- simplifyNats unit_givens unit_wanteds
+        sr <- simplifyNats subAssoc unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         case sr of
           Simplified evs -> do
@@ -165,15 +186,22 @@ mergeSimplifyResult _ b@(Impossible _) = b
 mergeSimplifyResult (Simplified a) (Simplified b) = Simplified (a ++ b)
 
 simplifyNats
-  :: [(Either NatEquality NatInEquality,[(Type,Type)])]
+  :: Bool
+  -- ^ Subtraction is associative (LIE!)
+  -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Given constraints
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Wanted constraints
   -> TcPluginM SimplifyResult
-simplifyNats eqsG eqsW =
+simplifyNats subAssoc eqsG eqsW =
     let eqs = map (second (const [])) eqsG ++ eqsW
     in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
+    -- If subtraction is considered associative then we simply do not emit
+    -- the inequalities derived from subtractions
+    subToPred | subAssoc  = const []
+              | otherwise = map subtractionToPred
+
     simples :: [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
             -> [(Either NatEquality NatInEquality,[(Type,Type)])]
@@ -185,13 +213,13 @@ simplifyNats eqsG eqsW =
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
-          evs' <- maybe evs (:evs) <$> evMagic ct (map subtractionToPred k)
+          evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
           simples subst evs' [] (xs ++ eqs')
         Lose -> return (Impossible (fst eq))
         Draw [] -> simples subst evs (eq:xs) eqs'
         Draw subst' -> do
           evM <- evMagic ct (map unifyItemToPredType subst' ++
-                             map subtractionToPred k)
+                             subToPred k)
           case evM of
             Nothing -> simples subst evs xs eqs'
             Just ev ->
@@ -203,7 +231,7 @@ simplifyNats eqsG eqsW =
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u'))
       case isNatural u' of
         Just True  -> do
-          evs' <- maybe evs (:evs) <$> evMagic ct (map subtractionToPred k)
+          evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
           case ineqToSubst u of
             Just s
               | u `elem` ineqs
@@ -219,7 +247,7 @@ simplifyNats eqsG eqsW =
           -- constraint, hence it can be solved.
           | or (mapMaybe (solveIneq 5 u) ineqs)
           -> do
-            evs' <- maybe evs (:evs) <$> evMagic ct (map subtractionToPred k)
+            evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
             case ineqToSubst u of
               Just s
                 | u `elem` ineqs
