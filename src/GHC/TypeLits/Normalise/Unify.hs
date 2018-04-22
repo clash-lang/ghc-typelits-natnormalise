@@ -172,6 +172,15 @@ reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
                                          ,reifySOP (S s2)
                                          ]
 
+-- | Subtract an inequality, in order to either:
+--
+-- * See if the smallest solution is a natural number
+-- * Cancel sums, i.e. monotonicity of addition
+--
+-- @
+-- subtractIneq (2*y <=? 3*x ~ True)  = (-2*y + 3*x)
+-- subtractIneq (2*y <=? 3*x ~ False) = (-3*x + (-1) + 2*y)
+-- @
 subtractIneq
   :: (CoreSOP, CoreSOP, Bool)
   -> CoreSOP
@@ -181,6 +190,14 @@ subtractIneq (x,y,isLE)
   | otherwise
   = mergeSOPAdd x (mergeSOPMul (S [P [I (-1)]]) (mergeSOPAdd y (S [P [I 1]])))
 
+-- | Try to reverse the process of 'subtractIneq'
+--
+-- E.g.
+--
+-- @
+-- subtractIneq (2*y <=? 3*x ~ True) = (-2*y + 3*x)
+-- sopToIneq (-2*y+3*x) = Just (2*x <=? 3*x ~ True)
+-- @
 sopToIneq
   :: CoreSOP
   -> Maybe Ineq
@@ -189,6 +206,7 @@ sopToIneq (S [P ((I i):l),r])
   = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
 sopToIneq _ = Nothing
 
+-- | Give the smallest solution for an inequality
 ineqToSubst
   :: Ineq
   -> Maybe CoreUnify
