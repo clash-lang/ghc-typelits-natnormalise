@@ -578,7 +578,7 @@ ineqRules =
 
 -- | Transitivity of inequality
 leTrans :: IneqRule
-leTrans want@(a,b,le) have@(x,y,_)
+leTrans want@(a,b,le) (x,y,_)
   -- want: 1 <=? y ~ True
   -- have: 2 <=? y ~ True
   --
