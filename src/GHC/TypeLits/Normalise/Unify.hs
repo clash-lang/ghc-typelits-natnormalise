@@ -560,18 +560,26 @@ ineqRules =
 
 -- | Transitivity of inequality
 leTrans :: IneqRule
--- want: 1 <=? y ~ True
--- have: 2 <=? y ~ True
---
--- new want: want
--- new have: 1 <=? y ~ True
-leTrans want@(a,_,le) (x,y,_)
-  | S [P [I i]] <- a
-  , S [P [I j]] <- x
-  , j >= i
+leTrans want@(a,b,le) have@(x,y,_)
+  -- want: 1 <=? y ~ True
+  -- have: 2 <=? y ~ True
+  --
+  -- new want: want
+  -- new have: 1 <=? y ~ True
+  | S [P [I a']] <- a
+  , S [P [I x']] <- x
+  , x' >= a'
   = Just (want,(a,y,le))
-  | otherwise
-  = Nothing
+  -- want: y <=? 10 ~ True
+  -- have: y <=? 9 ~ True
+  --
+  -- new want: want
+  -- new have: y <=? 10 ~ True
+  | S [P [I b']] <- b
+  , S [P [I y']] <- y
+  , y' < b'
+  = Just (want,(x,b,le))
+leTrans _ _ = Nothing
 
 -- | Monotonicity of addition
 --
