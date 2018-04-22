@@ -378,6 +378,7 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
     , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $ (testProxy15 (Proxy :: Proxy 1)) `throws` testProxy15Errors
+    , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
     , testGroup "Inequality"
       [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
       , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors

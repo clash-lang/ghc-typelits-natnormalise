@@ -1,4 +1,5 @@
-{-# LANGUAGE DataKinds, KindSignatures, TemplateHaskell, TypeFamilies, TypeOperators #-}
+{-# LANGUAGE DataKinds, GADTs, KindSignatures, ScopedTypeVariables, TemplateHaskell,
+             TypeApplications, TypeFamilies, TypeOperators #-}
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
@@ -159,3 +160,19 @@ testProxy15Errors =
   ["Expected type: Proxy n -> Proxy (n + d)"
   ,"Actual type: Proxy n -> Proxy n"
   ]
+
+data Fin (n :: Nat) where
+  FZ :: Fin (n + 1)
+  FS :: Fin n -> Fin (n + 1)
+
+test16 :: forall n . Integer -> Fin n
+test16 n = case n of
+  0 -> FZ
+  x -> FS (test16 @(n-1) (x-1))
+
+test16Errors =
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
+    )]
