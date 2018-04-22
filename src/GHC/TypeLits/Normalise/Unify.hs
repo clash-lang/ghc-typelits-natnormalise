@@ -601,28 +601,76 @@ plusMonotone _ _ = Nothing
 
 -- | Monotonicity of multiplication
 timesMonotone :: IneqRule
--- want: a <=? C*y ~ True
--- have: a <=? x ~ True
---
--- new want: want
--- new have: a <=? C*y ~ True
-timesMonotone want@(a,S [P b@(_:_:_)],le) (x,S [P y],_)
-  | a == x
-  , let b' = b \\ y
-  , not (null b')
-  = Just (want,(x,mergeSOPMul (S [P b']) (S [P y]),le))
--- want: a <=? y ~ True
--- have: a <=? C*x ~ True
---
--- new want: a <=? C*y ~ True
--- new have: have
-timesMonotone (a,S [P b],le) have@(x,S [P y@(_:_:_)],_)
-  | a == x
-  , let y' = y \\ b
-  , not (null y')
-  = Just ((a,mergeSOPMul (S [P y']) (S [P b]),le),have)
-timesMonotone _ _ = Nothing
+timesMonotone want@(a,b,le) have@(x,y,_)
+  -- want: C*a <=? b ~ True
+  -- have: x <=? y ~ True
+  --
+  -- new want: want
+  -- new have: C*a <=? C*y ~ True
+  | S [P a'@(_:_:_)] <- a
+  , S [P x'] <- x
+  , S [P y'] <- y
+  , let ax = a' \\ x'
+  , let ay = a' \\ y'
+  -- Ensure we don't repeat this rule over and over
+  , not (null ax)
+  , not (null ay)
+  -- Pick the smallest product
+  , let az = if length ax <= length ay then S [P ax] else S [P ay]
+  = Just (want,(mergeSOPMul az x, mergeSOPMul az y,le))
 
+  -- want: a <=? C*b ~ True
+  -- have: x <=? y ~ True
+  --
+  -- new want: want
+  -- new have: C*a <=? C*y ~ True
+  | S [P b'@(_:_:_)] <- b
+  , S [P x'] <- x
+  , S [P y'] <- y
+  , let bx = b' \\ x'
+  , let by = b' \\ y'
+  -- Ensure we don't repeat this rule over and over
+  , not (null bx)
+  , not (null by)
+  -- Pick the smallest product
+  , let bz = if length bx <= length by then S [P bx] else S [P by]
+  = Just (want,(mergeSOPMul bz x, mergeSOPMul bz y,le))
+
+  -- want: a <=? b ~ True
+  -- have: C*x <=? y ~ True
+  --
+  -- new want: C*a <=? C*b ~ True
+  -- new have: have
+  | S [P x'@(_:_:_)] <- x
+  , S [P a'] <- a
+  , S [P b'] <- b
+  , let xa = x' \\ a'
+  , let xb = x' \\ b'
+  -- Ensure we don't repeat this rule over and over
+  , not (null xa)
+  , not (null xb)
+  -- Pick the smallest product
+  , let xz = if length xa <= length xb then S [P xa] else S [P xb]
+  = Just ((mergeSOPMul xz a, mergeSOPMul xz b,le),have)
+
+  -- want: a <=? b ~ True
+  -- have: x <=? C*y ~ True
+  --
+  -- new want: C*a <=? C*b ~ True
+  -- new have: have
+  | S [P y'@(_:_:_)] <- y
+  , S [P a'] <- a
+  , S [P b'] <- b
+  , let ya = y' \\ a'
+  , let yb = y' \\ b'
+  -- Ensure we don't repeat this rule over and over
+  , not (null ya)
+  , not (null yb)
+  -- Pick the smallest product
+  , let yz = if length ya <= length yb then S [P ya] else S [P yb]
+  = Just ((mergeSOPMul yz a, mergeSOPMul yz b,le),have)
+
+timesMonotone _ _ = Nothing
 
 -- | Monotonicity of exponentiation
 powMonotone :: IneqRule
