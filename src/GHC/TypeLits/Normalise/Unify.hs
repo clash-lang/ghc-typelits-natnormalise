@@ -618,27 +618,6 @@ timesMonotone _ _ = Nothing
 
 -- | Monotonicity of exponentiation
 powMonotone :: IneqRule
-powMonotone (a@(S [P [E aS aP]]),S [P [E bS bP]],le)
-            (x@(S [P [E xS xP]]),S [P [E yS yP]],_)
-  -- want: 2^x <=? 2^(2 * y) ~ True
-  -- have: 2^x <=? y ~ True
-  --
-  -- new want: x <=? 2*y ~ True
-  -- new have: x <=? y ~ True
-  | a == x
-  , aS == bS
-  , aS == yS
-  = Just ((S [aP],S [bP],le),(S [xP],S [yP],le))
-  -- want: x^y <=? (2 + z)^y ~ True
-  -- have: x^y <=? z^y ~ True
-  --
-  -- new want: x <=? 2 + z ~ True
-  -- new have: x <=? z ~ True
-  | a == x
-  , aP == bP
-  , aP == yP
-  = Just ((aS,bS,le),(xS,yS,le))
-
 powMonotone want (x, S [P [E yS yP]],le)
   = case x of
       S [P [E xS xP]]
