@@ -45,7 +45,7 @@ where
 import Control.Monad.Trans.Writer.Strict
 import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
-import Data.Maybe    (mapMaybe)
+import Data.Maybe    (fromMaybe, mapMaybe)
 
 import GHC.Base               (isTrue#,(==#))
 import GHC.Integer            (smallInteger)
@@ -202,6 +202,9 @@ sopToIneq
   :: CoreSOP
   -> Maybe Ineq
 sopToIneq (S [P ((I i):l),r])
+  | i < 0
+  = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
+sopToIneq (S [r,P ((I i:l))])
   | i < 0
   = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
 sopToIneq _ = Nothing
@@ -439,12 +442,19 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
     | i > j     = unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
 
 -- (a + c) ~ (b + c) ==> [a := b]
-unifiers' ct (S ps1)       (S ps2)
-    | null psx  = case concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2) of
-                    [] -> unifiers'' ct (S ps1) (S ps2)
-                    ks -> nub ks
-    | otherwise = unifiers' ct (S ps1'') (S ps2'')
+unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
+  Just (s1',s2',_)
+    | s1' /= s1 || s2' /= s1
+    , fromMaybe True (isNatural s1')
+    , fromMaybe True (isNatural s2')
+    -> unifiers' ct s1' s2'
+  _ | null psx
+    -> case concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2) of
+        [] -> unifiers'' ct (S ps1) (S ps2)
+        ks -> nub ks
+  _ -> unifiers' ct (S ps1'') (S ps2'')
   where
+    k1 = subtractIneq (s1,s2,True)
     ps1'  = ps1 \\ psx
     ps2'  = ps2 \\ psx
     ps1'' | null ps1' = [P [I 0]]

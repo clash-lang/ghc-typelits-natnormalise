@@ -296,6 +296,17 @@ proxyInEqImplication' :: (2 <= (2 ^ (d + n)))
   -> Proxy n
 proxyInEqImplication' _ = id
 
+proxyEqSubst
+  :: ((n+1) ~ ((n1 + m) + 1), m ~ n1, n1 ~ ((n2 + m1) + 1))
+  => Proxy n1
+  -> Proxy n2
+  -> Proxy m1
+  -> Proxy n
+  -> Proxy m
+  -> Proxy (1 + (n2 + m1))
+  -> Proxy n1
+proxyEqSubst _ _ _ _ _ = id
+
 main :: IO ()
 main = defaultMain tests
 
@@ -344,6 +355,10 @@ tests = testGroup "ghc-typelits-natnormalise"
   , testGroup "Implications"
     [ testCase "(x + 1) ~ (2 * y)) implies (((2 * (y - 1)) + 1)) ~ x" $
       show (proxyEq3 (Proxy :: Proxy 3) (Proxy :: Proxy 2) Proxy) @?=
+      "Proxy"
+    , testCase "(n+1) ~ ((n1 + m) + 1), m ~ n1, n1 ~ ((n2 + m1) + 1) implies n1 ~ 1 + (n2 + m1)" $
+      show (proxyEqSubst (Proxy :: Proxy 6) (Proxy :: Proxy 2) (Proxy :: Proxy 3)
+                         (Proxy :: Proxy 12) (Proxy :: Proxy 6) (Proxy :: Proxy 6)) @?=
       "Proxy"
     ]
   , testGroup "Inequality"
