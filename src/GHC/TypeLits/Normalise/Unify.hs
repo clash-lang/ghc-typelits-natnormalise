@@ -35,6 +35,7 @@ module GHC.TypeLits.Normalise.Unify
     -- * Inequalities
   , subtractIneq
   , solveIneq
+  , ineqToSubst
     -- * Properties
   , isNatural
   )
@@ -187,6 +188,14 @@ sopToIneq (S [P ((I i):l),r])
   | i < 0
   = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
 sopToIneq _ = Nothing
+
+ineqToSubst
+  :: Ineq
+  -> Maybe CoreUnify
+ineqToSubst (x,S [P [V v]],True)
+  = Just (SubstItem v x)
+ineqToSubst _
+  = Nothing
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being

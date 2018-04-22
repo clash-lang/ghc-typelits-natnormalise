@@ -156,6 +156,14 @@ instance Outputable SimplifyResult where
   ppr (Simplified evs) = text "Simplified" $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
+mergeSimplifyResult
+  :: SimplifyResult
+  -> SimplifyResult
+  -> SimplifyResult
+mergeSimplifyResult a@(Impossible _) _ = a
+mergeSimplifyResult _ b@(Impossible _) = b
+mergeSimplifyResult (Simplified a) (Simplified b) = Simplified (a ++ b)
+
 simplifyNats
   :: [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Given constraints
@@ -190,25 +198,37 @@ simplifyNats eqsG eqsW =
               simples (substsSubst subst' subst ++ subst')
                       (ev:evs) [] (xs ++ eqs')
     simples subst evs xs (eq@(Right (ct,u),k):eqs') = do
-      let u' = substsSOP subst (subtractIneq u)
+      let u'    = substsSOP subst (subtractIneq u)
+          ineqs = map snd (rights (map fst eqsG))
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u'))
       case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct (map subtractionToPred k)
-          simples subst evs' xs eqs'
+          case ineqToSubst u of
+            Just s
+              | u `elem` ineqs
+              -> mergeSimplifyResult
+                  <$> simples (substsSubst [s] subst ++ [s]) evs' [] (xs ++ eqs')
+                  <*> simples subst evs' xs eqs'
+            _ -> simples subst evs' xs eqs'
+
         Just False -> return (Impossible (fst eq))
         Nothing
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
-          | u `elem` ineqs || or (mapMaybe (solveIneq 5 u) ineqs)
+          | or (mapMaybe (solveIneq 5 u) ineqs)
           -> do
             evs' <- maybe evs (:evs) <$> evMagic ct (map subtractionToPred k)
-            simples subst evs' xs eqs'
+            case ineqToSubst u of
+              Just s
+                | u `elem` ineqs
+                -> mergeSimplifyResult
+                    <$> simples (substsSubst [s] subst ++ [s]) evs' [] (xs ++ eqs')
+                    <*> simples subst evs' xs eqs'
+              _ -> simples subst evs' xs eqs'
           | otherwise
           -> simples subst evs (eq:xs) eqs'
-          where
-            ineqs = map snd (rights (map fst eqsG))
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Maybe (Either NatEquality NatInEquality,[(Type,Type)])
