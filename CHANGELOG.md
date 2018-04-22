@@ -1,5 +1,22 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.6
+* Solving constraints with `a-b` will emit `b <= a` constraints. e.g. solving
+  `n-1+1 ~ n` will emit a `1 <= n` constraint.
+* Try to solve equalities using smallest solution of inequalities:
+  * Solve `x + 1 ~ y` using `1 <= y` => `x + 1 ~ 1` => `x ~ 0`
+* Solve inequalities using simple transitivity rules:
+  * `2 <= x` implies `1 <= x`
+  * `x <= 9` implies `x <= 10`
+* Solve inequalities using _simple_ monotonicity of addition rules:
+  * `2 <= x` implies `2 + 2*x <= 3*x`
+* Solve inequalities using _simple_ monotonicity of multiplication rules:
+  * `1 <= x` implies `1 <= 3*x`
+* Solve inequalities using _simple_ monotonicity of exponentiation rules:
+  * `1 <= x` implies `2 <= 2^x`
+* Solve inequalities using powers of 2 and monotonicity of exponentiation:
+  * `2 <= x` implies `2^(2 + 2*x) <= 2^(3*x)`
+
 ## 0.5.10 *April 15th 2018*
 * Add support for GHC 8.5.20180306
 
