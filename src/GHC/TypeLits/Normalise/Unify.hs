@@ -530,6 +530,12 @@ isNatural (S [P (I i:ps)])
   | i >= 0    = isNatural (S [P ps])
   | otherwise = return False
 isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
+isNatural (S [P (E s p:ps)]) = do
+  sN <- isNatural s
+  pN <- isNatural (S [p])
+  if sN && pN
+     then isNatural (S [P ps])
+     else Nothing
 -- This is a quick hack, it determines that
 --
 -- > a^b - 1
