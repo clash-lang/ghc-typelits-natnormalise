@@ -3,9 +3,10 @@
 ## 0.6
 * Solving constraints with `a-b` will emit `b <= a` constraints. e.g. solving
   `n-1+1 ~ n` will emit a `1 <= n` constraint.
-  * If you believe, or need, subtraction for natural numbers to be associative,
-    run with `-fplugin-opt GHC.TypeLits.Normalise:subtraction-associative`, and
-    the `b <= a` constraint won't be emitted.
+  * If you need subtraction to be treated as addition with a negated operarand
+    run with `-fplugin-opt GHC.TypeLits.Normalise:allow-negated-numbers`, and
+    the `b <= a` constraint won't be emitted. Note that doing so can lead to
+    unsound behaviour.
 * Try to solve equalities using smallest solution of inequalities:
   * Solve `x + 1 ~ y` using `1 <= y` => `x + 1 ~ 1` => `x ~ 0`
 * Solve inequalities using simple transitivity rules:

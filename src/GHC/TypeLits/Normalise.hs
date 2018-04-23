@@ -38,12 +38,109 @@ To use the plugin, add
 
 To the header of your file.
 
-If you believe, or need, subtraction of natural numbers to be associative,
-additionally add:
+== Treating subtraction as addition with a negated number
+
+If you are absolutely sure that your subtractions can /never/ lead to (a locally)
+negative number, you can ask the plugin to treat subtraction as addition with
+a negated operand by additionally adding:
 
 @
-{\-\# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:subtraction-associative \#-\}
+{\-\# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:allow-negated-numbers \#-\}
 @
+
+to the header of your file, thereby allowing to use associativity and
+commutativity rules when proving constraints involving subtractions. Note that
+this option can lead to unsound behaviour and should be handled with extreme
+care.
+
+=== When it leads to unsound behaviour
+
+For example, enabling the /allow-negated-numbers/ feature would allow
+you to prove:
+
+@
+(n - 1) + 1 ~ n
+@
+
+/without/ a @(1 <= n)@ constraint, even though when /n/ is set to /0/ the
+subtraction @n-1@ would be locally negative and hence not be a natural number.
+
+This would allow the following erroneous definition:
+
+@
+data Fin (n :: Nat) where
+  FZ :: Fin (n + 1)
+  FS :: Fin n -> Fin (n + 1)
+
+f :: forall n . Natural -> Fin n
+f n = case of
+  0 -> FZ
+  x -> FS (f \@(n-1) (x - 1))
+
+fs :: [Fin 0]
+fs = f \<$\> [0..]
+@
+
+=== When it might be Okay
+
+This example is taken from the <http://hackage.haskell.org/package/mezzo mezzo>
+library.
+
+When you have:
+
+@
+-- | Singleton type for the number of repetitions of an element.
+data Times (n :: Nat) where
+    T :: Times n
+
+-- | An element of a "run-length encoded" vector, containing the value and
+-- the number of repetitions
+data Elem :: Type -> Nat -> Type where
+    (:*) :: t -> Times n -> Elem t n
+
+-- | A length-indexed vector, optimised for repetitions.
+data OptVector :: Type -> Nat -> Type where
+    End  :: OptVector t 0
+    (:-) :: Elem t l -> OptVector t (n - l) -> OptVector t n
+@
+
+And you want to define:
+
+@
+-- | Append two optimised vectors.
+type family (x :: OptVector t n) ++ (y :: OptVector t m) :: OptVector t (n + m) where
+    ys        ++ End = ys
+    End       ++ ys = ys
+    (x :- xs) ++ ys = x :- (xs ++ ys)
+@
+
+then the last line will give rise to the constraint:
+
+@
+(n-l)+m ~ (n+m)-l
+@
+
+because:
+
+@
+x  :: Elem t l
+xs :: OptVector t (n-l)
+ys :: OptVector t m
+@
+
+In this case it's okay to add
+
+@
+{\-\# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:allow-negated-numbers \#-\}
+@
+
+if you can convince yourself you will never be able to construct a:
+
+@
+xs :: OptVector t (n-l)
+@
+
+where /n-l/ is a negative number.
 -}
 
 {-# LANGUAGE CPP             #-}
@@ -114,23 +211,16 @@ import GHC.TypeLits.Normalise.Unify
 -- @
 --
 -- To the header of your file.
---
--- If you believe, or need, subtraction of natural numbers to be associative,
--- additionally add:
---
--- @
--- {\-\# OPTIONS_GHC -fplugin-opt GHC.TypeLits.Normalise:subtraction-associative \#-\}
--- @
 plugin :: Plugin
 plugin = defaultPlugin { tcPlugin = go }
  where
-  go ["subtraction-associative"] = Just (normalisePlugin True)
+  go ["allow-negated-numbers"] = Just (normalisePlugin True)
   go _ = Just (normalisePlugin False)
 
 normalisePlugin :: Bool -> TcPlugin
-normalisePlugin subAssoc = tracePlugin "ghc-typelits-natnormalise"
+normalisePlugin negNumbers = tracePlugin "ghc-typelits-natnormalise"
   TcPlugin { tcPluginInit  = return ()
-           , tcPluginSolve = const (decideEqualSOP subAssoc)
+           , tcPluginSolve = const (decideEqualSOP negNumbers)
            , tcPluginStop  = const (return ())
            }
 
@@ -140,8 +230,8 @@ decideEqualSOP
   -> [Ct]
   -> [Ct]
   -> TcPluginM TcPluginResult
-decideEqualSOP _subAssoc _givens _deriveds []      = return (TcPluginOk [] [])
-decideEqualSOP subAssoc  givens  _deriveds wanteds = do
+decideEqualSOP _negNumbers _givens _deriveds []      = return (TcPluginOk [] [])
+decideEqualSOP negNumbers  givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
@@ -153,7 +243,7 @@ decideEqualSOP subAssoc  givens  _deriveds wanteds = do
 #else
         unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
 #endif
-        sr <- simplifyNats subAssoc unit_givens unit_wanteds
+        sr <- simplifyNats negNumbers unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         case sr of
           Simplified evs -> do
@@ -187,20 +277,21 @@ mergeSimplifyResult (Simplified a) (Simplified b) = Simplified (a ++ b)
 
 simplifyNats
   :: Bool
-  -- ^ Subtraction is associative (LIE!)
+  -- ^ Allow negated numbers (potentially unsound!)
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Given constraints
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Wanted constraints
   -> TcPluginM SimplifyResult
-simplifyNats subAssoc eqsG eqsW =
+simplifyNats negNumbers eqsG eqsW =
     let eqs = map (second (const [])) eqsG ++ eqsW
     in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
   where
-    -- If subtraction is considered associative then we simply do not emit
-    -- the inequalities derived from subtractions
-    subToPred | subAssoc  = const []
-              | otherwise = map subtractionToPred
+    -- If we allow negated numbers we simply do not emit the inequalities
+    -- derived from the subtractions that are converted to additions with a
+    -- negated operand
+    subToPred | negNumbers = const []
+              | otherwise  = map subtractionToPred
 
     simples :: [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
