@@ -238,12 +238,13 @@ at n xs = head $ snd $ splitAt n xs
 leToPlus
   :: forall (k :: Nat) (n :: Nat) f r
    . (k <= n)
-  => f n
+  => Proxy k
+  -> f n
   -- ^ Argument with the @(k <= n)@ constraint
   -> (forall m . f (m + k) -> r)
   -- ^ Function with the @(n + k)@ constraint
   -> r
-leToPlus a f = f @ (n-k) a
+leToPlus _ a f = f @ (n-k) a
 
 proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
 proxyInEq1 = proxyInEq

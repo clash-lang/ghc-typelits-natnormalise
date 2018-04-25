@@ -458,9 +458,10 @@ unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
     , fromMaybe True (isNatural s2')
     -> unifiers' ct s1' s2'
   _ | null psx
-    -> case concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2) of
-        [] -> unifiers'' ct (S ps1) (S ps2)
-        ks -> nub ks
+    -> case nub (concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)) of
+        []  -> unifiers'' ct (S ps1) (S ps2)
+        [k] -> [k]
+        _   -> []
   _ -> unifiers' ct (S ps1'') (S ps2'')
   where
     k1 = subtractIneq (s1,s2,True)
