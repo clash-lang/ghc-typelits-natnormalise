@@ -266,14 +266,6 @@ instance Outputable SimplifyResult where
   ppr (Simplified evs) = text "Simplified" $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
-mergeSimplifyResult
-  :: SimplifyResult
-  -> SimplifyResult
-  -> SimplifyResult
-mergeSimplifyResult a@(Impossible _) _ = a
-mergeSimplifyResult _ b@(Impossible _) = b
-mergeSimplifyResult (Simplified a) (Simplified b) = Simplified (a ++ b)
-
 simplifyNats
   :: Bool
   -- ^ Allow negated numbers (potentially unsound!)
@@ -322,13 +314,7 @@ simplifyNats negNumbers eqsG eqsW =
       case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
-          case ineqToSubst u of
-            Just s
-              | u `elem` ineqs
-              -> mergeSimplifyResult
-                  <$> simples (substsSubst [s] subst ++ [s]) evs' [] (xs ++ eqs')
-                  <*> simples subst evs' xs eqs'
-            _ -> simples subst evs' xs eqs'
+          simples subst evs' xs eqs'
 
         Just False -> return (Impossible (fst eq))
         Nothing
@@ -338,13 +324,7 @@ simplifyNats negNumbers eqsG eqsW =
           | or (mapMaybe (solveIneq 5 u) ineqs)
           -> do
             evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
-            case ineqToSubst u of
-              Just s
-                | u `elem` ineqs
-                -> mergeSimplifyResult
-                    <$> simples (substsSubst [s] subst ++ [s]) evs' [] (xs ++ eqs')
-                    <*> simples subst evs' xs eqs'
-              _ -> simples subst evs' xs eqs'
+            simples subst evs' xs eqs'
           | otherwise
           -> simples subst evs (eq:xs) eqs'
 

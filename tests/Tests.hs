@@ -99,12 +99,22 @@ powUNat x (USucc y) = multUNat x (powUNat x y)
 head :: Vec (n + 1) a -> a
 head (x :> _) = x
 
+head'
+  :: forall n a
+   . (1 <= n)
+  => Vec n a
+  -> a
+head' = head @(n-1)
+
 -- | Extract the elements after the head of a vector
 --
 -- >>> tail (1:>2:>3:>Nil)
 -- <2,3>
 tail :: Vec (n + 1) a -> Vec n a
 tail (_ :> xs) = xs
+
+tail' :: (1 <= m) => Vec m a -> Vec (m-1) a
+tail' = tail
 
 -- | Extract all the elements of a vector except the last element
 --
@@ -113,6 +123,9 @@ tail (_ :> xs) = xs
 init :: Vec (n + 1) a -> Vec n a
 init (_ :> Nil)      = Nil
 init (x :> y :> ys) = x :> init (y :> ys)
+
+init' :: (1 <= m) => Vec m a -> Vec (m-1) a
+init' = init
 
 infixr 5 ++
 -- | Append two vectors
@@ -223,6 +236,9 @@ merge (x :> xs) (y :> ys) = x :> y :> merge xs ys
 drop :: SNat m -> Vec (m + n) a -> Vec n a
 drop n = snd . splitAt n
 
+drop' :: (m <= k) => SNat m -> Vec k a -> Vec (k - m) a
+drop' = drop
+
 -- | 'at' @n xs@ returns @n@'th element of @xs@
 --
 -- __NB__: vector elements have an __ASCENDING__ subscript starting from 0 and
@@ -234,6 +250,14 @@ drop n = snd . splitAt n
 -- 2
 at :: SNat m -> Vec (m + (n + 1)) a -> a
 at n xs = head $ snd $ splitAt n xs
+
+at'
+  :: forall k m a
+   . (1 <= k, m <= (k-1))
+   => SNat m
+   -> Vec k a
+   -> a
+at' = at @m @(k - 1 - m)
 
 leToPlus
   :: forall (k :: Nat) (n :: Nat) f r
