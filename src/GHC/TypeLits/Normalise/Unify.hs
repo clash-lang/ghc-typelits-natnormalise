@@ -589,11 +589,11 @@ solveIneq k want@(_,_,True) have@(_,_,True)
   = Just (or solved)
   where
     solved = mapMaybe (uncurry (solveIneq (k - 1))) new
-    new    = mapMaybe (\f -> f want have) ineqRules
+    new    = concatMap (\f -> f want have) ineqRules
 solveIneq _ _ _ = Just False
 
 type Ineq = (CoreSOP, CoreSOP, Bool)
-type IneqRule = Ineq -> Ineq  -> Maybe (Ineq,Ineq)
+type IneqRule = Ineq -> Ineq  -> [(Ineq,Ineq)]
 
 ineqRules
   :: [IneqRule]
@@ -603,6 +603,7 @@ ineqRules =
   , timesMonotone
   , powMonotone
   , pow2MonotoneSpecial
+  , haveSmaller
   ]
 
 -- | Transitivity of inequality
@@ -616,7 +617,7 @@ leTrans want@(a,b,le) (x,y,_)
   | S [P [I a']] <- a
   , S [P [I x']] <- x
   , x' >= a'
-  = Just (want,(a,y,le))
+  = [(want,(a,y,le))]
   -- want: y <=? 10 ~ True
   -- have: y <=? 9 ~ True
   --
@@ -625,8 +626,8 @@ leTrans want@(a,b,le) (x,y,_)
   | S [P [I b']] <- b
   , S [P [I y']] <- y
   , y' < b'
-  = Just (want,(x,b,le))
-leTrans _ _ = Nothing
+  = [(want,(x,b,le))]
+leTrans _ _ = []
 
 -- | Monotonicity of addition
 --
@@ -640,11 +641,20 @@ plusMonotone :: IneqRule
 plusMonotone want have
   | Just want' <- sopToIneq (subtractIneq want)
   , want' /= want
-  = Just (want',have)
+  = [(want',have)]
   | Just have' <- sopToIneq (subtractIneq have)
   , have' /= have
-  = Just (want,have')
-plusMonotone _ _ = Nothing
+  = [(want,have')]
+plusMonotone _ _ = []
+
+-- | Make the `a` of a given `a <= b` smaller
+haveSmaller :: IneqRule
+haveSmaller want have
+  | (S (x:y:ys),us,True) <- have
+  = [(want,(S (x:ys),us,True))
+    ,(want,(S (y:ys),us,True))
+    ]
+haveSmaller _ _ = []
 
 -- | Monotonicity of multiplication
 timesMonotone :: IneqRule
@@ -664,7 +674,7 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null ay)
   -- Pick the smallest product
   , let az = if length ax <= length ay then S [P ax] else S [P ay]
-  = Just (want,(mergeSOPMul az x, mergeSOPMul az y,le))
+  = [(want,(mergeSOPMul az x, mergeSOPMul az y,le))]
 
   -- want: a <=? C*b ~ True
   -- have: x <=? y ~ True
@@ -681,7 +691,7 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null by)
   -- Pick the smallest product
   , let bz = if length bx <= length by then S [P bx] else S [P by]
-  = Just (want,(mergeSOPMul bz x, mergeSOPMul bz y,le))
+  = [(want,(mergeSOPMul bz x, mergeSOPMul bz y,le))]
 
   -- want: a <=? b ~ True
   -- have: C*x <=? y ~ True
@@ -698,7 +708,7 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null xb)
   -- Pick the smallest product
   , let xz = if length xa <= length xb then S [P xa] else S [P xb]
-  = Just ((mergeSOPMul xz a, mergeSOPMul xz b,le),have)
+  = [((mergeSOPMul xz a, mergeSOPMul xz b,le),have)]
 
   -- want: a <=? b ~ True
   -- have: x <=? C*y ~ True
@@ -715,9 +725,9 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null yb)
   -- Pick the smallest product
   , let yz = if length ya <= length yb then S [P ya] else S [P yb]
-  = Just ((mergeSOPMul yz a, mergeSOPMul yz b,le),have)
+  = [((mergeSOPMul yz a, mergeSOPMul yz b,le),have)]
 
-timesMonotone _ _ = Nothing
+timesMonotone _ _ = []
 
 -- | Monotonicity of exponentiation
 powMonotone :: IneqRule
@@ -730,22 +740,22 @@ powMonotone want (x, S [P [E yS yP]],le)
         -- new want: want
         -- new have: x <=? y ~ True
         | xS == yS
-        -> Just (want,(S [xP],S [yP],le))
+        -> [(want,(S [xP],S [yP],le))]
         -- want: XXX
         -- have: x^2 <=? y^2 ~ True
         --
         -- new want: want
         -- new have: x <=? y ~ True
         | xP == yP
-        -> Just (want,(xS,yS,le))
+        -> [(want,(xS,yS,le))]
         -- want: XXX
         -- have: 2 <=? 2 ^ x ~ True
         --
         -- new want: want
         -- new have: 1 <=? x ~ True
       _ | x == yS
-        -> Just (want,(S [P [I 1]],S [yP],le))
-      _ -> Nothing
+        -> [(want,(S [P [I 1]],S [yP],le))]
+      _ -> []
 
 powMonotone (a,S [P [E bS bP]],le) have
   = case a of
@@ -756,24 +766,24 @@ powMonotone (a,S [P [E bS bP]],le) have
         -- new want: x <=? y ~ True
         -- new have: have
         | aS == bS
-        -> Just ((S [aP],S [bP],le),have)
+        -> [((S [aP],S [bP],le),have)]
         -- want: x^2 <=? y^2 ~ True
         -- have: XXX
         --
         -- new want: x <=? y ~ True
         -- new have: have
         | aP == bP
-        -> Just ((aS,bS,le),have)
+        -> [((aS,bS,le),have)]
         -- want: 2 <=? 2 ^ x ~ True
         -- have: XXX
         --
         -- new want: 1 <=? x ~ True
         -- new have: XXX
       _ | a == bS
-        -> Just ((S [P [I 1]],S [bP],le),have)
-      _ -> Nothing
+        -> [((S [P [I 1]],S [bP],le),have)]
+      _ -> []
 
-powMonotone _ _ = Nothing
+powMonotone _ _ = []
 
 -- | Try to get the power-of-2 factors, and apply the monotonicity of
 -- exponentiation rule.
@@ -791,7 +801,7 @@ pow2MonotoneSpecial (a,b,le) have
   -- new have: have
   | Just a' <- facSOP 2 a
   , Just b' <- facSOP 2 b
-  = Just ((a',b',le),have)
+  = [((a',b',le),have)]
 pow2MonotoneSpecial want (x,y,le)
   -- want: XXX
   -- have:4 * 4^x <=? 8^x ~ True
@@ -802,8 +812,8 @@ pow2MonotoneSpecial want (x,y,le)
   -- new have: 2+2*x <=? 3*x ~ True
   | Just x' <- facSOP 2 x
   , Just y' <- facSOP 2 y
-  = Just (want,(x',y',le))
-pow2MonotoneSpecial _ _ = Nothing
+  = [(want,(x',y',le))]
+pow2MonotoneSpecial _ _ = []
 
 -- | Get the power of /N/ factors of a SOP term
 facSOP
