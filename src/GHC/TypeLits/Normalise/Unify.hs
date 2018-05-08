@@ -458,11 +458,14 @@ unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
     , fromMaybe True (isNatural s2')
     -> unifiers' ct s1' s2'
   _ | null psx
-    , length ps1 == length ps2 || isGiven (ctEvidence ct)
+    , length ps1 == length ps2
     -> case nub (concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)) of
         []  -> unifiers'' ct (S ps1) (S ps2)
-        [k] -> [k]
+        [k] | length ps1 == length ps2 -> [k]
         _   -> []
+    | null psx
+    , isGiven (ctEvidence ct)
+    -> unifiers'' ct (S ps1) (S ps2)
     | null psx
     -> []
   _ -> unifiers' ct (S ps1'') (S ps2'')
