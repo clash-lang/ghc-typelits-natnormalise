@@ -1,6 +1,16 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.6
+## 0.6.1 *May 9th 2018*
+* Stop solving `x + y ~ a + b` by asking GHC to solve `x ~ a` and `y ~ b` as
+  this leads to a situation where we find a solution that is not the most
+  general.
+* Stop using the smallest solution to an inequality to solve an equality, as
+  this leads to finding solutions that are not the most general.
+* Solve smaller inequalities from larger inequalities, e.g.
+  * `1 <= 2*x` implies `1 <= x`
+  * `x + 2 <= y` implies `x <= y` and `2 <= y`
+
+## 0.6 *April 23rd 2018*
 * Solving constraints with `a-b` will emit `b <= a` constraints. e.g. solving
   `n-1+1 ~ n` will emit a `1 <= n` constraint.
   * If you need subtraction to be treated as addition with a negated operarand
