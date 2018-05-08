@@ -270,6 +270,20 @@ leToPlus
   -> r
 leToPlus _ a f = f @ (n-k) a
 
+data BNat :: Nat -> * where
+  BT :: BNat 0
+  B0 :: BNat n -> BNat (2*n)
+  B1 :: BNat n -> BNat ((2*n) + 1)
+
+instance KnownNat n => Show (BNat n) where
+  show x = 'b':show (natVal x)
+
+predBNat :: (1 <= n) => BNat n -> BNat (n-1)
+predBNat (B1 a) = case a of
+  BT -> BT
+  a' -> B0 a'
+predBNat (B0 x)  = B1 (predBNat x)
+
 proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
 proxyInEq1 = proxyInEq
 
@@ -331,6 +345,16 @@ proxyEqSubst
   -> Proxy (1 + (n2 + m1))
   -> Proxy n1
 proxyEqSubst _ _ _ _ _ = id
+
+proxyInEqImplication2
+  :: forall n n1 n2
+   . (n1 ~ (n2 + 1), (2^n) ~ (n1 + 1))
+  => Proxy n1
+  -> Proxy n2
+  -> Proxy n
+  -> Proxy ((n - 1) + 1)
+  -> Proxy n
+proxyInEqImplication2 _ _ _ x = x
 
 main :: IO ()
 main = defaultMain tests
@@ -408,6 +432,12 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "1 <= a+3" $
       show (proxyInEq6 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
       "()"
+    , testCase "`1 <= 2*x` implies `1 <= x`" $
+      show (predBNat (B1 (B1 BT))) @?=
+      "b2"
+    , testCase "`x + 2 <= y` implies `x <= y` and `2 <= y`" $
+      show (proxyInEqImplication2 (Proxy :: Proxy 3) (Proxy :: Proxy 2) (Proxy :: Proxy 2) Proxy) @?=
+      "Proxy"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors

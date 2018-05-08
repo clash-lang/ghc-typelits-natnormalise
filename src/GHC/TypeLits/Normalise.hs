@@ -186,7 +186,7 @@ import TysWiredIn (typeNatKind)
 import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
 import TcPluginM  (newCoercionHole, newFlexiTyVar)
-import TcRnTypes  (CtEvidence (..), CtLoc, TcEvDest (..), ctLoc)
+import TcRnTypes  (CtEvidence (..), CtLoc, TcEvDest (..), ctLoc, isGiven)
 #if MIN_VERSION_ghc(8,2,0)
 import TcRnTypes  (ShadowInfo (WDeriv))
 #endif
@@ -276,7 +276,7 @@ simplifyNats
   -> TcPluginM SimplifyResult
 simplifyNats negNumbers eqsG eqsW =
     let eqs = map (second (const [])) eqsG ++ eqsW
-    in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] eqs
+    in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] [] eqs
   where
     -- If we allow negated numbers we simply do not emit the inequalities
     -- derived from the subtractions that are converted to additions with a
@@ -286,35 +286,47 @@ simplifyNats negNumbers eqsG eqsW =
 
     simples :: [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
+            -> [(CoreSOP,CoreSOP,Bool)]
             -> [(Either NatEquality NatInEquality,[(Type,Type)])]
             -> [(Either NatEquality NatInEquality,[(Type,Type)])]
             -> TcPluginM SimplifyResult
-    simples _subst evs _xs [] = return (Simplified evs)
-    simples subst evs xs (eq@(Left (ct,u,v),k):eqs') = do
-      ur <- unifyNats ct (substsSOP subst u) (substsSOP subst v)
+    simples _subst evs _leqsG _xs [] = return (Simplified evs)
+    simples subst evs leqsG xs (eq@(Left (ct,u,v),k):eqs') = do
+      let u' = substsSOP subst u
+          v' = substsSOP subst v
+      ur <- unifyNats ct u' v'
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
           evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
-          simples subst evs' [] (xs ++ eqs')
+          simples subst evs' leqsG [] (xs ++ eqs')
         Lose -> return (Impossible (fst eq))
-        Draw [] -> simples subst evs (eq:xs) eqs'
+        Draw [] -> simples subst evs [] (eq:xs) eqs'
         Draw subst' -> do
           evM <- evMagic ct (map unifyItemToPredType subst' ++
                              subToPred k)
+          let leqsG' | isGiven (ctEvidence ct) = eqToLeq u' v' ++ leqsG
+                     | otherwise  = leqsG
           case evM of
-            Nothing -> simples subst evs xs eqs'
+            Nothing -> simples subst evs leqsG' xs eqs'
             Just ev ->
               simples (substsSubst subst' subst ++ subst')
-                      (ev:evs) [] (xs ++ eqs')
-    simples subst evs xs (eq@(Right (ct,u),k):eqs') = do
+                      (ev:evs) leqsG' [] (xs ++ eqs')
+    simples subst evs leqsG xs (eq@(Right (ct,u@(x,y,b)),k):eqs') = do
       let u'    = substsSOP subst (subtractIneq u)
-          ineqs = map snd (rights (map fst eqsG))
-      tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u'))
+          x'    = substsSOP subst x
+          y'    = substsSOP subst y
+          leqsG' | isGiven (ctEvidence ct) = (x',y',b):leqsG
+                 | otherwise               = leqsG
+          ineqs = concat [ leqsG
+                         , map (substLeq subst) leqsG
+                         , map snd (rights (map fst eqsG))
+                         ]
+      tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs))
       case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
-          simples subst evs' xs eqs'
+          simples subst evs' leqsG' xs eqs'
 
         Just False -> return (Impossible (fst eq))
         Nothing
@@ -324,9 +336,12 @@ simplifyNats negNumbers eqsG eqsW =
           | or (mapMaybe (solveIneq 5 u) ineqs)
           -> do
             evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
-            simples subst evs' xs eqs'
+            simples subst evs' leqsG' xs eqs'
           | otherwise
-          -> simples subst evs (eq:xs) eqs'
+          -> simples subst evs leqsG (eq:xs) eqs'
+
+    eqToLeq x y = [(x,y,True),(y,x,True)]
+    substLeq s (x,y,b) = (substsSOP s x, substsSOP s y, b)
 
 -- Extract the Nat equality constraints
 toNatEquality :: Ct -> Maybe (Either NatEquality NatInEquality,[(Type,Type)])

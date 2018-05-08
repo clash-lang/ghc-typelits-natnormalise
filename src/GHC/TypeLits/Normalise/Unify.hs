@@ -657,6 +657,8 @@ haveSmaller want have
   = [(want,(S (x:ys),us,True))
     ,(want,(S (y:ys),us,True))
     ]
+  | (S [P [I 1]], S [P (I _:p@(_:_))],True) <- have
+  = [(want,(S [P [I 1]],S [P p],True))]
 haveSmaller _ _ = []
 
 -- | Monotonicity of multiplication
