@@ -607,6 +607,7 @@ ineqRules =
   , powMonotone
   , pow2MonotoneSpecial
   , haveSmaller
+  , haveBigger
   ]
 
 -- | Transitivity of inequality
@@ -660,6 +661,21 @@ haveSmaller want have
   | (S [P [I 1]], S [P (I _:p@(_:_))],True) <- have
   = [(want,(S [P [I 1]],S [P p],True))]
 haveSmaller _ _ = []
+
+-- | Make the `b` of a given `a <= b` bigger
+haveBigger :: IneqRule
+haveBigger want have
+  | (_,S vs,True) <- want
+  , (as,S bs,True) <- have
+  , let vs' = vs \\ bs
+  , not (null vs')
+  -- want : a <= x + 1
+  -- have : y <= x
+  --
+  -- new want: want
+  -- new have: y <= x + 1
+  = [(want,(as,mergeSOPAdd (S bs) (S vs'),True))]
+haveBigger _ _ = []
 
 -- | Monotonicity of multiplication
 timesMonotone :: IneqRule

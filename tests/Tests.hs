@@ -356,6 +356,14 @@ proxyInEqImplication2
   -> Proxy n
 proxyInEqImplication2 _ _ _ x = x
 
+data AtMost n = forall a. (KnownNat a, a <= n) => AtMost (Proxy a)
+
+instance Show (AtMost n) where
+  show (AtMost (x :: Proxy a)) = "AtMost " P.++ show (natVal x)
+
+succAtMost :: AtMost n -> AtMost (n + 1)
+succAtMost (AtMost (Proxy :: Proxy a)) = AtMost (Proxy :: Proxy a)
+
 main :: IO ()
 main = defaultMain tests
 
@@ -438,6 +446,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "`x + 2 <= y` implies `x <= y` and `2 <= y`" $
       show (proxyInEqImplication2 (Proxy :: Proxy 3) (Proxy :: Proxy 2) (Proxy :: Proxy 2) Proxy) @?=
       "Proxy"
+    , testCase "`a <= n` implies `a <= (n+1)`" $
+      show (succAtMost (AtMost (Proxy :: Proxy 3) :: AtMost 5)) @?=
+      "AtMost 3"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
