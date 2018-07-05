@@ -174,6 +174,9 @@ import CoreSyn    (Expr (..))
 #endif
 import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
+#if MIN_VERSION_ghc(8,6,0)
+import Plugins    (purePlugin)
+#endif
 import TcEvidence (EvTerm (..))
 #if !MIN_VERSION_ghc(8,4,0)
 import TcPluginM  (zonkCt)
@@ -213,7 +216,13 @@ import GHC.TypeLits.Normalise.Unify
 --
 -- To the header of your file.
 plugin :: Plugin
-plugin = defaultPlugin { tcPlugin = go }
+plugin
+  = defaultPlugin
+  { tcPlugin = go
+#if MIN_VERSION_ghc(8,6,0)
+  , pluginRecompile = purePlugin
+#endif
+  }
  where
   go ["allow-negated-numbers"] = Just (normalisePlugin True)
   go _ = Just (normalisePlugin False)
