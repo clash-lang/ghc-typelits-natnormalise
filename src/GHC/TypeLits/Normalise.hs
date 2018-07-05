@@ -156,7 +156,9 @@ where
 
 -- external
 import Control.Arrow       (second)
+#if !MIN_VERSION_ghc(8,4,1)
 import Control.Monad       (replicateM)
+#endif
 import Control.Monad.Trans.Writer.Strict
 import Data.Either         (rights)
 import Data.List           (intersect)
@@ -386,9 +388,9 @@ toNatEquality ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
     isNatKind :: Kind -> Bool
     isNatKind = (`eqType` typeNatKind)
 
-unifyItemToPredType :: CoreUnify -> PredType
+unifyItemToPredType :: CoreUnify -> (PredType,Kind)
 unifyItemToPredType ui =
-    mkPrimEqPred ty1 ty2
+    (mkPrimEqPred ty1 ty2,typeNatKind)
   where
     ty1 = case ui of
             SubstItem {..} -> mkTyVarTy siVar
@@ -397,24 +399,24 @@ unifyItemToPredType ui =
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
 
-evMagic :: Ct -> [PredType] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
+evMagic :: Ct -> [(PredType,Kind)] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
 evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
   EqPred NomEq t1 t2 -> do
+    let predTypes = map fst preds
+        predKinds = map snd preds
 #if MIN_VERSION_ghc(8,4,1)
-    holes <- mapM (newCoercionHole . uncurry mkPrimEqPred . getEqPredTys) preds
+    holes <- mapM (newCoercionHole . uncurry mkPrimEqPred . getEqPredTys) predTypes
 #else
     holes <- replicateM (length preds) newCoercionHole
 #endif
-    let newWanted = zipWith (unifyItemToCt (ctLoc ct)) preds holes
+    let newWanted = zipWith (unifyItemToCt (ctLoc ct)) predTypes holes
         ctEv      = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
 #if MIN_VERSION_ghc(8,4,1)
         holeEvs   = map mkHoleCo holes
 #else
-        holeEvs   = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes preds
+        holeEvs   = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes predTypes
 #endif
-        natReflCo = mkNomReflCo typeNatKind
-        natCoBndr = (,natReflCo) <$> (newFlexiTyVar typeNatKind)
-    forallEv <- mkForAllCos <$> (replicateM (length preds) natCoBndr) <*> pure ctEv
+    forallEv <- mkForAllCos <$> (mapM mkCoVar predKinds) <*> pure ctEv
     let finalEv = foldl mkInstCo forallEv holeEvs
 #if MIN_VERSION_ghc(8,5,0)
     return (Just ((EvExpr (Coercion finalEv), ct),newWanted))
@@ -422,6 +424,10 @@ evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
     return (Just ((EvCoercion finalEv, ct),newWanted))
 #endif
   _ -> return Nothing
+  where
+    mkCoVar k = (,natReflCo) <$> (newFlexiTyVar k)
+      where
+        natReflCo = mkNomReflCo k
 
 unifyItemToCt :: CtLoc
               -> PredType

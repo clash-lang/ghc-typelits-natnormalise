@@ -1,6 +1,6 @@
 packages: ./ghc-typelits-natnormalise.cabal
 flags: +deverror
-allow-newer: *:base, *:template-haskell, *:ghc
+allow-newer: *:base, *:template-haskell, *:ghc, *:stm
 repository head.hackage
   url: http://head.hackage.haskell.org/
   secure: True
@@ -9,3 +9,36 @@ repository head.hackage
              8f79fd2389ab2967354407ec852cbe73f2e8635793ac446d09461ffb99527f6e
   key-threshold: 3
 optional-packages: ./ghc-tcplugins-extra/ghc-tcplugins-extra.cabal
+constraints:  Cabal installed,
+              array installed,
+              base installed,
+              binary installed,
+              bytestring installed,
+              containers installed,
+              deepseq installed,
+              directory installed,
+              filepath installed,
+              ghc installed,
+              ghc-boot installed,
+              ghc-boot-th installed,
+              ghc-compact installed,
+              ghc-heap installed,
+              ghc-prim installed,
+              ghci installed,
+              haskeline installed,
+              hpc installed,
+              integer-gmp installed,
+              libiserv installed,
+              mtl installed,
+              parsec installed,
+              pretty installed,
+              process installed,
+              rts installed,
+              stm installed,
+              template-haskell installed,
+              terminfo installed,
+              text installed,
+              time installed,
+              transformers installed,
+              unix installed,
+              xhtml installed

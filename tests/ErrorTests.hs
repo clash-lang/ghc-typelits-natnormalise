@@ -1,5 +1,10 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds, GADTs, KindSignatures, ScopedTypeVariables, TemplateHaskell,
              TypeApplications, TypeFamilies, TypeOperators #-}
+
+#if __GLASGOW_HASKELL__ >= 805
+{-# LANGUAGE NoStarIsType #-}
+#endif
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}

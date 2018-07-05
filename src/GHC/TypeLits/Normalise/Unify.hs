@@ -62,8 +62,8 @@ import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
 import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
                       coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
                       nonDetCmpType, PredType, mkPrimEqPred)
-import TyCoRep       (Type (..), TyLit (..))
-import TysWiredIn    (promotedTrueDataCon)
+import TyCoRep       (Kind, Type (..), TyLit (..))
+import TysWiredIn    (boolTy, promotedTrueDataCon)
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
@@ -222,10 +222,11 @@ ineqToSubst _
 
 subtractionToPred
   :: (Type,Type)
-  -> PredType
+  -> (PredType, Kind)
 subtractionToPred (x,y) =
-  mkPrimEqPred (mkTyConApp typeNatLeqTyCon [y,x])
-               (mkTyConApp promotedTrueDataCon [])
+  (mkPrimEqPred (mkTyConApp typeNatLeqTyCon [y,x])
+                (mkTyConApp promotedTrueDataCon [])
+  ,boolTy)
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being

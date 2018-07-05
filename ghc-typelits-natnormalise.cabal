@@ -49,7 +49,7 @@ extra-source-files:  README.md
                      CHANGELOG.md
 cabal-version:       >=1.10
 tested-with:         GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.1, GHC == 8.4.2,
-                     GHC == 8.5.0
+                     GHC == 8.6
 
 source-repository head
   type: git
@@ -66,7 +66,7 @@ library
                        GHC.TypeLits.Normalise.SOP,
                        GHC.TypeLits.Normalise.Unify
   build-depends:       base                >=4.9   && <5,
-                       ghc                 >=8.0.1 && <8.6,
+                       ghc                 >=8.0.1 && <8.8,
                        ghc-tcplugins-extra >=0.3,
                        integer-gmp         >=1.0   && <1.1,
                        transformers        >=0.5.2.0 && < 0.6

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
@@ -7,6 +8,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
+#if __GLASGOW_HASKELL__ >= 805
+{-# LANGUAGE NoStarIsType #-}
+#endif
+
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 
 import GHC.TypeLits
@@ -14,6 +19,7 @@ import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
 
+import Data.Kind (Type)
 import Data.List (isInfixOf)
 import Data.Proxy
 import Control.Exception
@@ -22,7 +28,7 @@ import Test.Tasty.HUnit
 
 import ErrorTests
 
-data Vec :: Nat -> * -> * where
+data Vec :: Nat -> Type -> Type where
   Nil  :: Vec 0 a
   (:>) :: a -> Vec n a -> Vec (n + 1) a
 
@@ -55,7 +61,7 @@ withSNat f = f (SNat Proxy)
 snatToInteger :: SNat n -> Integer
 snatToInteger (SNat p) = natVal p
 
-data UNat :: Nat -> * where
+data UNat :: Nat -> Type where
   UZero :: UNat 0
   USucc :: UNat n -> UNat (n + 1)
 
@@ -270,7 +276,7 @@ leToPlus
   -> r
 leToPlus _ a f = f @ (n-k) a
 
-data BNat :: Nat -> * where
+data BNat :: Nat -> Type where
   BT :: BNat 0
   B0 :: BNat n -> BNat (2*n)
   B1 :: BNat n -> BNat ((2*n) + 1)
