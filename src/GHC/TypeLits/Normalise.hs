@@ -344,7 +344,10 @@ simplifyNats negNumbers eqsG eqsW =
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
-          | or (mapMaybe (solveIneq 5 u) ineqs)
+          | or (mapMaybe (solveIneq 5 u) ineqs) ||
+          -- Or it is an inequality that can be instantly solved, such as
+          -- `1 <= x^y`
+            instantSolveIneq 5 u
           -> do
             evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
             simples subst evs' leqsG' xs eqs'

@@ -308,6 +308,9 @@ proxyInEq5 = proxyInEq
 proxyInEq6 :: Proxy 1 -> Proxy (a + 3) -> ()
 proxyInEq6 = proxyInEq
 
+proxyInEq7 :: Proxy 1 -> Proxy (2^(a + 3)) -> ()
+proxyInEq7 = proxyInEq
+
 proxyEq1
   :: (1 <= x)
   => Proxy ((2 ^ x) * (2 ^ (x + x)))
@@ -455,6 +458,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "`a <= n` implies `a <= (n+1)`" $
       show (succAtMost (AtMost (Proxy :: Proxy 3) :: AtMost 5)) @?=
       "AtMost 3"
+    , testCase "1 <= 2^(a+3)" $
+      show (proxyInEq7 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
+      "()"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors

@@ -37,6 +37,7 @@ module GHC.TypeLits.Normalise.Unify
   , solveIneq
   , ineqToSubst
   , subtractionToPred
+  , instantSolveIneq
     -- * Properties
   , isNatural
   )
@@ -595,6 +596,20 @@ solveIneq k want@(_,_,True) have@(_,_,True)
     solved = mapMaybe (uncurry (solveIneq (k - 1))) new
     new    = concatMap (\f -> f want have) ineqRules
 solveIneq _ _ _ = Just False
+
+-- | Try to instantly solve an inequality by using the inequality solver using
+-- @1 <=? 1 ~ True@ as the given constraint.
+instantSolveIneq
+  :: Word
+  -- ^ Solving depth
+  -> Ineq
+  -- ^ Inequality we want to solve
+  -> Bool
+instantSolveIneq k u = case solveIneq k u (one,one,True) of
+  Just p  -> p
+  Nothing -> False
+ where
+  one = S [P [I 1]]
 
 type Ineq = (CoreSOP, CoreSOP, Bool)
 type IneqRule = Ineq -> Ineq  -> [(Ineq,Ineq)]
