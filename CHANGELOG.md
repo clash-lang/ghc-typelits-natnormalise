@@ -1,5 +1,10 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.6.2 *July 10th 2018*
+* Add support for GHC 8.6.1-alpha1
+* Solve larger inequalities from smaller inequalities, e.g.
+  * `a <= n` implies `a <= n + 1`
+
 ## 0.6.1 *May 9th 2018*
 * Stop solving `x + y ~ a + b` by asking GHC to solve `x ~ a` and `y ~ b` as
   this leads to a situation where we find a solution that is not the most
