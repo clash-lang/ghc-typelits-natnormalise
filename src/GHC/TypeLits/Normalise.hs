@@ -311,7 +311,9 @@ simplifyNats negNumbers eqsG eqsW =
         Win -> do
           evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
           simples subst evs' leqsG [] (xs ++ eqs')
-        Lose -> return (Impossible (fst eq))
+        Lose -> if null evs && null eqs'
+                   then return (Impossible (fst eq))
+                   else simples subst evs leqsG xs eqs'
         Draw [] -> simples subst evs [] (eq:xs) eqs'
         Draw subst' -> do
           evM <- evMagic ct (map unifyItemToPredType subst' ++
