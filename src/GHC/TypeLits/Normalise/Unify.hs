@@ -624,6 +624,7 @@ ineqRules =
   , pow2MonotoneSpecial
   , haveSmaller
   , haveBigger
+  , powMisc
   ]
 
 -- | Transitivity of inequality
@@ -874,3 +875,16 @@ facSymbol n (E s p)
   | Just s' <- facSOP n s
   = Just (mergeSOPMul s' (S [p]))
 facSymbol _ _ = Nothing
+
+powMisc :: IneqRule
+  -- want: a <= b^p
+  -- have: x <= y
+  -- new want: want
+  -- new have: b^x <= b^y
+powMisc want@(_,S [P [E b p]],_) (S [x],S [y],le)
+  | p == y = [(want, (S [P [E b x]], S [P [E b y]], le))]
+  -- want: x <= b^x
+  -- new want: 2 <= b
+powMisc (S [P [x]],S [P [E b (P [y])]],le) have
+  | x == y = [((S [P [I 2]],b,le),have)]
+powMisc _ _ = []
