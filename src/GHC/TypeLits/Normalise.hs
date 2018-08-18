@@ -145,7 +145,9 @@ where /n-l/ is a negative number.
 
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE ViewPatterns    #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE TupleSections   #-}
 
 {-# OPTIONS_HADDOCK show-extensions #-}
@@ -156,17 +158,19 @@ where
 
 -- external
 import Control.Arrow       (second)
+import Control.Monad       ((<=<))
 #if !MIN_VERSION_ghc(8,4,1)
 import Control.Monad       (replicateM)
 #endif
 import Control.Monad.Trans.Writer.Strict
 import Data.Either         (rights)
-import Data.List           (intersect)
+import Data.List           (intersect, stripPrefix)
 import Data.Maybe          (mapMaybe)
 import GHC.TcPluginM.Extra (tracePlugin)
 #if MIN_VERSION_ghc(8,4,0)
 import GHC.TcPluginM.Extra (flattenGivens)
 #endif
+import Text.Read           (readMaybe)
 
 -- GHC API
 #if MIN_VERSION_ghc(8,5,0)
@@ -218,30 +222,34 @@ import GHC.TypeLits.Normalise.Unify
 plugin :: Plugin
 plugin
   = defaultPlugin
-  { tcPlugin = go
+  { tcPlugin = fmap (normalisePlugin . foldr id defaultOpts) . traverse parseArgument
 #if MIN_VERSION_ghc(8,6,0)
   , pluginRecompile = purePlugin
 #endif
   }
  where
-  go ["allow-negated-numbers"] = Just (normalisePlugin True)
-  go _ = Just (normalisePlugin False)
+  parseArgument "allow-negated-numbers" = Just (\ opts -> opts { negNumbers = True })
+  parseArgument (readMaybe <=< stripPrefix "depth=" -> Just depth) = Just (\ opts -> opts { depth })
+  parseArgument _ = Nothing
+  defaultOpts = Opts { negNumbers = False, depth = 5 }
 
-normalisePlugin :: Bool -> TcPlugin
-normalisePlugin negNumbers = tracePlugin "ghc-typelits-natnormalise"
+data Opts = Opts { negNumbers :: Bool, depth :: Word }
+
+normalisePlugin :: Opts -> TcPlugin
+normalisePlugin opts = tracePlugin "ghc-typelits-natnormalise"
   TcPlugin { tcPluginInit  = return ()
-           , tcPluginSolve = const (decideEqualSOP negNumbers)
+           , tcPluginSolve = const (decideEqualSOP opts)
            , tcPluginStop  = const (return ())
            }
 
 decideEqualSOP
-  :: Bool
+  :: Opts
   -> [Ct]
   -> [Ct]
   -> [Ct]
   -> TcPluginM TcPluginResult
-decideEqualSOP _negNumbers _givens _deriveds []      = return (TcPluginOk [] [])
-decideEqualSOP negNumbers  givens  _deriveds wanteds = do
+decideEqualSOP _opts _givens _deriveds []      = return (TcPluginOk [] [])
+decideEqualSOP opts  givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
@@ -253,7 +261,7 @@ decideEqualSOP negNumbers  givens  _deriveds wanteds = do
 #else
         unit_givens <- mapMaybe toNatEquality <$> mapM zonkCt givens
 #endif
-        sr <- simplifyNats negNumbers unit_givens unit_wanteds
+        sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         case sr of
           Simplified evs -> do
@@ -278,14 +286,14 @@ instance Outputable SimplifyResult where
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
 simplifyNats
-  :: Bool
+  :: Opts
   -- ^ Allow negated numbers (potentially unsound!)
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Given constraints
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Wanted constraints
   -> TcPluginM SimplifyResult
-simplifyNats negNumbers eqsG eqsW =
+simplifyNats (Opts {..}) eqsG eqsW =
     let eqs = map (second (const [])) eqsG ++ eqsW
     in  tcPluginTrace "simplifyNats" (ppr eqs) >> simples [] [] [] [] eqs
   where
@@ -346,10 +354,10 @@ simplifyNats negNumbers eqsG eqsW =
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
-          | or (mapMaybe (solveIneq 5 u) ineqs) ||
+          | or (mapMaybe (solveIneq depth u) ineqs) ||
           -- Or it is an inequality that can be instantly solved, such as
           -- `1 <= x^y`
-            instantSolveIneq 5 u
+            instantSolveIneq depth u
           -> do
             evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
             simples subst evs' leqsG' xs eqs'
