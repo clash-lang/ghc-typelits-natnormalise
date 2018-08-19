@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE TypeOperators       #-}
@@ -7,6 +8,8 @@
 {-# LANGUAGE Rank2Types          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE StandaloneDeriving  #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 #if __GLASGOW_HASKELL__ >= 805
 {-# LANGUAGE NoStarIsType #-}
@@ -365,6 +368,17 @@ proxyInEqImplication2
   -> Proxy n
 proxyInEqImplication2 _ _ _ x = x
 
+proxyInEqImplication3 :: forall b n . (2 <= b) :- (n <= b^n)
+proxyInEqImplication3 = Sub Dict
+
+proxyInEqImplication4 :: (a <= b^p, x <= y) :- (b^x <= b^y)
+proxyInEqImplication4 = Sub Dict
+
+data Dict a where Dict :: a => Dict a
+newtype a :- b = Sub (a => Dict b)
+deriving instance Show (Dict a)
+instance Show (a :- b) where show _ = "Sub Dict"
+
 data AtMost n = forall a. (KnownNat a, a <= n) => AtMost (Proxy a)
 
 instance Show (AtMost n) where
@@ -461,6 +475,10 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "1 <= 2^(a+3)" $
       show (proxyInEq7 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
       "()"
+    , testCase "`2 <= b` implies `x <= b^x`" $
+      show (proxyInEqImplication3) @?= "Sub Dict"
+    , testCase "`x <= y` implies `b^x <= b^y`" $
+      show (proxyInEqImplication4) @?= "Sub Dict"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
