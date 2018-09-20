@@ -7,6 +7,7 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
 {-# LANGUAGE CPP                        #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE RecordWildCards            #-}
 
@@ -456,8 +457,8 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
   Just (s1',s2',_)
     | s1' /= s1 || s2' /= s1
-    , fromMaybe True (isNatural s1')
-    , fromMaybe True (isNatural s2')
+    , fromMaybe True (isNatural True s1')
+    , fromMaybe True (isNatural True s2')
     -> unifiers' ct s1' s2'
   _ | null psx
     , length ps1 == length ps2
@@ -532,40 +533,47 @@ integerLogBase x y | x > 1 && y > 0 =
          else Just (smallInteger z1)
 integerLogBase _ _ = Nothing
 
-isNatural :: CoreSOP -> Maybe Bool
-isNatural (S [])           = return True
-isNatural (S [P []])       = return True
-isNatural (S [P (I i:ps)])
-  | i >= 0    = isNatural (S [P ps])
-  | otherwise = return False
-isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
-isNatural (S [P (E s p:ps)]) = do
-  sN <- isNatural s
-  pN <- isNatural (S [p])
-  if sN && pN
-     then isNatural (S [P ps])
-     else Nothing
--- This is a quick hack, it determines that
---
--- > a^b - 1
---
--- is a natural number as long as 'a' and 'b' are natural numbers.
--- This used to assert that:
---
--- > (1 <=? a^b) ~ True
-isNatural (S [P [I (-1)],P [E s p]]) = (&&) <$> isNatural s <*> isNatural (S [p])
--- We give up for all other products for now
-isNatural (S [P _]) = Nothing
--- Adding two natural numbers is also a natural number
-isNatural (S (p:ps)) = do
-  pN <- isNatural (S [p])
-  pK <- isNatural (S ps)
-  case (pN,pK) of
-    (True,True)   -> return True  -- both are natural
-    (False,False) -> return False -- both are non-natural
-    _             -> Nothing
-    -- if one is natural and the other isn't, then their sum *might* be natural,
-    -- but we simply cant be sure.
+isNatural
+  :: Bool
+  -- ^ Assert that constants are natural
+  -> CoreSOP
+  -> Maybe Bool
+isNatural constantsNatural = go where
+  go = \case
+    (S []) -> return True
+    (S [P []]) -> return True
+    (S [P (I i:ps)])
+      | i >= 0    -> go (S [P ps])
+      | otherwise -> return False
+    (S [P (V _:ps)]) -> go (S [P ps])
+    (S [P (E s p:ps)]) -> do
+      sN <- go s
+      pN <- go (S [p])
+      if sN && pN
+        then go (S [P ps])
+        else Nothing
+    -- This is a quick hack, it determines that
+    --
+    -- > a^b - 1
+    --
+    -- is a natural number as long as 'a' and 'b' are natural numbers.
+    -- This used to assert that:
+    --
+    -- > (1 <=? a^b) ~ True
+    (S [P [I (-1)],P [E s p]]) -> (&&) <$> go s <*> go (S [p])
+    (S [P (C _:ps)])
+      | constantsNatural -> go (S [P ps])
+      | otherwise        -> Nothing
+    -- Adding two natural numbers is also a natural number
+    (S (p:ps)) -> do
+      pN <- go (S [p])
+      pK <- go (S ps)
+      case (pN,pK) of
+        (True,True)   -> return True  -- both are natural
+        (False,False) -> return False -- both are non-natural
+        _             -> Nothing
+        -- if one is natural and the other isn't, then their sum *might* be natural,
+        -- but we simply cant be sure.
 
 -- | Try to solve inequalities
 solveIneq
