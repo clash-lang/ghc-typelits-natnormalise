@@ -44,10 +44,14 @@ module GHC.TypeLits.Normalise.Unify
 where
 
 -- External
+import Control.Arrow (second)
+import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Writer.Strict
 import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
 import Data.Maybe    (fromMaybe, mapMaybe)
+import Data.Set      (Set)
+import qualified Data.Set as Set
 
 import GHC.Base               (isTrue#,(==#))
 import GHC.Integer            (smallInteger)
@@ -456,8 +460,8 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
   Just (s1',s2',_)
     | s1' /= s1 || s2' /= s1
-    , fromMaybe True (isNatural s1')
-    , fromMaybe True (isNatural s2')
+    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
+    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
     -> unifiers' ct s1' s2'
   _ | null psx
     , length ps1 == length ps2
@@ -532,7 +536,7 @@ integerLogBase x y | x > 1 && y > 0 =
          else Just (smallInteger z1)
 integerLogBase _ _ = Nothing
 
-isNatural :: CoreSOP -> Maybe Bool
+isNatural :: CoreSOP -> WriterT (Set CType) Maybe Bool
 isNatural (S [])           = return True
 isNatural (S [P []])       = return True
 isNatural (S [P (I i:ps)])
@@ -544,7 +548,7 @@ isNatural (S [P (E s p:ps)]) = do
   pN <- isNatural (S [p])
   if sN && pN
      then isNatural (S [P ps])
-     else Nothing
+     else WriterT Nothing
 -- This is a quick hack, it determines that
 --
 -- > a^b - 1
@@ -555,7 +559,9 @@ isNatural (S [P (E s p:ps)]) = do
 -- > (1 <=? a^b) ~ True
 isNatural (S [P [I (-1)],P [E s p]]) = (&&) <$> isNatural s <*> isNatural (S [p])
 -- We give up for all other products for now
-isNatural (S [P _]) = Nothing
+isNatural (S [P (C c:ps)]) = do
+  tell (Set.singleton c)
+  isNatural (S [P ps])
 -- Adding two natural numbers is also a natural number
 isNatural (S (p:ps)) = do
   pN <- isNatural (S [p])
@@ -563,7 +569,7 @@ isNatural (S (p:ps)) = do
   case (pN,pK) of
     (True,True)   -> return True  -- both are natural
     (False,False) -> return False -- both are non-natural
-    _             -> Nothing
+    _             -> WriterT Nothing
     -- if one is natural and the other isn't, then their sum *might* be natural,
     -- but we simply cant be sure.
 

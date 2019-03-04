@@ -166,7 +166,9 @@ import Control.Monad.Trans.Writer.Strict
 import Data.Either         (rights)
 import Data.List           (intersect, stripPrefix)
 import Data.Maybe          (mapMaybe)
+import Data.Set            (Set, empty, toList)
 import GHC.TcPluginM.Extra (tracePlugin)
+import qualified GHC.TcPluginM.Extra as TcPluginM
 #if MIN_VERSION_ghc(8,4,0)
 import GHC.TcPluginM.Extra (flattenGivens)
 #endif
@@ -181,6 +183,7 @@ import Plugins    (Plugin (..), defaultPlugin)
 #if MIN_VERSION_ghc(8,6,0)
 import Plugins    (purePlugin)
 #endif
+import PrelNames  (knownNatClassName)
 import TcEvidence (EvTerm (..))
 #if !MIN_VERSION_ghc(8,4,0)
 import TcPluginM  (zonkCt)
@@ -194,13 +197,15 @@ import TysWiredIn (typeNatKind)
 
 import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
-import TcPluginM  (newCoercionHole, newFlexiTyVar)
-import TcRnTypes  (CtEvidence (..), CtLoc, TcEvDest (..), ctLoc, isGiven)
+import TcPluginM  (newCoercionHole, newFlexiTyVar, tcLookupClass)
+import TcRnTypes
+  (CtEvidence (..), CtLoc, TcEvDest (..), ctEvLoc, ctLoc, ctLocSpan, isGiven,
+   setCtLoc, setCtLocSpan)
 #if MIN_VERSION_ghc(8,2,0)
 import TcRnTypes  (ShadowInfo (WDeriv))
 #endif
 import TyCoRep    (UnivCoProvenance (..))
-import Type       (mkPrimEqPred)
+import Type       (mkClassPred, mkPrimEqPred)
 import TcType     (typeKind)
 import TyCoRep    (Type (..))
 import TcTypeNats (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
@@ -317,15 +322,15 @@ simplifyNats (Opts {..}) eqsG eqsW =
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
-          evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
+          evs' <- maybe evs (:evs) <$> evMagic ct empty (subToPred k)
           simples subst evs' leqsG [] (xs ++ eqs')
         Lose -> if null evs && null eqs'
                    then return (Impossible (fst eq))
                    else simples subst evs leqsG xs eqs'
         Draw [] -> simples subst evs [] (eq:xs) eqs'
         Draw subst' -> do
-          evM <- evMagic ct (map unifyItemToPredType subst' ++
-                             subToPred k)
+          evM <- evMagic ct empty (map unifyItemToPredType subst' ++
+                                   subToPred k)
           let leqsG' | isGiven (ctEvidence ct) = eqToLeq u' v' ++ leqsG
                      | otherwise  = leqsG
           case evM of
@@ -344,12 +349,12 @@ simplifyNats (Opts {..}) eqsG eqsW =
                          , map snd (rights (map fst eqsG))
                          ]
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs))
-      case isNatural u' of
-        Just True  -> do
-          evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
+      case runWriterT (isNatural u') of
+        Just (True,knW)  -> do
+          evs' <- maybe evs (:evs) <$> evMagic ct knW (subToPred k)
           simples subst evs' leqsG' xs eqs'
 
-        Just False -> return (Impossible (fst eq))
+        Just (False,_) -> return (Impossible (fst eq))
         Nothing
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
@@ -359,7 +364,7 @@ simplifyNats (Opts {..}) eqsG eqsW =
           -- `1 <= x^y`
             instantSolveIneq depth u
           -> do
-            evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
+            evs' <- maybe evs (:evs) <$> evMagic ct empty (subToPred k)
             simples subst evs' leqsG' xs eqs'
           | otherwise
           -> simples subst evs leqsG (eq:xs) eqs'
@@ -421,8 +426,8 @@ unifyItemToPredType ui =
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
 
-evMagic :: Ct -> [(PredType,Kind)] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
-evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
+evMagic :: Ct -> Set CType -> [(PredType,Kind)] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
+evMagic ct knW preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
   EqPred NomEq t1 t2 -> do
     let predTypes = map fst preds
         predKinds = map snd preds
@@ -431,7 +436,8 @@ evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
 #else
     holes <- replicateM (length preds) newCoercionHole
 #endif
-    let newWanted = zipWith (unifyItemToCt (ctLoc ct)) predTypes holes
+    knWanted <- mapM (mkKnWanted ct) (toList knW)
+    let newWanted = knWanted ++ zipWith (unifyItemToCt (ctLoc ct)) predTypes holes
         ctEv      = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
 #if MIN_VERSION_ghc(8,4,1)
         holeEvs   = map mkHoleCo holes
@@ -450,6 +456,22 @@ evMagic ct preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
     mkCoVar k = (,natReflCo) <$> (newFlexiTyVar k)
       where
         natReflCo = mkNomReflCo k
+
+mkKnWanted
+  :: Ct
+  -> CType
+  -> TcPluginM Ct
+mkKnWanted ct (CType ty) = do
+  kc_clas <- tcLookupClass knownNatClassName
+  let kn_pred = mkClassPred kc_clas [ty]
+  wantedCtEv <- TcPluginM.newWanted (ctLoc ct) kn_pred
+  let wanted = mkNonCanonical wantedCtEv
+      -- Set the source-location of the new wanted constraint to the source
+      -- location of the [W]anted constraint we are currently trying to solve
+      ct_ls   = ctLocSpan (ctLoc ct)
+      ctl     = ctEvLoc  wantedCtEv
+      wanted' = setCtLoc wanted (setCtLocSpan ctl ct_ls)
+  return wanted'
 
 unifyItemToCt :: CtLoc
               -> PredType

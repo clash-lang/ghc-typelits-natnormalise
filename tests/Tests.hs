@@ -1,6 +1,8 @@
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE TypeOperators       #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
@@ -365,6 +367,19 @@ proxyInEqImplication2
   -> Proxy n
 proxyInEqImplication2 _ _ _ x = x
 
+type family F (n :: Nat) :: Nat
+type instance F 3 = 8
+
+proxyInEqImplication3 :: (KnownNat (F n))
+  => Proxy (n :: Nat)
+  -> Proxy (n :: Nat)
+proxyInEqImplication3 = proxyInEqImplication3'
+
+proxyInEqImplication3' :: (F n <= (3 * (F n)))
+  => Proxy (n :: Nat)
+  -> Proxy (n :: Nat)
+proxyInEqImplication3' = id
+
 data AtMost n = forall a. (KnownNat a, a <= n) => AtMost (Proxy a)
 
 instance Show (AtMost n) where
@@ -461,6 +476,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "1 <= 2^(a+3)" $
       show (proxyInEq7 (Proxy :: Proxy 1) (Proxy :: Proxy 8)) @?=
       "()"
+    , testCase "KnownNat (F a) implies F a <= 3 * F a" $
+      show (proxyInEqImplication3 (Proxy :: Proxy 3)) @?=
+      "Proxy"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
