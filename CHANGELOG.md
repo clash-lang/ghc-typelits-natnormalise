@@ -1,14 +1,5 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.6.3
-* When you run with `-fplugin-opt GHC.TypeLits.Normalise:assert-constants-natural`
-  the plugin will instantly solve equations such as `F a <= G b + F a` for any
-  type family `F` and `G`,  because you assert that all type families reduce to
-  a natural number. This is potentially controversial as you could create a
-  type family instance `type instance G a = Div a 0` which never reduces,
-  meaning `F a <= G b + F a` could never reduce, and should hence not have been
-  vacuously discharged. This is sorta "pick-the-semantics-you're-comfortable-with".
-
 ## 0.6.2 *July 10th 2018*
 * Add support for GHC 8.6.1-alpha1
 * Solve larger inequalities from smaller inequalities, e.g.

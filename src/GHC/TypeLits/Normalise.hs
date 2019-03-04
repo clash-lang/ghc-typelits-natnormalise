@@ -230,11 +230,10 @@ plugin
  where
   parseArgument "allow-negated-numbers" = Just (\ opts -> opts { negNumbers = True })
   parseArgument (readMaybe <=< stripPrefix "depth=" -> Just depth) = Just (\ opts -> opts { depth })
-  parseArgument "assert-constants-natural" = Just (\opts -> opts { constantsNatural = True})
   parseArgument _ = Nothing
-  defaultOpts = Opts { negNumbers = False, depth = 5, constantsNatural = False }
+  defaultOpts = Opts { negNumbers = False, depth = 5 }
 
-data Opts = Opts { negNumbers :: Bool, depth :: Word, constantsNatural :: Bool }
+data Opts = Opts { negNumbers :: Bool, depth :: Word }
 
 normalisePlugin :: Opts -> TcPlugin
 normalisePlugin opts = tracePlugin "ghc-typelits-natnormalise"
@@ -345,7 +344,7 @@ simplifyNats (Opts {..}) eqsG eqsW =
                          , map snd (rights (map fst eqsG))
                          ]
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs))
-      case isNatural constantsNatural u' of
+      case isNatural u' of
         Just True  -> do
           evs' <- maybe evs (:evs) <$> evMagic ct (subToPred k)
           simples subst evs' leqsG' xs eqs'
