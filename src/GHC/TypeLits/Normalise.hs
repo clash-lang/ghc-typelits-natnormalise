@@ -342,6 +342,7 @@ simplifyNats (Opts {..}) eqsG eqsW =
       let u'    = substsSOP subst (subtractIneq u)
           x'    = substsSOP subst x
           y'    = substsSOP subst y
+          uS    = (x',y',b)
           leqsG' | isGiven (ctEvidence ct) = (x',y',b):leqsG
                  | otherwise               = leqsG
           ineqs = concat [ leqsG
@@ -360,6 +361,8 @@ simplifyNats (Opts {..}) eqsG eqsW =
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
           | or (mapMaybe (solveIneq depth u) ineqs) ||
+          -- Or the above, but with valid substitutions applied to the wanted.
+            or (mapMaybe (solveIneq depth uS) ineqs) ||
           -- Or it is an inequality that can be instantly solved, such as
           -- `1 <= x^y`
             instantSolveIneq depth u

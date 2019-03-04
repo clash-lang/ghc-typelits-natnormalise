@@ -380,6 +380,19 @@ proxyInEqImplication3' :: (F n <= (3 * (F n)))
   -> Proxy (n :: Nat)
 proxyInEqImplication3' = id
 
+type family G (n :: Nat) :: Nat
+type instance G 2 = 3
+
+proxyInEqImplication4 :: (1 <= (G n))
+  => Proxy (n :: Nat)
+  -> Proxy (n :: Nat)
+proxyInEqImplication4 = proxyInEqImplication4'
+
+proxyInEqImplication4' :: (F n <= ((G n) * (F n)))
+  => Proxy (n :: Nat)
+  -> Proxy (n :: Nat)
+proxyInEqImplication4' = id
+
 data AtMost n = forall a. (KnownNat a, a <= n) => AtMost (Proxy a)
 
 instance Show (AtMost n) where
@@ -478,6 +491,9 @@ tests = testGroup "ghc-typelits-natnormalise"
       "()"
     , testCase "KnownNat (F a) implies F a <= 3 * F a" $
       show (proxyInEqImplication3 (Proxy :: Proxy 3)) @?=
+      "Proxy"
+    , testCase "1 <= G a implies F a <= G a * F a" $
+      show (proxyInEqImplication4 (Proxy :: Proxy 2)) @?=
       "Proxy"
     ]
   , testGroup "errors"
