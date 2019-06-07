@@ -191,7 +191,7 @@ import TcPluginM  (zonkCt)
 import TcPluginM  (TcPluginM, tcPluginTrace)
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
                    isWanted, mkNonCanonical)
-import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType,
+import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType, TyVar,
                    classifyPredType, eqType, getEqPredTys, mkTyVarTy)
 import TysWiredIn (typeNatKind)
 
@@ -199,20 +199,22 @@ import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
 import TcPluginM  (newCoercionHole, newFlexiTyVar, tcLookupClass)
 import TcRnTypes
-  (CtEvidence (..), CtLoc, TcEvDest (..), ctEvLoc, ctLoc, ctLocSpan, isGiven,
+  (Ct (..), CtEvidence (..), CtLoc, TcEvDest (..), ctEvLoc, ctLoc, ctLocSpan, isGiven,
    setCtLoc, setCtLocSpan)
 #if MIN_VERSION_ghc(8,2,0)
 import TcRnTypes  (ShadowInfo (WDeriv))
 #endif
 import TyCoRep    (UnivCoProvenance (..))
 import Type       (mkClassPred, mkPrimEqPred)
-import TcType     (typeKind)
+import TcType     (mkTyConApp, typeKind)
 import TyCoRep    (Type (..))
 import TcTypeNats (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                    typeNatSubTyCon)
 
 import TcTypeNats (typeNatLeqTyCon)
 import TysWiredIn (promotedFalseDataCon, promotedTrueDataCon)
+import UniqMap
+import UniqSet
 
 -- internal
 import GHC.TypeLits.Normalise.Unify
@@ -246,6 +248,26 @@ normalisePlugin opts = tracePlugin "ghc-typelits-natnormalise"
            , tcPluginSolve = const (decideEqualSOP opts)
            , tcPluginStop  = const (return ())
            }
+
+
+data EqGraph = EqGraph (UniqMap TyVar Type) (UniqMap TyVar (UniqSet TyVar))
+
+emptyEqGraph
+  :: EqGraph
+emptyEqGraph = EqGraph emptyUniqMap emptyUniqMap
+
+extendEqGraph
+  :: EqGraph
+  -> Ct
+  -> EqGraph
+extendEqGraph g@(EqGraph nodes edges0) = \case
+  CTyEqCan {cc_tyvar = k, cc_rhs = TyVarTy v} ->
+    let edges1 = addToUniqMap_Acc (flip addOneToUniqSet) unitUniqSet edges0 k v
+        edges2 = addToUniqMap_Acc (flip addOneToUniqSet) unitUniqSet edges1 v k
+    in  EqGraph nodes edges2
+  CFunEqCan {cc_fun = f, cc_tyargs = args, cc_fsk = k} ->
+    EqGraph (addToUniqMap nodes k (mkTyConApp f args)) edges0
+  _ -> g
 
 decideEqualSOP
   :: Opts
