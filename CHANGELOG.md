@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.7
+## 0.7 *August 26th 2019*
 * Require KnownNat constraints when solving with constants
 
 ## 0.6.2 *July 10th 2018*
