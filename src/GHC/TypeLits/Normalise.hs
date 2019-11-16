@@ -539,6 +539,7 @@ evMagic ct knW preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
 #if MIN_VERSION_ghc(8,4,1)
         holeEvs   = map mkHoleCo holes
 #else
+        predTypes = map fst preds
         holeEvs   = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes predTypes
 #endif
     forallEv <- mkForAllCos <$> mapM mkCoVar predKinds <*> pure ctEv
