@@ -546,8 +546,10 @@ tests = testGroup "ghc-typelits-natnormalise"
       , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
       , testCase "4a <= 2a" $ testProxy13 `throws` testProxy13Errors
       , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
-      , testCase "Eq (Boo n) => Eq (Boo (n - 1 + 1))" $
+      , testCase "Show (Boo n) => Show (Boo (n - 1 + 1))" $
           testProxy17 `throws` test17Errors
+      , testCase "Show (Boo n) => Show (Boo (n + 1))" $
+          testProxy18 `throws` test18Errors
       ]
     ]
   ]
