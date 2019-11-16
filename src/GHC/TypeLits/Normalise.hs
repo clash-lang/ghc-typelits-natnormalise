@@ -158,7 +158,7 @@ where
 
 -- external
 import Control.Arrow       (second)
-import Control.Monad       ((<=<), forM, guard)
+import Control.Monad       ((<=<), forM)
 #if !MIN_VERSION_ghc(8,4,1)
 import Control.Monad       (replicateM)
 #endif
@@ -178,7 +178,7 @@ import Text.Read           (readMaybe)
 #if MIN_VERSION_ghc(8,5,0)
 import CoreSyn    (Expr (..))
 #endif
-import Outputable (Outputable (..), (<+>), ($$), text, showSDocUnsafe)
+import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 #if MIN_VERSION_ghc(8,6,0)
 import Plugins    (purePlugin)
@@ -276,25 +276,13 @@ decideEqualSOP opts gen'd givens _deriveds [] = do
 #else
     simplGivens <- mapM zonkCt givens
 #endif
-    let nonEqs =
-          [ ct
-          | ct <- simplGivens
-          , let ev = ctEvidence ct
-                prd = ctEvPred ev
-          , isGiven ev
-          , not $ isEqPred prd
-          ]
-        reds =
-          filter
-            (\(_, (prd, _)) -> notMember (CType prd) done )
-          $ mapMaybe
-            (\ct -> (ct,) <$> tryReduceGiven opts givens ct)
-            nonEqs
-
-        newlyDone = map (\(_,(prd, _)) -> CType prd) reds
+    let reds =
+          filter (\(_,(_,_,v)) -> null v ) $
+          reduceGivens opts done simplGivens
+        newlyDone = map (\(_,(prd, _,_)) -> CType prd) reds
     tcPluginIO $
       modifyIORef' gen'd $ union (fromList newlyDone)
-    newGivens <- forM reds $ \(origCt, (pred', evTerm)) ->
+    newGivens <- forM reds $ \(origCt, (pred', evTerm, _)) ->
       mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
     return (TcPluginOk [] newGivens)
 
@@ -307,11 +295,11 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     let unit_wanteds = mapMaybe toNatEquality wanteds'
         nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence)  $
                 filter (isWanted . ctEvidence) wanteds
-    reducibles
+    reducible_wanteds
       <- catMaybes <$>
             mapM (\ct -> fmap (ct,) <$> reduceNatConstr ct)
             nonEqs
-    if null unit_wanteds && null reducibles
+    if null unit_wanteds && null reducible_wanteds
     then return $ TcPluginOk [] []
     else do
 #if MIN_VERSION_ghc(8,4,0)
@@ -319,10 +307,19 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
 #else
         simplGivens <- mapM zonkCt givens
 #endif
-        let unit_givens = mapMaybe toNatEquality simplGivens
+        done <- tcPluginIO $ readIORef gen'd
+        let redGs = reduceGivens opts done simplGivens
+            newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
+        redGivens <- forM redGs $ \(origCt, (pred', evTerm, _)) ->
+          mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
+        redWants <- fmap concat $ forM redGs $ \(ct, (_,_, ws)) -> forM ws $
+          fmap (mkNonCanonical' (ctLoc ct)) . newWanted (ctLoc ct)
+        tcPluginIO $
+          modifyIORef' gen'd $ union (fromList newlyDone)
+        let unit_givens = mapMaybe toNatEquality $ simplGivens ++ redGivens
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
-        reds <- forM reducibles $ \(ct,(term, ws, w)) -> do
+        reds <- forM reducible_wanteds $ \(ct,(term, ws, w)) -> do
           wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
           let w' = mkNonCanonical' (ctLoc ct) w
           return ((term, ct), w' : wants)
@@ -330,27 +327,43 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
                 (solved',newWanteds) = second concat (unzip $ simpld ++ reds)
-            return (TcPluginOk solved' newWanteds)
+            return (TcPluginOk solved' $ newWanteds ++ redWants)
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
 
+reduceGivens :: Opts -> Set CType -> [Ct] -> [(Ct, (Type, EvTerm, [PredType]))]
+reduceGivens opts done givens =
+  let nonEqs =
+        [ ct
+        | ct <- givens
+        , let ev = ctEvidence ct
+              prd = ctEvPred ev
+        , isGiven ev
+        , not $ isEqPred prd
+        ]
+  in filter
+      (\(_, (prd, _, _)) ->
+        notMember (CType prd) done
+      )
+    $ mapMaybe
+      (\ct -> (ct,) <$> tryReduceGiven opts givens ct)
+      nonEqs
+
 tryReduceGiven
-  :: Opts -> [Ct] -> Ct -> Maybe (PredType, EvTerm)
+  :: Opts -> [Ct] -> Ct
+  -> Maybe (PredType, EvTerm, [PredType])
 tryReduceGiven opts simplGivens ct = do
     let (mans, ws) =
           runWriter $ normaliseNatEverywhere $
           ctEvPred $ ctEvidence ct
-        ws' = subToPred opts ws
-    guard $
-      all (\(p,_) ->
-         any ((`eqType` p). ctEvPred . ctEvidence) simplGivens
-          -- TODO: use solveIneq and solveIneqInstant here
-      ) ws'
-
+        ws' = [ p
+              | (p, _) <- subToPred opts ws
+              , all (not . (`eqType` p). ctEvPred . ctEvidence) simplGivens
+              ]
     pred' <- mans
-    return (pred', toReducedDict (ctEvidence ct) pred')
+    return (pred', toReducedDict (ctEvidence ct) pred', ws')
 
 fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
