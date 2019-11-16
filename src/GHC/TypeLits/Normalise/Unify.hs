@@ -20,6 +20,8 @@ module GHC.TypeLits.Normalise.Unify
     CType (..)
   , CoreSOP
   , normaliseNat
+  , normaliseNatEverywhere
+  , normaliseSimplifyNat
   , reifySOP
     -- * Substitution on 'SOP' terms
   , UnifyItem (..)
@@ -51,6 +53,7 @@ import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
 import Data.Maybe    (fromMaybe, mapMaybe)
 import Data.Set      (Set)
+import Data.Generics
 import qualified Data.Set as Set
 
 import GHC.Base               (isTrue#,(==#))
@@ -66,9 +69,9 @@ import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon, typeNatLeqTyCon)
 import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
                       coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
-                      nonDetCmpType, PredType, mkPrimEqPred)
+                      nonDetCmpType, PredType, mkPrimEqPred, typeKind)
 import TyCoRep       (Kind, Type (..), TyLit (..))
-import TysWiredIn    (boolTy, promotedTrueDataCon)
+import TysWiredIn    (boolTy, promotedTrueDataCon, typeNatKind)
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
@@ -111,6 +114,27 @@ normaliseNat (TyConApp tc [x,y])
   | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
   | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
 normaliseNat t = return (S [P [C (CType t)]])
+
+-- | Applies 'normaliseNat' and 'simplifySOP' to type or predicats
+--   to reduce any occurence of sub-terms
+--   of /kind/ 'GHC.TypeLits.Nat'.
+--   If the result is the same as input, returns @'Nothing'@.
+normaliseNatEverywhere
+  :: Type -> Writer [(Type, Type)] (Maybe Type)
+normaliseNatEverywhere ty
+  | typeKind ty `eqType` typeNatKind = do
+      ty' <- normaliseSimplifyNat ty
+      return $ if ty `eqType` ty' then Nothing else Just ty'
+  | otherwise = do
+      ty' <- everywhereM (mkM normaliseSimplifyNat) ty
+      return $ if ty `eqType` ty' then Nothing else Just ty'
+      
+normaliseSimplifyNat :: Type -> Writer [(Type, Type)] Type
+normaliseSimplifyNat ty
+  | typeKind ty `eqType` typeNatKind = do
+      ty' <- normaliseNat ty
+      return $ reifySOP $ simplifySOP ty'
+  | otherwise = return ty
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type

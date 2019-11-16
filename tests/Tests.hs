@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP                 #-}
+{-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
@@ -400,6 +401,14 @@ instance Show (AtMost n) where
 
 succAtMost :: AtMost n -> AtMost (n + 1)
 succAtMost (AtMost (Proxy :: Proxy a)) = AtMost (Proxy :: Proxy a)
+
+data Dict c where
+  Dict :: c => Dict c
+data Boo (n :: Nat)
+eqReducePM
+  :: Eq (Boo (n + 2))
+  => Dict (Eq (Boo ((n + 1) + 1)))
+eqReducePM = Dict
 
 main :: IO ()
 main = defaultMain tests

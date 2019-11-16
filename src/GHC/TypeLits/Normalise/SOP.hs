@@ -85,6 +85,7 @@ module GHC.TypeLits.Normalise.SOP
   , mergeSOPAdd
   , mergeSOPMul
   , normaliseExp
+  , simplifySOP
   )
 where
 
