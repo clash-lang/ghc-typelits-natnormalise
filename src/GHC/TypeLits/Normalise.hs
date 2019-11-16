@@ -335,8 +335,7 @@ tryReduceGiven opts simplGivens ct = do
         ws' = subToPred opts ws
     guard $
       all (\(p,_) ->
-         any ((`eqType` p). ctEvPred . ctEvidence)
-          simplGivens
+         any ((`eqType` p). ctEvPred . ctEvidence) simplGivens
           -- TODO: use solveIneq and solveIneqInstant here
       ) ws'
 
