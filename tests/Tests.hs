@@ -407,7 +407,7 @@ data Dict c where
 data Boo (n :: Nat)
 eqReducePM
   :: Eq (Boo (n + 2))
-  => Dict (Eq (Boo ((n + 1) + 1)))
+  => Dict (Eq (Boo (n + 1 + 1)))
 eqReducePM = Dict
 
 main :: IO ()
