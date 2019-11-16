@@ -208,6 +208,3 @@ test17Errors =
           then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
           else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
     )]
-
-test18 :: Dict (Eq (Boo n)) -> Dict (Eq (Boo (n + 1)))
-test18 Dict = Dict

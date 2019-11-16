@@ -548,8 +548,6 @@ tests = testGroup "ghc-typelits-natnormalise"
       , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
       , testCase "Eq (Boo n) => Eq (Boo (n - 1 + 1))" $
           testProxy17 `throws` test17Errors
-      , testCase "Eq (Boo n) => Eq (Boo (n + 1))" $
-          test18 (maliciousEqBoo (Proxy :: Proxy 7)) `throws` test17Errors
       ]
     ]
   ]
