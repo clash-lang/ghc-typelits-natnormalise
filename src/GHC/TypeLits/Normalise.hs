@@ -295,27 +295,30 @@ decideEqualSOP opts  _ givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
-#if MIN_VERSION_ghc(8,4,0)
-    let simplGivens = givens ++ flattenGivens givens
-#else
-    simplGivens <- mapM zonkCt givens
-#endif
-    let unit_givens = mapMaybe toNatEquality simplGivens
         nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence)  $
                 filter (isWanted . ctEvidence) wanteds
         reducibles  = mapMaybe (\ct -> (ct,) <$> reduceNatConstr ct)
                       nonEqs
-    sr <- simplifyNats opts unit_givens unit_wanteds
-    tcPluginTrace "normalised" (ppr sr)
-    reds <- forM reducibles $ \(ct,(term, ws)) -> do
-      wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
-      return ((term, ct),wants)
-    case sr of
-      Simplified evs -> do
-        let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
-            (solved',newWanteds) = second concat (unzip $ simpld ++ reds)
-        return (TcPluginOk solved' newWanteds)
-      Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
+    if null unit_wanteds && null reducibles
+    then return $ TcPluginOk [] []
+    else do
+#if MIN_VERSION_ghc(8,4,0)
+        let simplGivens = givens ++ flattenGivens givens
+#else
+        simplGivens <- mapM zonkCt givens
+#endif
+        let unit_givens = mapMaybe toNatEquality simplGivens
+        sr <- simplifyNats opts unit_givens unit_wanteds
+        tcPluginTrace "normalised" (ppr sr)
+        reds <- forM reducibles $ \(ct,(term, ws)) -> do
+          wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
+          return ((term, ct),wants)
+        case sr of
+          Simplified evs -> do
+            let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
+                (solved',newWanteds) = second concat (unzip $ simpld ++ reds)
+            return (TcPluginOk solved' newWanteds)
+          Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
