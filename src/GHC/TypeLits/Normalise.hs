@@ -288,7 +288,7 @@ decideEqualSOP opts gen'd givens _deriveds [] = do
     tcPluginIO $
       modifyIORef' gen'd $ union (fromList newlyDone)
     newGivens <- forM reds $ \(origCt, (pred', evTerm)) ->
-      mkNonCanonical <$> newGiven (ctLoc origCt) pred' evTerm
+      mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
     return (TcPluginOk [] newGivens)
 
 decideEqualSOP opts  _ givens  _deriveds wanteds = do
@@ -314,7 +314,8 @@ decideEqualSOP opts  _ givens  _deriveds wanteds = do
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducibles $ \(ct,(term, ws, w)) -> do
           wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
-          return ((term, ct), mkNonCanonical w : wants)
+          let w' = mkNonCanonical' (ctLoc ct) w
+          return ((term, ct), w' : wants)
         case sr of
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
@@ -332,10 +333,14 @@ tryReduceGiven opts simplGivens ct = do
           runWriter $ normaliseNatEverywhere $
           ctEvPred $ ctEvidence ct
         ws' = subToPred opts ws
+        ineqs = 
     guard $
-      all (\(p,_) -> any ((`eqType `p ). ctEvPred . ctEvidence)
-            simplGivens
+      all (\(p,_) ->
+         any ((`eqType` p). ctEvPred . ctEvidence)
+          simplGivens
+          -- TODO: use solveIneq and solveIneqInstant here
       ) ws'
+
     pred' <- mans
     return (pred', toReducedDict (ctEvidence ct) pred')
 
@@ -531,7 +536,7 @@ evMagic ct knW preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
     (holeWanteds, holes) <- evSubtPreds ct preds
     let predKinds = map snd preds
     knWanted <- mapM (mkKnWanted ct) (toList knW)
-    let newWanted = knWanted ++ holeWanteds
+    let newWant = knWanted ++ holeWanteds
         ctEv      = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
 #if MIN_VERSION_ghc(8,4,1)
         holeEvs   = map mkHoleCo holes
@@ -541,15 +546,21 @@ evMagic ct knW preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
     forallEv <- mkForAllCos <$> mapM mkCoVar predKinds <*> pure ctEv
     let finalEv = foldl mkInstCo forallEv holeEvs
 #if MIN_VERSION_ghc(8,5,0)
-    return (Just ((EvExpr (Coercion finalEv), ct),newWanted))
+    return (Just ((EvExpr (Coercion finalEv), ct),newWant))
 #else
-    return (Just ((EvCoercion finalEv, ct),newWanted))
+    return (Just ((EvCoercion finalEv, ct),newWant))
 #endif
   _ -> return Nothing
   where
     mkCoVar k = (,natReflCo) <$> newFlexiTyVar k
       where
         natReflCo = mkNomReflCo k
+
+mkNonCanonical' :: CtLoc -> CtEvidence -> Ct
+mkNonCanonical' origCtl ev =
+  let ct_ls   = ctLocSpan origCtl
+      ctl     = ctEvLoc  ev
+  in setCtLoc (mkNonCanonical ev) (setCtLocSpan ctl ct_ls)
 
 mkKnWanted
   :: Ct
@@ -559,12 +570,7 @@ mkKnWanted ct (CType ty) = do
   kc_clas <- tcLookupClass knownNatClassName
   let kn_pred = mkClassPred kc_clas [ty]
   wantedCtEv <- TcPluginM.newWanted (ctLoc ct) kn_pred
-  let wanted = mkNonCanonical wantedCtEv
-      -- Set the source-location of the new wanted constraint to the source
-      -- location of the [W]anted constraint we are currently trying to solve
-      ct_ls   = ctLocSpan (ctLoc ct)
-      ctl     = ctEvLoc  wantedCtEv
-      wanted' = setCtLoc wanted (setCtLocSpan ctl ct_ls)
+  let wanted' = mkNonCanonical' (ctLoc ct) wantedCtEv
   return wanted'
 
 unifyItemToCt :: CtLoc

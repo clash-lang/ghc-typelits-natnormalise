@@ -402,13 +402,36 @@ instance Show (AtMost n) where
 succAtMost :: AtMost n -> AtMost (n + 1)
 succAtMost (AtMost (Proxy :: Proxy a)) = AtMost (Proxy :: Proxy a)
 
-data Dict c where
-  Dict :: c => Dict c
-data Boo (n :: Nat)
-eqReducePM
-  :: Eq (Boo (n + 2))
-  => Dict (Eq (Boo (n + 1 + 1)))
-eqReducePM = Dict
+eqReduceForward
+  :: Eq (Boo (n + 1))
+  => Dict (Eq (Boo (n + 2 - 1)))
+eqReduceForward = Dict
+
+eqReduceForwardMinusPlus
+  :: (Eq (Boo (0 + n + 1)), 1 <= n)
+  => Dict (Eq (Boo (n - 1 + 2)))
+eqReduceForwardMinusPlus = Dict
+
+-- This fails  because
+--  1 <= m + 2 
+-- is unknown at simplification phase
+-- and we cannot create @Wanted@s during
+-- the simplification!
+-- Perhaps we can still overcome this situation
+-- by implementing something like @isTrivialEqn@ or so.
+--
+-- Alas! It fails even given with inequality!
+-- Perhaps we should use @toNatEquality@ to lookup 
+-- and/or generating appropriate inequalities from givens.
+{- eqReduceBackward
+  :: (Eq (Boo (m + 2 - 1)), (1 <=? m + 2) ~ 'True)
+  => Dict (Eq (Boo (m + 1)))
+eqReduceBackward = Dict -}
+
+eqReduceBackward'
+  :: (Eq (Boo (1 + m + 2)))
+  => Dict (Eq (Boo (m + 3)))
+eqReduceBackward' = Dict
 
 main :: IO ()
 main = defaultMain tests
@@ -513,7 +536,8 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
     , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
-    , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $ (testProxy15 (Proxy :: Proxy 1)) `throws` testProxy15Errors
+    , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $
+        testProxy15 (Proxy :: Proxy 1) `throws` testProxy15Errors
     , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
     , testGroup "Inequality"
       [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
@@ -522,6 +546,10 @@ tests = testGroup "ghc-typelits-natnormalise"
       , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
       , testCase "4a <= 2a" $ testProxy13 `throws` testProxy13Errors
       , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
+      , testCase "Eq (Boo n) => Eq (Boo (n - 1 + 1))" $
+          testProxy17 `throws` test17Errors
+      , testCase "Eq (Boo n) => Eq (Boo (n + 1))" $
+          test18 (maliciousEqBoo (Proxy :: Proxy 7)) `throws` test17Errors
       ]
     ]
   ]

@@ -1,9 +1,16 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds, GADTs, KindSignatures, ScopedTypeVariables, TemplateHaskell,
-             TypeApplications, TypeFamilies, TypeOperators #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE ConstraintKinds     #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeOperators       #-}
 
 #if __GLASGOW_HASKELL__ >= 805
-{-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE NoStarIsType        #-}
 #endif
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
@@ -12,6 +19,7 @@ module ErrorTests where
 
 import Data.Proxy
 import GHC.TypeLits
+import Unsafe.Coerce
 
 import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
 import Language.Haskell.TH        (litE, stringL)
@@ -181,3 +189,25 @@ test16Errors =
           then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
           else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
     )]
+
+data Dict c where
+  Dict :: c => Dict c
+data Boo (n :: Nat)
+
+test17 :: Dict (Eq (Boo n)) -> Dict (Eq (Boo (n - 1 + 1)))
+test17 Dict = Dict
+
+maliciousEqBoo
+  :: Proxy n -> Dict (Eq (Boo n))
+maliciousEqBoo = unsafeCoerce (Dict :: Dict ())
+
+testProxy17 = test17 (maliciousEqBoo (Proxy :: Proxy 17))
+test17Errors =
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
+    )]
+
+test18 :: Dict (Eq (Boo n)) -> Dict (Eq (Boo (n + 1)))
+test18 Dict = Dict
