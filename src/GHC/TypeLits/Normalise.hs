@@ -277,7 +277,7 @@ decideEqualSOP opts gen'd givens _deriveds [] = do
     simplGivens <- mapM zonkCt givens
 #endif
     let reds =
-          filter (\(_,(_,_,v)) -> null v ) $
+          filter (\(_,(_,_,v)) -> null v || negNumbers opts) $
           reduceGivens opts done simplGivens
         newlyDone = map (\(_,(prd, _,_)) -> CType prd) reds
     tcPluginIO $
