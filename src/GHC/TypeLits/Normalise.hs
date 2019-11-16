@@ -165,9 +165,9 @@ import Control.Monad       (replicateM)
 import Control.Monad.Trans.Writer.Strict
 import Data.Either         (rights)
 import Data.List           (intersect, stripPrefix)
-import Data.Maybe          (mapMaybe)
+import Data.Maybe          (mapMaybe, catMaybes)
 import Data.Set            (Set, empty, toList, notMember, fromList, union)
-import GHC.TcPluginM.Extra (tracePlugin, newGiven)
+import GHC.TcPluginM.Extra (tracePlugin, newGiven, newWanted)
 import qualified GHC.TcPluginM.Extra as TcPluginM
 #if MIN_VERSION_ghc(8,4,0)
 import GHC.TcPluginM.Extra (flattenGivens)
@@ -178,7 +178,7 @@ import Text.Read           (readMaybe)
 #if MIN_VERSION_ghc(8,5,0)
 import CoreSyn    (Expr (..))
 #endif
-import Outputable (Outputable (..), (<+>), ($$), text)
+import Outputable (Outputable (..), (<+>), ($$), text, showSDocUnsafe)
 import Plugins    (Plugin (..), defaultPlugin)
 #if MIN_VERSION_ghc(8,6,0)
 import Plugins    (purePlugin)
@@ -297,8 +297,10 @@ decideEqualSOP opts  _ givens  _deriveds wanteds = do
     let unit_wanteds = mapMaybe toNatEquality wanteds'
         nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence)  $
                 filter (isWanted . ctEvidence) wanteds
-        reducibles  = mapMaybe (\ct -> (ct,) <$> reduceNatConstr ct)
-                      nonEqs
+    reducibles
+      <- catMaybes <$>
+            mapM (\ct -> fmap (ct,) <$> reduceNatConstr ct)
+            nonEqs
     if null unit_wanteds && null reducibles
     then return $ TcPluginOk [] []
     else do
@@ -310,9 +312,9 @@ decideEqualSOP opts  _ givens  _deriveds wanteds = do
         let unit_givens = mapMaybe toNatEquality simplGivens
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
-        reds <- forM reducibles $ \(ct,(term, ws)) -> do
+        reds <- forM reducibles $ \(ct,(term, ws, w)) -> do
           wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
-          return ((term, ct),wants)
+          return ((term, ct), mkNonCanonical w : wants)
         case sr of
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
@@ -335,31 +337,32 @@ tryReduceGiven opts simplGivens ct = do
             simplGivens
       ) ws'
     pred' <- mans
-    return (pred', toReducedDict ct pred')
+    return (pred', toReducedDict (ctEvidence ct) pred')
 
 fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: Ct -> Maybe (EvTerm, [(Type, Type)])
+reduceNatConstr :: Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)], CtEvidence))
 reduceNatConstr ct =  do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere pred0
-  pred' <- mans
-  let ev = toReducedDict ct pred'
-  return (ev, tests)
+  forM mans $ \pred' -> do
+    want <- newWanted (ctLoc ct) pred'
+    let ev = toReducedDict want pred'
+    return (ev, tests, want)
 
-toReducedDict :: Ct -> PredType -> EvTerm
+toReducedDict :: CtEvidence -> PredType -> EvTerm
 toReducedDict ct pred' =
-  let pred0 = ctEvPred $ ctEvidence ct
+  let pred0 = ctEvPred ct
       evCo = mkUnivCo (PluginProv "ghc-typelits-natnormalise")
               Representational
               pred0 pred'
 #if MIN_VERSION_ghc(8,6,0)
-      ev = ctEvExpr (ctEvidence ct)
+      ev = ctEvExpr ct
              `evCast` evCo
 #else
-      ev = ctEvTerm (ctEvidence ct) `EvCast` evCo
+      ev = ctEvTerm ct `EvCast` evCo
 #endif
   in ev
 
