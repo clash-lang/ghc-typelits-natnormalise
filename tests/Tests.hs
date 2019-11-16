@@ -412,21 +412,10 @@ eqReduceForwardMinusPlus
   => Dict (Eq (Boo (n - 1 + 2)))
 eqReduceForwardMinusPlus = Dict
 
--- This fails  because
---  1 <= m + 2 
--- is unknown at simplification phase
--- and we cannot create @Wanted@s during
--- the simplification!
--- Perhaps we can still overcome this situation
--- by implementing something like @isTrivialEqn@ or so.
---
--- Alas! It fails even given with inequality!
--- Perhaps we should use @toNatEquality@ to lookup 
--- and/or generating appropriate inequalities from givens.
-{- eqReduceBackward
-  :: (Eq (Boo (m + 2 - 1)), (1 <=? m + 2) ~ 'True)
+eqReduceBackward
+  :: (Eq (Boo (m + 2 - 1)))
   => Dict (Eq (Boo (m + 1)))
-eqReduceBackward = Dict -}
+eqReduceBackward = Dict
 
 eqReduceBackward'
   :: (Eq (Boo (1 + m + 2)))

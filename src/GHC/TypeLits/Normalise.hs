@@ -164,7 +164,7 @@ import Control.Monad       (replicateM)
 #endif
 import Control.Monad.Trans.Writer.Strict
 import Data.Either         (rights)
-import Data.List           (intersect, stripPrefix)
+import Data.List           (intersect, stripPrefix, find)
 import Data.Maybe          (mapMaybe, catMaybes)
 import Data.Set            (Set, empty, toList, notMember, fromList, union)
 import GHC.TcPluginM.Extra (tracePlugin, newGiven, newWanted)
@@ -178,7 +178,7 @@ import Text.Read           (readMaybe)
 #if MIN_VERSION_ghc(8,5,0)
 import CoreSyn    (Expr (..))
 #endif
-import Outputable (Outputable (..), (<+>), ($$), text)
+import Outputable (Outputable (..), (<+>), ($$), text, showSDocUnsafe)
 import Plugins    (Plugin (..), defaultPlugin)
 #if MIN_VERSION_ghc(8,6,0)
 import Plugins    (purePlugin)
@@ -291,38 +291,41 @@ decideEqualSOP opts gen'd givens _deriveds [] = do
 -- containing naturals.
 decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
+#if MIN_VERSION_ghc(8,4,0)
+    let simplGivens = givens ++ flattenGivens givens
+#else
+    simplGivens <- mapM zonkCt givens
+#endif
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
         nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence)  $
                 filter (isWanted . ctEvidence) wanteds
+    done <- tcPluginIO $ readIORef gen'd
+    let redGs = reduceGivens opts done simplGivens
+        newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
+    redGivens <- forM redGs $ \(origCt, (pred', evTerm, _)) ->
+      mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
     reducible_wanteds
       <- catMaybes <$>
-            mapM (\ct -> fmap (ct,) <$> reduceNatConstr ct)
+            mapM
+              (\ct -> fmap (ct,) <$>
+                  reduceNatConstr (simplGivens ++ redGivens) ct
+              )
             nonEqs
     if null unit_wanteds && null reducible_wanteds
     then return $ TcPluginOk [] []
     else do
-#if MIN_VERSION_ghc(8,4,0)
-        let simplGivens = givens ++ flattenGivens givens
-#else
-        simplGivens <- mapM zonkCt givens
-#endif
-        done <- tcPluginIO $ readIORef gen'd
-        let redGs = reduceGivens opts done simplGivens
-            newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
-        redGivens <- forM redGs $ \(origCt, (pred', evTerm, _)) ->
-          mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
         redWants <- fmap concat $ forM redGs $ \(ct, (_,_, ws)) -> forM ws $
           fmap (mkNonCanonical' (ctLoc ct)) . newWanted (ctLoc ct)
         tcPluginIO $
           modifyIORef' gen'd $ union (fromList newlyDone)
-        let unit_givens = mapMaybe toNatEquality $ simplGivens ++ redGivens
+        let unit_givens = mapMaybe toNatEquality simplGivens
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducible_wanteds $ \(ct,(term, ws, w)) -> do
           wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
-          let w' = mkNonCanonical' (ctLoc ct) w
-          return ((term, ct), w' : wants)
+          let w' = mkNonCanonical' (ctLoc ct) <$> w
+          return ((term, ct), maybe id (:) w' wants)
         case sr of
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
@@ -369,14 +372,19 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)], CtEvidence))
-reduceNatConstr ct =  do
+reduceNatConstr :: [Ct] -> Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)], Maybe CtEvidence))
+reduceNatConstr givens ct =  do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere pred0
   forM mans $ \pred' -> do
-    want <- newWanted (ctLoc ct) pred'
-    let ev = toReducedDict want pred'
-    return (ev, tests, want)
+    (ev, mwant) <-
+      case find ((`eqType` pred') .ctEvPred . ctEvidence) givens of
+        Nothing -> do
+          want <- newWanted (ctLoc ct) pred'
+          let ev = toReducedDict want pred'
+          return (ev, Just want)
+        Just c -> return (ctEvTerm $ ctEvidence c, Nothing)
+    return (ev, tests, mwant)
 
 toReducedDict :: CtEvidence -> PredType -> EvTerm
 toReducedDict ct pred' =
