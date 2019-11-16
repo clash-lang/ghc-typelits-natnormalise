@@ -257,11 +257,18 @@ normalisePlugin opts = tracePlugin "ghc-typelits-natnormalise"
 decideEqualSOP
   :: Opts
   -> IORef (Set CType)
-      -- ^ Givens that is already generated
+      -- ^ Givens that is already generated.
+      --   We have to generate new givens at most once;
+      --   otherwise GHC will loop indefinitely.
   -> [Ct]
   -> [Ct]
   -> [Ct]
   -> TcPluginM TcPluginResult
+
+-- Simplification phase: Derives /simplified/ givens;
+-- we can reduce given constraints like @Show (Foo (n + 2))@
+-- to its normal form @Show (Foo (2 + n))@, which is eventually
+-- useful in solving phase.
 decideEqualSOP opts gen'd givens _deriveds [] = do
     done <- tcPluginIO $ readIORef gen'd
 #if MIN_VERSION_ghc(8,4,0)
@@ -291,7 +298,10 @@ decideEqualSOP opts gen'd givens _deriveds [] = do
       mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
     return (TcPluginOk [] newGivens)
 
-decideEqualSOP opts  _ givens  _deriveds wanteds = do
+-- Solving phase.
+-- Solves in/equalities on Nats and simplifiable constraints
+-- containing naturals.
+decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
     let wanteds' = filter (isWanted . ctEvidence) wanteds
     let unit_wanteds = mapMaybe toNatEquality wanteds'
