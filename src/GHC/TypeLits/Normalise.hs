@@ -333,7 +333,6 @@ tryReduceGiven opts simplGivens ct = do
           runWriter $ normaliseNatEverywhere $
           ctEvPred $ ctEvidence ct
         ws' = subToPred opts ws
-        ineqs = 
     guard $
       all (\(p,_) ->
          any ((`eqType` p). ctEvPred . ctEvidence)
