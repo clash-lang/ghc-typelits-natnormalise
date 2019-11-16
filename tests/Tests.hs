@@ -1,18 +1,19 @@
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE ConstraintKinds     #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE TypeOperators       #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
-{-# LANGUAGE Rank2Types          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE CPP                       #-}
+{-# LANGUAGE ConstraintKinds           #-}
+{-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE NoImplicitPrelude         #-}
+{-# LANGUAGE PolyKinds                 #-}
+{-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TypeApplications          #-}
+{-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE TypeOperators             #-}
 
 #if __GLASGOW_HASKELL__ >= 805
-{-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE NoStarIsType              #-}
 #endif
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
@@ -130,7 +131,7 @@ tail' = tail
 -- >>> init (1:>2:>3:>Nil)
 -- <1,2>
 init :: Vec (n + 1) a -> Vec n a
-init (_ :> Nil)      = Nil
+init (_ :> Nil)     = Nil
 init (x :> y :> ys) = x :> init (y :> ys)
 
 init' :: (1 <= m) => Vec m a -> Vec (m-1) a
@@ -555,3 +556,21 @@ throws v xs = do
       if all (`isInfixOf` msg) xs
          then return ()
          else assertFailure msg
+
+showFin :: forall n. KnownNat n => Fin n -> String
+showFin f = mconcat [
+  show (finToInt f)
+  , "/"
+  , show (natVal (Proxy :: Proxy n))
+  ]
+
+finToInt :: Fin n -> Int
+finToInt FZ      = 0
+finToInt (FS fn) = finToInt fn + 1
+
+predFin :: Fin (n + 2) -> Fin (n + 1)
+predFin (FS fn) = fn
+predFin FZ      = FZ
+
+showSucPred :: KnownNat (n + 2) => Fin (n + 2) -> String
+showSucPred = showFin .  FS . predFin
