@@ -253,6 +253,7 @@ normalisePlugin opts = tracePlugin "ghc-typelits-natnormalise"
            , tcPluginSolve = decideEqualSOP opts
            , tcPluginStop  = const (return ())
            }
+newtype OrigCt = OrigCt { runOrigCt :: Ct }
 
 decideEqualSOP
   :: Opts
@@ -293,13 +294,19 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
 #if MIN_VERSION_ghc(8,4,0)
     let simplGivens = givens ++ flattenGivens givens
+        subst = fst $ unzip $ TcPluginM.mkSubst' givens
+        wanteds0 = map (\ct -> (OrigCt ct,
+                                TcPluginM.substCt subst ct
+                                )
+                       ) $ flattenGivens wanteds
 #else
+    let wanteds0 = map (\ct -> (OrigCt ct, ct)) wanteds
     simplGivens <- mapM zonkCt givens
 #endif
     let wanteds' = filter (isWanted . ctEvidence) wanteds
-    let unit_wanteds = mapMaybe toNatEquality wanteds'
-        nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence)  $
-                filter (isWanted . ctEvidence) wanteds
+        unit_wanteds = mapMaybe toNatEquality wanteds'
+        nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence.snd)
+                 $ filter (isWanted. ctEvidence.snd) wanteds0
     done <- tcPluginIO $ readIORef gen'd
     let redGs = reduceGivens opts done simplGivens
         newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
@@ -308,7 +315,7 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     reducible_wanteds
       <- catMaybes <$>
             mapM
-              (\ct -> fmap (ct,) <$>
+              (\(origCt, ct) -> fmap (runOrigCt origCt,) <$>
                   reduceNatConstr (simplGivens ++ redGivens) ct
               )
             nonEqs
@@ -322,10 +329,10 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
         let unit_givens = mapMaybe toNatEquality simplGivens
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
-        reds <- forM reducible_wanteds $ \(ct,(term, ws, w)) -> do
-          wants <- fmap fst $ evSubtPreds ct $ subToPred opts ws
-          let w' = mkNonCanonical' (ctLoc ct) <$> w
-          return ((term, ct), maybe id (:) w' wants)
+        reds <- forM reducible_wanteds $ \(origCt,(term, ws, w)) -> do
+          wants <- fmap fst $ evSubtPreds origCt $ subToPred opts ws
+          let w' = mkNonCanonical' (ctLoc origCt) <$> w
+          return ((term, origCt), maybe id (:) w' wants)
         case sr of
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
@@ -381,9 +388,9 @@ reduceNatConstr givens ct =  do
       case find ((`eqType` pred') .ctEvPred . ctEvidence) givens of
         Nothing -> do
           want <- newWanted (ctLoc ct) pred'
-          let ev = toReducedDict want pred'
+          let ev = toReducedDict want pred0
           return (ev, Just want)
-        Just c -> return (ctEvTerm $ ctEvidence c, Nothing)
+        Just c -> return (toReducedDict (ctEvidence c) pred0, Nothing)
     return (ev, tests, mwant)
 
 toReducedDict :: CtEvidence -> PredType -> EvTerm

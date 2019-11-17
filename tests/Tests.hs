@@ -576,16 +576,21 @@ predFin FZ      = FZ
 showSucPred :: KnownNat (n + 2) => Fin (n + 2) -> String
 showSucPred = showFin .  FS . predFin
 
-class Up env n where
+class Up env (n :: Nat) where
   up :: env -> Fin n -> Fin (n + 1)
 
-class Down env n where
+class Down env (n :: Nat) where
   down :: env -> Fin n -> Fin (n - 1)
 
-class ShowWith env n where
+class ShowWith env (n :: Nat) where
   showWith :: env -> Fin n -> String
 
 showDownUp
   :: (Up env n, Down env (n + 1), ShowWith env n)
   => env -> Fin n -> String
 showDownUp env fn = showWith env $ down env $ up env fn
+
+showDownUp'
+  :: (Up env n, Down env (n + 1), KnownNat n)
+  => env -> Fin n -> String
+showDownUp' env fn = showFin $ down env $ up env fn
