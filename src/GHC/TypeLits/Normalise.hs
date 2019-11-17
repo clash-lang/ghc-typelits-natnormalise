@@ -323,7 +323,11 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     if null unit_wanteds && null reducible_wanteds
     then return $ TcPluginOk [] []
     else do
-        redWants <- fmap concat $ forM redGs $ \(ct, (_,_, ws)) -> forM ws $
+        -- Since reducible wanteds also can have some negation/subtraction
+        -- subterms, we have to make sure appropriate inequalities to hold.
+        -- Here, we generate such additional inequalities for reduction
+        -- that is to be added to new [W]anteds.
+        ineqForRedWants <- fmap concat $ forM redGs $ \(ct, (_,_, ws)) -> forM ws $
           fmap (mkNonCanonical' (ctLoc ct)) . newWanted (ctLoc ct)
         tcPluginIO $
           modifyIORef' gen'd $ union (fromList newlyDone)
@@ -338,7 +342,7 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
                 (solved',newWanteds) = second concat (unzip $ simpld ++ reds)
-            return (TcPluginOk solved' $ newWanteds ++ redWants)
+            return (TcPluginOk solved' $ newWanteds ++ ineqForRedWants)
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
