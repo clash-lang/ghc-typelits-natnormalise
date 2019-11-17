@@ -18,6 +18,7 @@
 #endif
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -dcore-lint #-}
 
 import GHC.TypeLits
 import Unsafe.Coerce
