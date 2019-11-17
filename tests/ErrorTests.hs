@@ -20,7 +20,6 @@ module ErrorTests where
 
 import Data.Proxy
 import GHC.TypeLits
-import Unsafe.Coerce
 
 import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
 import Language.Haskell.TH        (litE, stringL)
