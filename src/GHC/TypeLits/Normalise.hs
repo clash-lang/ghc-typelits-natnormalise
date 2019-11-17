@@ -270,6 +270,11 @@ decideEqualSOP
 -- we can reduce given constraints like @Show (Foo (n + 2))@
 -- to its normal form @Show (Foo (2 + n))@, which is eventually
 -- useful in solving phase.
+--
+-- This helps us to solve /indirect/ constraints;
+-- without this phase, we cannot derive, e.g.,
+-- @IsVector UVector (Fin (n + 1))@ from
+-- @Unbox (1 + n)@!
 decideEqualSOP opts gen'd givens _deriveds [] = do
     done <- tcPluginIO $ readIORef gen'd
 #if MIN_VERSION_ghc(8,4,0)

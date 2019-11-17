@@ -3,6 +3,7 @@
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NoImplicitPrelude         #-}
@@ -12,6 +13,7 @@
 {-# LANGUAGE TypeApplications          #-}
 {-# LANGUAGE TypeFamilies              #-}
 {-# LANGUAGE TypeOperators             #-}
+{-# LANGUAGE UndecidableInstances      #-}
 
 #if __GLASGOW_HASKELL__ >= 805
 {-# LANGUAGE NoStarIsType              #-}
@@ -595,3 +597,25 @@ showDownUp'
   :: (Up env n, Down env (n + 1), KnownNat n)
   => env -> Fin n -> String
 showDownUp' env fn = showFin $ down env $ up env fn
+
+data family FakeUVector (n :: Nat) :: Type
+data family FakeMUVector (n :: Nat) :: Type
+type family Mutable (v :: Nat -> Type) :: Nat -> Type
+type instance Mutable FakeUVector = FakeMUVector
+
+class (IsMVector FakeMUVector n, IsVector FakeUVector n)
+   => FakeUnbox n
+class IsMVector (v :: Nat -> Type) a where
+  touchMVector :: v a -> v a
+class IsMVector (Mutable v) a => IsVector v a where
+  touchVector :: v a -> v a
+
+newtype WrapFakeVector n = WFV { unWrap :: FakeUVector (1 + n) }
+newtype WrapFakeMVector n = MWFV { unWrapM :: FakeMUVector (1 + n) }
+type instance Mutable WrapFakeVector = WrapFakeMVector
+
+-- The following two instances cannot be derived without simplification phase!
+instance FakeUnbox (n + 1) => IsVector WrapFakeVector n where
+  touchVector = WFV . touchVector . unWrap
+instance FakeUnbox (n + 1) => IsMVector WrapFakeMVector n where
+  touchMVector = MWFV . touchMVector . unWrapM
