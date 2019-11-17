@@ -4,6 +4,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NoImplicitPrelude         #-}
 {-# LANGUAGE PolyKinds                 #-}
 {-# LANGUAGE Rank2Types                #-}
@@ -574,3 +575,17 @@ predFin FZ      = FZ
 
 showSucPred :: KnownNat (n + 2) => Fin (n + 2) -> String
 showSucPred = showFin .  FS . predFin
+
+class Up env n where
+  up :: env -> Fin n -> Fin (n + 1)
+
+class Down env n where
+  down :: env -> Fin n -> Fin (n - 1)
+
+class ShowWith env n where
+  showWith :: env -> Fin n -> String
+
+showDownUp
+  :: (Up env n, Down env (n + 1), ShowWith env n)
+  => env -> Fin n -> String
+showDownUp env fn = showWith env $ down env $ up env fn
