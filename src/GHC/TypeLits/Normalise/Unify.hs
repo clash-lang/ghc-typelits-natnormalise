@@ -20,6 +20,8 @@ module GHC.TypeLits.Normalise.Unify
     CType (..)
   , CoreSOP
   , normaliseNat
+  , normaliseNatEverywhere
+  , normaliseSimplifyNat
   , reifySOP
     -- * Substitution on 'SOP' terms
   , UnifyItem (..)
@@ -51,6 +53,7 @@ import Data.Function (on)
 import Data.List     ((\\), intersect, mapAccumL, nub)
 import Data.Maybe    (fromMaybe, mapMaybe)
 import Data.Set      (Set)
+import Data.Generics (mkM, everywhereM)
 import qualified Data.Set as Set
 
 import GHC.Base               (isTrue#,(==#))
@@ -66,9 +69,9 @@ import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon, typeNatLeqTyCon)
 import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
                       coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
-                      nonDetCmpType, PredType, mkPrimEqPred)
+                      nonDetCmpType, PredType, mkPrimEqPred, typeKind)
 import TyCoRep       (Kind, Type (..), TyLit (..))
-import TysWiredIn    (boolTy, promotedTrueDataCon)
+import TysWiredIn    (boolTy, promotedTrueDataCon, typeNatKind)
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
 
@@ -111,6 +114,27 @@ normaliseNat (TyConApp tc [x,y])
   | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
   | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
 normaliseNat t = return (S [P [C (CType t)]])
+
+-- | Applies 'normaliseNat' and 'simplifySOP' to type or predicats
+--   to reduce any occurence of sub-terms
+--   of /kind/ 'GHC.TypeLits.Nat'.
+--   If the result is the same as input, returns @'Nothing'@.
+normaliseNatEverywhere
+  :: Type -> Writer [(Type, Type)] (Maybe Type)
+normaliseNatEverywhere ty
+  | typeKind ty `eqType` typeNatKind = do
+      ty' <- normaliseSimplifyNat ty
+      return $ if ty `eqType` ty' then Nothing else Just ty'
+  | otherwise = do
+      ty' <- everywhereM (mkM normaliseSimplifyNat) ty
+      return $ if ty `eqType` ty' then Nothing else Just ty'
+
+normaliseSimplifyNat :: Type -> Writer [(Type, Type)] Type
+normaliseSimplifyNat ty
+  | typeKind ty `eqType` typeNatKind = do
+      ty' <- normaliseNat ty
+      return $ reifySOP $ simplifySOP ty'
+  | otherwise = return ty
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
@@ -238,11 +262,11 @@ subtractionToPred (x,y) =
 -- made, for use when turning the substitution back into constraints.
 type CoreUnify = UnifyItem TyVar CType
 
-data UnifyItem v c = SubstItem { siVar  :: v
-                               , siSOP  :: SOP v c
+data UnifyItem v c = SubstItem { siVar :: v
+                               , siSOP :: SOP v c
                                }
-                   | UnifyItem { siLHS  :: SOP v c
-                               , siRHS  :: SOP v c
+                   | UnifyItem { siLHS :: SOP v c
+                               , siRHS :: SOP v c
                                }
   deriving Eq
 
@@ -427,13 +451,13 @@ unifiers' ct (S [p2]) (S [P [E s1 p1]]) = case collectBases p2 of
 -- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
 unifiers' ct (S [P ((I i):ps)]) (S [P [I j]]) =
   case safeDiv j i of
-    Just k  -> unifiers' ct (S [P ps]) (S [P [I k]])
-    _       -> []
+    Just k -> unifiers' ct (S [P ps]) (S [P [I k]])
+    _      -> []
 
 unifiers' ct (S [P [I j]]) (S [P ((I i):ps)]) =
   case safeDiv j i of
-    Just k  -> unifiers' ct (S [P ps]) (S [P [I k]])
-    _       -> []
+    Just k -> unifiers' ct (S [P ps]) (S [P [I k]])
+    _      -> []
 
 -- (2*a) ~ (2*b) ==> [a := b]
 -- unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
@@ -466,9 +490,9 @@ unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
   _ | null psx
     , length ps1 == length ps2
     -> case nub (concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)) of
-        []  -> unifiers'' ct (S ps1) (S ps2)
+        []                             -> unifiers'' ct (S ps1) (S ps2)
         [k] | length ps1 == length ps2 -> [k]
-        _   -> []
+        _                              -> []
     | null psx
     , isGiven (ctEvidence ct)
     -> unifiers'' ct (S ps1) (S ps2)

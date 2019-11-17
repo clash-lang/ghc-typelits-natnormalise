@@ -1,9 +1,17 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds, GADTs, KindSignatures, ScopedTypeVariables, TemplateHaskell,
-             TypeApplications, TypeFamilies, TypeOperators #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE ConstraintKinds     #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving  #-}
+{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeOperators       #-}
 
 #if __GLASGOW_HASKELL__ >= 805
-{-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE NoStarIsType        #-}
 #endif
 
 {-# OPTIONS_GHC -fdefer-type-errors #-}
@@ -180,4 +188,35 @@ test16Errors =
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
           else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
+    )]
+
+data Dict c where
+  Dict :: c => Dict c
+deriving instance Show (Dict c)
+data Boo (n :: Nat) = Boo
+
+test17 :: Show (Boo n) => Proxy n -> Boo (n - 1 + 1) -> String
+test17 = const show
+
+testProxy17 :: String
+
+testProxy17 = test17 (Proxy :: Proxy 17) Boo
+test17Errors =
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
+    )]
+
+test18 :: Show (Boo n) => Proxy n -> Boo (n + 1) -> String
+test18 = const show
+
+testProxy18 :: String
+testProxy18 = test18 (Proxy :: Proxy 7) Boo
+
+test18Errors =
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Could not deduce (Show (Boo (1 + n))) arising from a use of ‘show’"
+          else litE $ stringL "Could not deduce (Show (Boo (1 + n))) arising from a use of `show'"
     )]

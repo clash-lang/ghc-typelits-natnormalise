@@ -1,20 +1,26 @@
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE TypeOperators       #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
-{-# LANGUAGE Rank2Types          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE CPP                       #-}
+{-# LANGUAGE ConstraintKinds           #-}
+{-# LANGUAGE DataKinds                 #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE GADTs                     #-}
+{-# LANGUAGE MultiParamTypeClasses     #-}
+{-# LANGUAGE NoImplicitPrelude         #-}
+{-# LANGUAGE PolyKinds                 #-}
+{-# LANGUAGE Rank2Types                #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TypeApplications          #-}
+{-# LANGUAGE TypeFamilies              #-}
+{-# LANGUAGE TypeOperators             #-}
+{-# LANGUAGE UndecidableInstances      #-}
 
 #if __GLASGOW_HASKELL__ >= 805
-{-# LANGUAGE NoStarIsType #-}
+{-# LANGUAGE NoStarIsType              #-}
 #endif
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -dcore-lint #-}
 
 import GHC.TypeLits
 import Unsafe.Coerce
@@ -129,7 +135,7 @@ tail' = tail
 -- >>> init (1:>2:>3:>Nil)
 -- <1,2>
 init :: Vec (n + 1) a -> Vec n a
-init (_ :> Nil)      = Nil
+init (_ :> Nil)     = Nil
 init (x :> y :> ys) = x :> init (y :> ys)
 
 init' :: (1 <= m) => Vec m a -> Vec (m-1) a
@@ -401,6 +407,26 @@ instance Show (AtMost n) where
 succAtMost :: AtMost n -> AtMost (n + 1)
 succAtMost (AtMost (Proxy :: Proxy a)) = AtMost (Proxy :: Proxy a)
 
+eqReduceForward
+  :: Eq (Boo (n + 1))
+  => Dict (Eq (Boo (n + 2 - 1)))
+eqReduceForward = Dict
+
+eqReduceForwardMinusPlus
+  :: (Eq (Boo (0 + n + 1)), 1 <= n)
+  => Dict (Eq (Boo (n - 1 + 2)))
+eqReduceForwardMinusPlus = Dict
+
+eqReduceBackward
+  :: (Eq (Boo (m + 2 - 1)))
+  => Dict (Eq (Boo (m + 1)))
+eqReduceBackward = Dict
+
+eqReduceBackward'
+  :: (Eq (Boo (1 + m + 2)))
+  => Dict (Eq (Boo (m + 3)))
+eqReduceBackward' = Dict
+
 main :: IO ()
 main = defaultMain tests
 
@@ -504,7 +530,8 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
     , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
     , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
-    , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $ (testProxy15 (Proxy :: Proxy 1)) `throws` testProxy15Errors
+    , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $
+        testProxy15 (Proxy :: Proxy 1) `throws` testProxy15Errors
     , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
     , testGroup "Inequality"
       [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
@@ -513,6 +540,10 @@ tests = testGroup "ghc-typelits-natnormalise"
       , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
       , testCase "4a <= 2a" $ testProxy13 `throws` testProxy13Errors
       , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
+      , testCase "Show (Boo n) => Show (Boo (n - 1 + 1))" $
+          testProxy17 `throws` test17Errors
+      , testCase "Show (Boo n) => Show (Boo (n + 1))" $
+          testProxy18 `throws` test18Errors
       ]
     ]
   ]
@@ -529,3 +560,62 @@ throws v xs = do
       if all (`isInfixOf` msg) xs
          then return ()
          else assertFailure msg
+
+showFin :: forall n. KnownNat n => Fin n -> String
+showFin f = mconcat [
+  show (finToInt f)
+  , "/"
+  , show (natVal (Proxy :: Proxy n))
+  ]
+
+finToInt :: Fin n -> Int
+finToInt FZ      = 0
+finToInt (FS fn) = finToInt fn + 1
+
+predFin :: Fin (n + 2) -> Fin (n + 1)
+predFin (FS fn) = fn
+predFin FZ      = FZ
+
+showSucPred :: KnownNat (n + 2) => Fin (n + 2) -> String
+showSucPred = showFin .  FS . predFin
+
+class Up env (n :: Nat) where
+  up :: env -> Fin n -> Fin (n + 1)
+
+class Down env (n :: Nat) where
+  down :: env -> Fin n -> Fin (n - 1)
+
+class ShowWith env (n :: Nat) where
+  showWith :: env -> Fin n -> String
+
+showDownUp
+  :: (Up env n, Down env (n + 1), ShowWith env n)
+  => env -> Fin n -> String
+showDownUp env fn = showWith env $ down env $ up env fn
+
+showDownUp'
+  :: (Up env n, Down env (n + 1), KnownNat n)
+  => env -> Fin n -> String
+showDownUp' env fn = showFin $ down env $ up env fn
+
+data family FakeUVector (n :: Nat) :: Type
+data family FakeMUVector (n :: Nat) :: Type
+type family Mutable (v :: Nat -> Type) :: Nat -> Type
+type instance Mutable FakeUVector = FakeMUVector
+
+class (IsMVector FakeMUVector n, IsVector FakeUVector n)
+   => FakeUnbox n
+class IsMVector (v :: Nat -> Type) a where
+  touchMVector :: v a -> v a
+class IsMVector (Mutable v) a => IsVector v a where
+  touchVector :: v a -> v a
+
+newtype WrapFakeVector n = WFV { unWrap :: FakeUVector (1 + n) }
+newtype WrapFakeMVector n = MWFV { unWrapM :: FakeMUVector (1 + n) }
+type instance Mutable WrapFakeVector = WrapFakeMVector
+
+-- The following two instances cannot be derived without simplification phase!
+instance FakeUnbox (n + 1) => IsVector WrapFakeVector n where
+  touchVector = WFV . touchVector . unWrap
+instance FakeUnbox (n + 1) => IsMVector WrapFakeMVector n where
+  touchMVector = MWFV . touchMVector . unWrapM
