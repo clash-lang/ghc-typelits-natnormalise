@@ -271,22 +271,21 @@ decideEqualSOP
 -- to its normal form @Show (Foo (2 + n))@, which is eventually
 -- useful in solving phase.
 decideEqualSOP opts gen'd givens _deriveds [] = do
---     done <- tcPluginIO $ readIORef gen'd
--- #if MIN_VERSION_ghc(8,4,0)
---     let simplGivens = flattenGivens givens
--- #else
---     simplGivens <- mapM zonkCt givens
--- #endif
---     let reds =
---           filter (\(_,(_,_,v)) -> null v || negNumbers opts) $
---           reduceGivens opts done simplGivens
---         newlyDone = map (\(_,(prd, _,_)) -> CType prd) reds
---     tcPluginIO $
---       modifyIORef' gen'd $ union (fromList newlyDone)
---     newGivens <- forM reds $ \(origCt, (pred', evTerm, _)) ->
---       mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
---     return (TcPluginOk [] newGivens)
-  return (TcPluginOk [] [])
+    done <- tcPluginIO $ readIORef gen'd
+#if MIN_VERSION_ghc(8,4,0)
+    let simplGivens = flattenGivens givens
+#else
+    simplGivens <- mapM zonkCt givens
+#endif
+    let reds =
+          filter (\(_,(_,_,v)) -> null v || negNumbers opts) $
+          reduceGivens opts done simplGivens
+        newlyDone = map (\(_,(prd, _,_)) -> CType prd) reds
+    tcPluginIO $
+      modifyIORef' gen'd $ union (fromList newlyDone)
+    newGivens <- forM reds $ \(origCt, (pred', evTerm, _)) ->
+      mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
+    return (TcPluginOk [] newGivens)
 
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
