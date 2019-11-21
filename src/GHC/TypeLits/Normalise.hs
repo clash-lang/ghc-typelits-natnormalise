@@ -485,8 +485,8 @@ simplifyNats opts@Opts {..} eqsG eqsW =
           evs' <- maybe evs (:evs) <$> evMagic ct knW (subToPred opts k)
           simples subst evs' leqsG' xs eqs'
 
-        Just (False,_) -> return (Impossible (fst eq))
-        Nothing
+        Just (False,_) | null k -> return (Impossible (fst eq))
+        _
           -- This inequality is either a given constraint, or it is a wanted
           -- constraint, which in normal form is equal to another given
           -- constraint, hence it can be solved.
