@@ -178,7 +178,7 @@ import Text.Read           (readMaybe)
 #if MIN_VERSION_ghc(8,5,0)
 import CoreSyn    (Expr (..))
 #endif
-import Outputable (Outputable (..), (<+>), ($$), text, showSDocUnsafe)
+import Outputable (Outputable (..), (<+>), ($$), text)
 import Plugins    (Plugin (..), defaultPlugin)
 #if MIN_VERSION_ghc(8,6,0)
 import Plugins    (purePlugin)
@@ -194,9 +194,11 @@ import TcPluginM  (zonkCt)
 import TcPluginM  (TcPluginM, tcPluginTrace, tcPluginIO)
 #if MIN_VERSION_ghc(8,6,0)
 import TcRnTypes  (ctEvExpr)
+#else
+import TcRnTypes  (ctEvTerm)
 #endif
 import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   isWanted, mkNonCanonical, ctEvTerm)
+                   isWanted, mkNonCanonical)
 import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType,
                    classifyPredType, eqType, getEqPredTys, mkTyVarTy)
 import TysWiredIn (typeNatKind)
