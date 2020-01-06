@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.7.1
+* Add support for GHC 8.10.1-alpha2
+
 ## 0.7 *August 26th 2019*
 * Require KnownNat constraints when solving with constants
 

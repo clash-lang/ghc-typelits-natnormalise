@@ -63,17 +63,24 @@ import GHC.Integer.Logarithms (integerLogBase#)
 -- GHC API
 import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
-import TcRnMonad     (Ct, ctEvidence, isGiven)
-import TcRnTypes     (ctEvPred)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon, typeNatLeqTyCon)
-import Type          (EqRel (NomEq), PredTree (EqPred), TyVar, classifyPredType,
+import Type          (TyVar,
                       coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
-                      nonDetCmpType, PredType, mkPrimEqPred, typeKind)
+                      nonDetCmpType, PredType, typeKind)
 import TyCoRep       (Kind, Type (..), TyLit (..))
 import TysWiredIn    (boolTy, promotedTrueDataCon, typeNatKind)
 import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
                       unitUniqSet)
+
+#if MIN_VERSION_ghc(8,10,0)
+import Constraint (Ct,  ctEvidence, ctEvId, ctEvPred, isGiven)
+import Predicate  (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
+#else
+import TcRnMonad  (Ct, ctEvidence, isGiven)
+import TcRnTypes  (ctEvPred)
+import Type       (EqRel (NomEq), PredTree (EqPred), classifyPredType, mkPrimEqPred)
+#endif
 
 -- Internal
 import GHC.TypeLits.Normalise.SOP

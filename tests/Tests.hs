@@ -274,12 +274,12 @@ at'
 at' = at @m @(k - 1 - m)
 
 leToPlus
-  :: forall (k :: Nat) (n :: Nat) f r
+  :: forall (k :: Nat) (n :: Nat) (f :: Nat -> Type) (r :: Type)
    . (k <= n)
   => Proxy k
   -> f n
   -- ^ Argument with the @(k <= n)@ constraint
-  -> (forall m . f (m + k) -> r)
+  -> (forall (m :: Nat) . f (m + k) -> r)
   -- ^ Function with the @(n + k)@ constraint
   -> r
 leToPlus _ a f = f @ (n-k) a

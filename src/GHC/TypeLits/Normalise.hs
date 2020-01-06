@@ -192,29 +192,15 @@ import TcEvidence (evCast)
 import TcPluginM  (zonkCt)
 #endif
 import TcPluginM  (TcPluginM, tcPluginTrace, tcPluginIO)
-#if MIN_VERSION_ghc(8,6,0)
-import TcRnTypes  (ctEvExpr)
-#else
-import TcRnTypes  (ctEvTerm)
-#endif
-import TcRnTypes  (Ct, TcPlugin (..), TcPluginResult(..), ctEvidence, ctEvPred,
-                   isWanted, mkNonCanonical)
-import Type       (EqRel (NomEq), Kind, PredTree (EqPred), PredType,
-                   classifyPredType, eqType, getEqPredTys, mkTyVarTy)
+import Type       (Kind, PredType, eqType, mkTyVarTy)
 import TysWiredIn (typeNatKind)
 
 import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
                    mkNomReflCo, mkUnivCo)
 import TcPluginM  (newCoercionHole, newFlexiTyVar, tcLookupClass)
-import TcRnTypes
-  (CtEvidence (..), CtLoc, TcEvDest (..), ctEvLoc, ctLoc, ctLocSpan, isGiven,
-   setCtLoc, setCtLocSpan)
-#if MIN_VERSION_ghc(8,2,0)
-import TcRnTypes  (ShadowInfo (WDeriv))
-#endif
+import TcRnTypes  (TcPlugin (..), TcPluginResult(..))
 import TyCoRep    (UnivCoProvenance (..))
-import Type       (mkClassPred, mkPrimEqPred)
-import TcType     (typeKind, isEqPred)
+import TcType     (isEqPred)
 import TyCoRep    (Type (..))
 import TcTypeNats (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                    typeNatSubTyCon)
@@ -223,8 +209,51 @@ import TcTypeNats (typeNatLeqTyCon)
 import TysWiredIn (promotedFalseDataCon, promotedTrueDataCon)
 import Data.IORef
 
+#if MIN_VERSION_ghc(8,10,0)
+import Constraint
+  (Ct, CtEvidence (..), CtLoc, TcEvDest (..), ctEvidence, ctEvLoc, ctEvPred,
+   ctLoc, ctLocSpan, isGiven, isWanted, mkNonCanonical, setCtLoc, setCtLocSpan)
+import Predicate
+  (EqRel (NomEq), Pred (EqPred), classifyPredType, getEqPredTys, mkClassPred,
+   mkPrimEqPred)
+import Type (typeKind)
+#else
+import TcRnTypes
+  (Ct, CtEvidence (..), CtLoc, TcEvDest (..), ctEvidence, ctEvLoc, ctEvPred,
+   ctLoc, ctLocSpan, isGiven, isWanted, mkNonCanonical, setCtLoc, setCtLocSpan)
+import TcType (typeKind)
+import Type
+  (EqRel (NomEq), PredTree (EqPred), classifyPredType, getEqPredTys, mkClassPred,
+   mkPrimEqPred)
+#endif
+
+#if MIN_VERSION_ghc(8,10,0)
+import Constraint (ctEvExpr)
+#elif MIN_VERSION_ghc(8,6,0)
+import TcRnTypes  (ctEvExpr)
+#else
+import TcRnTypes  (ctEvTerm)
+#endif
+
+#if MIN_VERSION_ghc(8,2,0)
+#if MIN_VERSION_ghc(8,10,0)
+import Constraint (ShadowInfo (WDeriv))
+#else
+import TcRnTypes  (ShadowInfo (WDeriv))
+#endif
+#endif
+
+#if MIN_VERSION_ghc(8,10,0)
+import TcType (isEqPrimPred)
+#endif
+
 -- internal
 import GHC.TypeLits.Normalise.Unify
+
+#if !MIN_VERSION_ghc(8,10,0)
+isEqPrimPred :: PredType -> Bool
+isEqPrimPred = isEqPred
+#endif
 
 -- | To use the plugin, add
 --
@@ -312,7 +341,7 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
 #endif
     let wanteds' = filter (isWanted . ctEvidence) wanteds
         unit_wanteds = mapMaybe toNatEquality wanteds'
-        nonEqs = filter (not . isEqPred . ctEvPred . ctEvidence.snd)
+        nonEqs = filter (not . (\p -> isEqPred p || isEqPrimPred p) . ctEvPred . ctEvidence.snd)
                  $ filter (isWanted. ctEvidence.snd) wanteds0
     done <- tcPluginIO $ readIORef gen'd
     let redGs = reduceGivens opts done simplGivens
@@ -362,7 +391,7 @@ reduceGivens opts done givens =
         , let ev = ctEvidence ct
               prd = ctEvPred ev
         , isGiven ev
-        , not $ isEqPred prd
+        , not $ (\p -> isEqPred p || isEqPrimPred p) prd
         ]
   in filter
       (\(_, (prd, _, _)) ->
