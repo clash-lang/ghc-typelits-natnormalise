@@ -26,6 +26,7 @@ module GHC.TypeLits.Normalise.Unify
     -- * Substitution on 'SOP' terms
   , UnifyItem (..)
   , CoreUnify
+  , substSOP
   , substsSOP
   , substsSubst
     -- * Find unifiers
@@ -276,7 +277,7 @@ data UnifyItem v c = SubstItem { siVar :: v
                    | UnifyItem { siLHS :: SOP v c
                                , siRHS :: SOP v c
                                }
-  deriving Eq
+  deriving (Eq,Ord)
 
 instance (Outputable v, Outputable c) => Outputable (UnifyItem v c) where
   ppr (SubstItem {..}) = ppr siVar <+> text " := " <+> ppr siSOP

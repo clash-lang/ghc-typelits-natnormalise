@@ -34,6 +34,7 @@ import Control.Exception
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import AmbTests
 import ErrorTests
 
 data Vec :: Nat -> Type -> Type where
@@ -90,6 +91,11 @@ addUNat :: UNat n -> UNat m -> UNat (n + m)
 addUNat UZero     y     = y
 addUNat x         UZero = x
 addUNat (USucc x) y     = USucc (addUNat x y)
+
+subUNat :: UNat (m+n) -> UNat n -> UNat m
+subUNat x         UZero     = x
+subUNat (USucc x) (USucc y) = subUNat x y
+subUNat UZero     _         = error "subUNat: impossible: 0 + (n + 1) ~ 0"
 
 -- | Multiply two singleton natural numbers
 --
@@ -297,6 +303,28 @@ predBNat (B1 a) = case a of
   BT -> BT
   a' -> B0 a'
 predBNat (B0 x)  = B1 (predBNat x)
+
+succBNat :: BNat n -> BNat (n+1)
+succBNat BT     = B1 BT
+succBNat (B0 a) = B1 a
+succBNat (B1 a) = B0 (succBNat a)
+
+stripZeros :: BNat n -> BNat n
+stripZeros BT      = BT
+stripZeros (B1 x)  = B1 (stripZeros x)
+stripZeros (B0 BT) = BT
+stripZeros (B0 x)  = case stripZeros x of
+  BT -> BT
+  k  -> B0 k
+
+log2BNat :: BNat (2^n) -> BNat n
+#if __GLASGOW_HASKELL__ >= 802
+log2BNat BT = error "log2BNat: log2(0) not defined"
+#endif
+log2BNat (B1 x) = case stripZeros x of
+  BT -> BT
+  _  -> error "log2BNat: impossible: 2^n ~ 2x+1"
+log2BNat (B0 x) = succBNat (log2BNat x)
 
 proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
 proxyInEq1 = proxyInEq
