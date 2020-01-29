@@ -718,10 +718,13 @@ haveSmaller _ _ = []
 -- | Make the `b` of a given `a <= b` bigger
 haveBigger :: IneqRule
 haveBigger want have
-  | (_,S vs,True) <- want
+  | (_ ,S vs,True) <- want
   , (as,S bs,True) <- have
   , let vs' = vs \\ bs
   , not (null vs')
+  -- Ensure that we're actually making the RHS larger
+  , Just (True, cs) <- runWriterT (isNatural (S vs'))
+  , null cs
   -- want : a <= x + 1
   -- have : y <= x
   --

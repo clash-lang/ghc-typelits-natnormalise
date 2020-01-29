@@ -544,6 +544,7 @@ tests = testGroup "ghc-typelits-natnormalise"
           testProxy17 `throws` test17Errors
       , testCase "Show (Boo n) => Show (Boo (n + 1))" $
           testProxy18 `throws` test18Errors
+      , testCase "1 <= m, m <= rp implies 1 <= rp - m" $ (testProxy19 (Proxy @ 1) (Proxy @ 1)) `throws` test19Errors
       ]
     ]
   ]
