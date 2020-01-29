@@ -220,3 +220,17 @@ test18Errors =
           then litE $ stringL "Could not deduce (Show (Boo (1 + n))) arising from a use of ‘show’"
           else litE $ stringL "Could not deduce (Show (Boo (1 + n))) arising from a use of `show'"
     )]
+
+test19f :: (1 <= n)
+  => Proxy n -> Proxy n
+test19f = id
+
+testProxy19 :: (1 <= m, m <= rp)
+  => Proxy m
+  -> Proxy rp
+  -> Proxy (rp - m)
+  -> Proxy (rp - m)
+testProxy19 _ _ = test19f
+
+test19Errors =
+  ["Could not deduce: (1 <=? (rp - m)) ~ 'True"]
