@@ -208,19 +208,6 @@ test17Errors =
           else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
     )]
 
-test18 :: Show (Boo n) => Proxy n -> Boo (n + 1) -> String
-test18 = const show
-
-testProxy18 :: String
-testProxy18 = test18 (Proxy :: Proxy 7) Boo
-
-test18Errors =
-  [$(do localeEncoding <- runIO (getLocaleEncoding)
-        if textEncodingName localeEncoding == textEncodingName utf8
-          then litE $ stringL "Could not deduce (Show (Boo (1 + n))) arising from a use of ‘show’"
-          else litE $ stringL "Could not deduce (Show (Boo (1 + n))) arising from a use of `show'"
-    )]
-
 test19f :: (1 <= n)
   => Proxy n -> Proxy n
 test19f = id

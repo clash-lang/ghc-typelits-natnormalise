@@ -369,10 +369,9 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
         let unit_givens = mapMaybe toNatEquality simplGivens
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
-        reds <- forM reducible_wanteds $ \(origCt,(term, ws, w)) -> do
+        reds <- forM reducible_wanteds $ \(origCt,(term, ws)) -> do
           wants <- fmap fst $ evSubtPreds origCt $ subToPred opts ws
-          let w' = mkNonCanonical' (ctLoc origCt) <$> w
-          return ((term, origCt), maybe id (:) w' wants)
+          return ((term, origCt), wants)
         case sr of
           Simplified evs -> do
             let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
@@ -419,19 +418,16 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: [Ct] -> Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)], Maybe CtEvidence))
+reduceNatConstr :: [Ct] -> Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)]))
 reduceNatConstr givens ct =  do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere pred0
-  forM mans $ \pred' -> do
-    (ev, mwant) <-
+  case mans of
+    Nothing -> return Nothing
+    Just pred' -> do
       case find ((`eqType` pred') .ctEvPred . ctEvidence) givens of
-        Nothing -> do
-          want <- newWanted (ctLoc ct) pred'
-          let ev = toReducedDict want pred0
-          return (ev, Just want)
-        Just c -> return (toReducedDict (ctEvidence c) pred0, Nothing)
-    return (ev, tests, mwant)
+        Nothing -> return Nothing
+        Just c  -> return (Just (toReducedDict (ctEvidence c) pred0, tests))
 
 toReducedDict :: CtEvidence -> PredType -> EvTerm
 toReducedDict ct pred' =
