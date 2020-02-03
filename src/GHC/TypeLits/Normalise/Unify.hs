@@ -40,13 +40,14 @@ module GHC.TypeLits.Normalise.Unify
   , ineqToSubst
   , subtractionToPred
   , instantSolveIneq
+  , solvedInEqSmallestConstraint
     -- * Properties
   , isNatural
   )
 where
 
 -- External
-import Control.Arrow (second)
+import Control.Arrow (first, second)
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Writer.Strict
 import Data.Function (on)
@@ -612,7 +613,7 @@ solveIneq
   -- ^ Inequality we want to solve
   -> Ineq
   -- ^ Given/proven inequality
-  -> Maybe Bool
+  -> WriterT (Set CType) Maybe Bool
   -- ^ Solver result
   --
   -- * /Nothing/: exhausted solver steps
@@ -621,18 +622,45 @@ solveIneq
   --
   -- * /Just False/: solver is unable to solve inequality, note that this does
   -- __not__ mean the wanted inequality does not hold.
-solveIneq 0 _ _ = Nothing
+solveIneq 0 _ _ = noRewrite
 solveIneq k want@(_,_,True) have@(_,_,True)
   | want == have
-  = Just True
-  | null solved
-  = Nothing
+  = pure True
   | otherwise
-  = Just (or solved)
-  where
-    solved = mapMaybe (uncurry (solveIneq (k - 1))) new
-    new    = concatMap (\f -> f want have) ineqRules
-solveIneq _ _ _ = Just False
+  = do
+    let -- Apply all the rules, and get all the successful ones
+        new     = mapMaybe (\f -> runWriterT (f want have)) ineqRules
+        -- Recurse down with all the transformed equations
+        solved  = map (first (mapMaybe (runWriterT . uncurry (solveIneq (k-1))))) new
+        -- For the results of every recursive call, find the one that yields
+        -- 'True' and has the smallest set of constraints.
+        solved1 = map (first solvedInEqSmallestConstraint) solved
+        -- Union the constraints from the corresponding rewrites with the
+        -- constraints from the recursive results
+        solved2 = map (\((b,s1),s2) -> (b,Set.union s1 s2)) solved1
+        -- From these results, again find the single result that yields 'True'
+        -- and has the smallest set of constraints.
+        solved3 = solvedInEqSmallestConstraint solved2
+    if null solved then
+      noRewrite
+    else do
+      WriterT (Just solved3)
+
+solveIneq _ _ _ = pure False
+
+-- Find the solved inequality with the fewest number of constraints
+solvedInEqSmallestConstraint :: [(Bool,Set a)] -> (Bool, Set a)
+solvedInEqSmallestConstraint = go (False, Set.empty)
+ where
+  go bs [] = bs
+  go (b,s) ((b1,s1):solved)
+    | not b && b1
+    = go (b1,s1) solved
+    | b && b1
+    , Set.size s >  Set.size s1
+    = go (b1,s1) solved
+    | otherwise
+    = go (b,s) solved
 
 -- | Try to instantly solve an inequality by using the inequality solver using
 -- @1 <=? 1 ~ True@ as the given constraint.
@@ -641,15 +669,16 @@ instantSolveIneq
   -- ^ Solving depth
   -> Ineq
   -- ^ Inequality we want to solve
-  -> Bool
-instantSolveIneq k u = case solveIneq k u (one,one,True) of
-  Just p  -> p
-  Nothing -> False
+  -> WriterT (Set CType) Maybe Bool
+instantSolveIneq k u = solveIneq k u (one,one,True)
  where
   one = S [P [I 1]]
 
 type Ineq = (CoreSOP, CoreSOP, Bool)
-type IneqRule = Ineq -> Ineq  -> [(Ineq,Ineq)]
+type IneqRule = Ineq -> Ineq  -> WriterT (Set CType) Maybe [(Ineq,Ineq)]
+
+noRewrite :: WriterT (Set CType) Maybe a
+noRewrite = WriterT Nothing
 
 ineqRules
   :: [IneqRule]
@@ -674,7 +703,7 @@ leTrans want@(a,b,le) (x,y,_)
   | S [P [I a']] <- a
   , S [P [I x']] <- x
   , x' >= a'
-  = [(want,(a,y,le))]
+  = pure [(want,(a,y,le))]
   -- want: y <=? 10 ~ True
   -- have: y <=? 9 ~ True
   --
@@ -683,8 +712,8 @@ leTrans want@(a,b,le) (x,y,_)
   | S [P [I b']] <- b
   , S [P [I y']] <- y
   , y' < b'
-  = [(want,(x,b,le))]
-leTrans _ _ = []
+  = pure [(want,(x,b,le))]
+leTrans _ _ = noRewrite
 
 -- | Monotonicity of addition
 --
@@ -698,22 +727,22 @@ plusMonotone :: IneqRule
 plusMonotone want have
   | Just want' <- sopToIneq (subtractIneq want)
   , want' /= want
-  = [(want',have)]
+  = pure [(want',have)]
   | Just have' <- sopToIneq (subtractIneq have)
   , have' /= have
-  = [(want,have')]
-plusMonotone _ _ = []
+  = pure [(want,have')]
+plusMonotone _ _ = noRewrite
 
 -- | Make the `a` of a given `a <= b` smaller
 haveSmaller :: IneqRule
 haveSmaller want have
   | (S (x:y:ys),us,True) <- have
-  = [(want,(S (x:ys),us,True))
+  = pure [(want,(S (x:ys),us,True))
     ,(want,(S (y:ys),us,True))
     ]
   | (S [P [I 1]], S [P (I _:p@(_:_))],True) <- have
-  = [(want,(S [P [I 1]],S [P p],True))]
-haveSmaller _ _ = []
+  = pure [(want,(S [P [I 1]],S [P p],True))]
+haveSmaller _ _ = noRewrite
 
 -- | Make the `b` of a given `a <= b` bigger
 haveBigger :: IneqRule
@@ -722,16 +751,19 @@ haveBigger want have
   , (as,S bs,True) <- have
   , let vs' = vs \\ bs
   , not (null vs')
-  -- Ensure that we're actually making the RHS larger
-  , Just (True, cs) <- runWriterT (isNatural (S vs'))
-  , null cs
   -- want : a <= x + 1
   -- have : y <= x
   --
   -- new want: want
   -- new have: y <= x + 1
-  = [(want,(as,mergeSOPAdd (S bs) (S vs'),True))]
-haveBigger _ _ = []
+  = do
+    -- Ensure that we're actually making the RHS larger
+    b <- isNatural (S vs')
+    if b then
+      pure [(want,(as,mergeSOPAdd (S bs) (S vs'),True))]
+    else
+      noRewrite
+haveBigger _ _ = noRewrite
 
 -- | Monotonicity of multiplication
 timesMonotone :: IneqRule
@@ -751,7 +783,7 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null ay)
   -- Pick the smallest product
   , let az = if length ax <= length ay then S [P ax] else S [P ay]
-  = [(want,(mergeSOPMul az x, mergeSOPMul az y,le))]
+  = pure [(want,(mergeSOPMul az x, mergeSOPMul az y,le))]
 
   -- want: a <=? C*b ~ True
   -- have: x <=? y ~ True
@@ -768,7 +800,7 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null by)
   -- Pick the smallest product
   , let bz = if length bx <= length by then S [P bx] else S [P by]
-  = [(want,(mergeSOPMul bz x, mergeSOPMul bz y,le))]
+  = pure [(want,(mergeSOPMul bz x, mergeSOPMul bz y,le))]
 
   -- want: a <=? b ~ True
   -- have: C*x <=? y ~ True
@@ -785,7 +817,7 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null xb)
   -- Pick the smallest product
   , let xz = if length xa <= length xb then S [P xa] else S [P xb]
-  = [((mergeSOPMul xz a, mergeSOPMul xz b,le),have)]
+  = pure [((mergeSOPMul xz a, mergeSOPMul xz b,le),have)]
 
   -- want: a <=? b ~ True
   -- have: x <=? C*y ~ True
@@ -802,9 +834,9 @@ timesMonotone want@(a,b,le) have@(x,y,_)
   , not (null yb)
   -- Pick the smallest product
   , let yz = if length ya <= length yb then S [P ya] else S [P yb]
-  = [((mergeSOPMul yz a, mergeSOPMul yz b,le),have)]
+  = pure [((mergeSOPMul yz a, mergeSOPMul yz b,le),have)]
 
-timesMonotone _ _ = []
+timesMonotone _ _ = noRewrite
 
 -- | Monotonicity of exponentiation
 powMonotone :: IneqRule
@@ -817,22 +849,22 @@ powMonotone want (x, S [P [E yS yP]],le)
         -- new want: want
         -- new have: x <=? y ~ True
         | xS == yS
-        -> [(want,(S [xP],S [yP],le))]
+        -> pure [(want,(S [xP],S [yP],le))]
         -- want: XXX
         -- have: x^2 <=? y^2 ~ True
         --
         -- new want: want
         -- new have: x <=? y ~ True
         | xP == yP
-        -> [(want,(xS,yS,le))]
+        -> pure [(want,(xS,yS,le))]
         -- want: XXX
         -- have: 2 <=? 2 ^ x ~ True
         --
         -- new want: want
         -- new have: 1 <=? x ~ True
       _ | x == yS
-        -> [(want,(S [P [I 1]],S [yP],le))]
-      _ -> []
+        -> pure [(want,(S [P [I 1]],S [yP],le))]
+      _ -> noRewrite
 
 powMonotone (a,S [P [E bS bP]],le) have
   = case a of
@@ -843,24 +875,24 @@ powMonotone (a,S [P [E bS bP]],le) have
         -- new want: x <=? y ~ True
         -- new have: have
         | aS == bS
-        -> [((S [aP],S [bP],le),have)]
+        -> pure [((S [aP],S [bP],le),have)]
         -- want: x^2 <=? y^2 ~ True
         -- have: XXX
         --
         -- new want: x <=? y ~ True
         -- new have: have
         | aP == bP
-        -> [((aS,bS,le),have)]
+        -> pure [((aS,bS,le),have)]
         -- want: 2 <=? 2 ^ x ~ True
         -- have: XXX
         --
         -- new want: 1 <=? x ~ True
         -- new have: XXX
       _ | a == bS
-        -> [((S [P [I 1]],S [bP],le),have)]
-      _ -> []
+        -> pure [((S [P [I 1]],S [bP],le),have)]
+      _ -> noRewrite
 
-powMonotone _ _ = []
+powMonotone _ _ = noRewrite
 
 -- | Try to get the power-of-2 factors, and apply the monotonicity of
 -- exponentiation rule.
@@ -878,7 +910,7 @@ pow2MonotoneSpecial (a,b,le) have
   -- new have: have
   | Just a' <- facSOP 2 a
   , Just b' <- facSOP 2 b
-  = [((a',b',le),have)]
+  = pure [((a',b',le),have)]
 pow2MonotoneSpecial want (x,y,le)
   -- want: XXX
   -- have:4 * 4^x <=? 8^x ~ True
@@ -889,8 +921,8 @@ pow2MonotoneSpecial want (x,y,le)
   -- new have: 2+2*x <=? 3*x ~ True
   | Just x' <- facSOP 2 x
   , Just y' <- facSOP 2 y
-  = [(want,(x',y',le))]
-pow2MonotoneSpecial _ _ = []
+  = pure [(want,(x',y',le))]
+pow2MonotoneSpecial _ _ = noRewrite
 
 -- | Get the power of /N/ factors of a SOP term
 facSOP

@@ -427,6 +427,18 @@ eqReduceBackward'
   => Dict (Eq (Boo (m + 3)))
 eqReduceBackward' = Dict
 
+proxyInEq8fun
+  :: (1 <= (n + CLog 2 n))
+  => Proxy n
+  -> Proxy n
+proxyInEq8fun = id
+
+proxyInEq8
+  :: (1 <= n, KnownNat (CLog 2 n))
+  => Proxy n
+  -> Proxy n
+proxyInEq8 = proxyInEq8fun
+
 main :: IO ()
 main = defaultMain tests
 
@@ -520,6 +532,9 @@ tests = testGroup "ghc-typelits-natnormalise"
       "Proxy"
     , testCase "1 <= G a implies F a <= G a * F a" $
       show (proxyInEqImplication4 (Proxy :: Proxy 2)) @?=
+      "Proxy"
+    , testCase "`(1 <= n)` only implies `(1 <= n + F n)` when `KnownNat (F n)`" $
+      show (proxyInEq8 (Proxy :: Proxy 2)) @?=
       "Proxy"
     ]
   , testGroup "errors"
