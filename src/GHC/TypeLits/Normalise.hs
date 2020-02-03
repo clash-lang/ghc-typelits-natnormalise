@@ -511,21 +511,25 @@ simplifyNats opts@Opts {..} eqsG eqsW =
           simples subst evs' leqsG' xs eqs'
 
         Just (False,_) | null k -> return (Impossible (fst eq))
-        _
-          -- This inequality is either a given constraint, or it is a wanted
-          -- constraint, which in normal form is equal to another given
-          -- constraint, hence it can be solved.
-          | or (mapMaybe (solveIneq depth u) ineqs) ||
-          -- Or the above, but with valid substitutions applied to the wanted.
-            or (mapMaybe (solveIneq depth uS) ineqs) ||
-          -- Or it is an inequality that can be instantly solved, such as
-          -- `1 <= x^y`
-            instantSolveIneq depth u
-          -> do
-            evs' <- maybe evs (:evs) <$> evMagic ct empty (subToPred opts k)
-            simples subst evs' leqsG' xs eqs'
-          | otherwise
-          -> simples subst evs leqsG (eq:xs) eqs'
+        _ -> do
+          let solvedIneq = mapMaybe runWriterT
+                 -- it is an inequality that can be instantly solved, such as
+                 -- `1 <= x^y`
+                 -- OR
+                (instantSolveIneq depth u:
+                -- This inequality is either a given constraint, or it is a wanted
+                -- constraint, which in normal form is equal to another given
+                -- constraint, hence it can be solved.
+                -- OR
+                map (solveIneq depth u) ineqs ++
+                -- The above, but with valid substitutions applied to the wanted.
+                map (solveIneq depth uS) ineqs)
+              smallest = solvedInEqSmallestConstraint solvedIneq
+          case smallest of
+            (True,kW) -> do
+              evs' <- maybe evs (:evs) <$> evMagic ct kW (subToPred opts k)
+              simples subst evs' leqsG' xs eqs'
+            _ -> simples subst evs leqsG (eq:xs) eqs'
 
     eqToLeq x y = [(x,y,True),(y,x,True)]
     substLeq s (x,y,b) = (substsSOP s x, substsSOP s y, b)
