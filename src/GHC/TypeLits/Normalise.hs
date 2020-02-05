@@ -195,9 +195,8 @@ import TcPluginM  (TcPluginM, tcPluginTrace, tcPluginIO)
 import Type       (Kind, PredType, eqType, mkTyVarTy)
 import TysWiredIn (typeNatKind)
 
-import Coercion   (CoercionHole, Role (..), mkForAllCos, mkHoleCo, mkInstCo,
-                   mkNomReflCo, mkUnivCo)
-import TcPluginM  (newCoercionHole, newFlexiTyVar, tcLookupClass)
+import Coercion   (CoercionHole, Role (..), mkUnivCo)
+import TcPluginM  (newCoercionHole, tcLookupClass)
 import TcRnTypes  (TcPlugin (..), TcPluginResult(..))
 import TyCoRep    (UnivCoProvenance (..))
 import TcType     (isEqPred)
@@ -373,7 +372,7 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducible_wanteds $ \(origCt,(term, ws)) -> do
-          wants <- fmap fst $ evSubtPreds origCt $ subToPred opts ws
+          wants <- evSubtPreds origCt $ subToPred opts ws
           return ((term, origCt), wants)
         case sr of
           Simplified evs -> do
@@ -658,7 +657,7 @@ unifyItemToPredType ui =
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
 
-evSubtPreds :: Ct -> [(PredType,Kind)] -> TcPluginM ([Ct], [CoercionHole])
+evSubtPreds :: Ct -> [(PredType,Kind)] -> TcPluginM [Ct]
 evSubtPreds ct preds = do
   let predTypes = map fst preds
 #if MIN_VERSION_ghc(8,4,1)
@@ -666,34 +665,21 @@ evSubtPreds ct preds = do
 #else
   holes <- replicateM (length preds) newCoercionHole
 #endif
-  return (zipWith (unifyItemToCt (ctLoc ct)) predTypes holes, holes)
+  return (zipWith (unifyItemToCt (ctLoc ct)) predTypes holes)
 
 evMagic :: Ct -> Set CType -> [(PredType,Kind)] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
 evMagic ct knW preds = case classifyPredType $ ctEvPred $ ctEvidence ct of
   EqPred NomEq t1 t2 -> do
-    (holeWanteds, holes) <- evSubtPreds ct preds
-    let predKinds = map snd preds
+    holeWanteds <- evSubtPreds ct preds
     knWanted <- mapM (mkKnWanted ct) (toList knW)
     let newWant = knWanted ++ holeWanteds
-        ctEv      = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
-#if MIN_VERSION_ghc(8,4,1)
-        holeEvs   = map mkHoleCo holes
-#else
-        predTypes = map fst preds
-        holeEvs   = zipWith (\h p -> uncurry (mkHoleCo h Nominal) (getEqPredTys p)) holes predTypes
-#endif
-    forallEv <- mkForAllCos <$> mapM mkCoVar predKinds <*> pure ctEv
-    let finalEv = foldl mkInstCo forallEv holeEvs
+        ctEv    = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
 #if MIN_VERSION_ghc(8,5,0)
-    return (Just ((EvExpr (Coercion finalEv), ct),newWant))
+    return (Just ((EvExpr (Coercion ctEv), ct),newWant))
 #else
-    return (Just ((EvCoercion finalEv, ct),newWant))
+    return (Just ((EvCoercion ctEv, ct),newWant))
 #endif
   _ -> return Nothing
-  where
-    mkCoVar k = (,natReflCo) <$> newFlexiTyVar k
-      where
-        natReflCo = mkNomReflCo k
 
 mkNonCanonical' :: CtLoc -> CtEvidence -> Ct
 mkNonCanonical' origCtl ev =
