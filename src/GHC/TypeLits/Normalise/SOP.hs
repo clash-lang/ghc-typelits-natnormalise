@@ -276,7 +276,7 @@ normaliseExp b@(S [P [V _]]) (S [e]) = S [P [E b e]]
 normaliseExp b@(S [P [_]]) (S [e@(P [_])]) = S [P [reduceExp (E b e)]]
 
 -- (x + 2)^2 ==> x^2 + 4xy + 4
-normaliseExp b (S [P [(I i)]]) =
+normaliseExp b (S [P [(I i)]]) | i > 0 =
   foldr1 mergeSOPMul (replicate (fromInteger i) b)
 
 -- (x + 2)^(2x) ==> (x^2 + 4xy + 4)^x
