@@ -1,7 +1,10 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.7.1
+## 0.7.1 *February 6th 2020*
 * Add support for GHC 8.10.1-alpha2
+* Fixes [#23](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/23): Can't figure out `+` commutes in some contexts on GHC 8.6.3
+* Fixes [#28](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/28): Using the solver seems to break GHC
+* Fixes [#34](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/34): inequality solver mishandles subtraction
 
 ## 0.7 *August 26th 2019*
 * Require KnownNat constraints when solving with constants
