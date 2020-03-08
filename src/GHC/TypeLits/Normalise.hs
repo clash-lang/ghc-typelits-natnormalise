@@ -183,7 +183,8 @@ import Plugins    (Plugin (..), defaultPlugin)
 #if MIN_VERSION_ghc(8,6,0)
 import Plugins    (purePlugin)
 #endif
-import PrelNames  (knownNatClassName)
+import PrelNames  (hasKey, knownNatClassName)
+import PrelNames  (eqTyConKey, heqTyConKey)
 import TcEvidence (EvTerm (..))
 #if MIN_VERSION_ghc(8,6,0)
 import TcEvidence (evCast)
@@ -192,7 +193,7 @@ import TcEvidence (evCast)
 import TcPluginM  (zonkCt)
 #endif
 import TcPluginM  (TcPluginM, tcPluginTrace, tcPluginIO)
-import Type       (Kind, PredType, eqType, mkTyVarTy)
+import Type       (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe)
 import TysWiredIn (typeNatKind)
 
 import Coercion   (CoercionHole, Role (..), mkUnivCo)
@@ -256,6 +257,11 @@ import GHC.TypeLits.Normalise.Unify
 isEqPrimPred :: PredType -> Bool
 isEqPrimPred = isEqPred
 #endif
+
+isEqPredClass :: PredType -> Bool
+isEqPredClass ty = case tyConAppTyCon_maybe ty of
+  Just tc -> tc `hasKey` eqTyConKey || tc `hasKey` heqTyConKey
+  _ -> False
 
 -- | To use the plugin, add
 --
@@ -392,7 +398,7 @@ reduceGivens opts done givens =
         , let ev = ctEvidence ct
               prd = ctEvPred ev
         , isGiven ev
-        , not $ (\p -> isEqPred p || isEqPrimPred p) prd
+        , not $ (\p -> isEqPred p || isEqPrimPred p || isEqPredClass p) prd
         ]
   in filter
       (\(_, (prd, _, _)) ->
