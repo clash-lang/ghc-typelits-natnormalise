@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.7.2 *March 9 2020*
+* Fixes [#44](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/44) infinite loop due to boxed equality
+
 ## 0.7.1 *February 6th 2020*
 * Add support for GHC 8.10.1-alpha2
 * Fixes [#23](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/23): Can't figure out `+` commutes in some contexts on GHC 8.6.3
