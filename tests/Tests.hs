@@ -340,6 +340,25 @@ proxyEq3
   -> Proxy x
 proxyEq3 _ _ x = x
 
+-- Would yield (b <=? c) ~ 'True
+proxyEq4
+  :: forall a b c
+   . (KnownNat a, c <= b, b <= a)
+  => Proxy b
+  -> Proxy c
+  -> Proxy a
+  -> Proxy (((a - b) + c) + (b - c))
+proxyEq4 = theProxy
+ where
+  theProxy
+    :: forall a b c
+     . (KnownNat (((a - b) + c) + (b - c)), c <= b, b <= a)
+    => Proxy b
+    -> Proxy c
+    -> Proxy a
+    -> Proxy (((a - b) + c) + (b - c))
+  theProxy _ _ = id
+
 proxyInEqImplication :: (2 <= (2 ^ (n + d)))
   => Proxy d
   -> Proxy n
