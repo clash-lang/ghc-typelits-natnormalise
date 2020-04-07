@@ -48,13 +48,11 @@ where
 
 -- External
 import Control.Arrow (first, second)
-import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Writer.Strict
 import Data.Function (on)
-import Data.List     ((\\), intersect, mapAccumL, nub)
-import Data.Maybe    (fromMaybe, mapMaybe)
+import Data.List     ((\\), intersect, nub)
+import Data.Maybe    (fromMaybe, mapMaybe, isJust)
 import Data.Set      (Set)
-import Data.Generics (mkM, everywhereM)
 import qualified Data.Set as Set
 
 import GHC.Base               (isTrue#,(==#))
@@ -66,6 +64,7 @@ import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
                       typeNatSubTyCon, typeNatLeqTyCon)
+import TyCon         (TyCon)
 import Type          (TyVar,
                       coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
                       nonDetCmpType, PredType, typeKind)
@@ -123,19 +122,50 @@ normaliseNat (TyConApp tc [x,y])
   | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
 normaliseNat t = return (S [P [C (CType t)]])
 
--- | Applies 'normaliseNat' and 'simplifySOP' to type or predicats
---   to reduce any occurence of sub-terms
---   of /kind/ 'GHC.TypeLits.Nat'.
---   If the result is the same as input, returns @'Nothing'@.
-normaliseNatEverywhere
-  :: Type -> Writer [(Type, Type)] (Maybe Type)
-normaliseNatEverywhere ty
-  | typeKind ty `eqType` typeNatKind = do
-      ty' <- normaliseSimplifyNat ty
-      return $ if ty `eqType` ty' then Nothing else Just ty'
-  | otherwise = do
-      ty' <- everywhereM (mkM normaliseSimplifyNat) ty
-      return $ if ty `eqType` ty' then Nothing else Just ty'
+-- | Runs writer action. If the result /Nothing/ writer actions will be
+-- discarded.
+maybeRunWriter
+  :: Monoid a
+  => Writer a (Maybe b)
+  -> Writer a (Maybe b)
+maybeRunWriter w =
+  case runWriter w of
+    (Nothing, _) -> pure Nothing
+    (b, a) -> tell a >> pure b
+
+-- | Applies 'normaliseNat' and 'simplifySOP' to type or predicates to reduce
+-- any occurrences of sub-terms of /kind/ 'GHC.TypeLits.Nat'. If the result is
+-- the same as input, returns @'Nothing'@.
+normaliseNatEverywhere :: Type -> Writer [(Type, Type)] (Maybe Type)
+normaliseNatEverywhere ty0
+  | TyConApp tc _fields <- ty0
+  , tc `elem` knownTyCons = do
+    -- Normalize under current type constructor application. 'go' skips all
+    -- known type constructors.
+    ty1M <- maybeRunWriter (go ty0)
+    let ty1 = fromMaybe ty0 ty1M
+
+    -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
+    ty2 <- normaliseSimplifyNat ty1
+    -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
+    -- TODO: probably cheaper than checking for equality here.
+    pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
+  | otherwise = go ty0
+ where
+  knownTyCons :: [TyCon]
+  knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
+
+  -- Normalize given type, but ignore all top-level
+  go :: Type -> Writer [(Type, Type)] (Maybe Type)
+  go (TyConApp tc_ fields0_) = do
+    fields1_ <- mapM (maybeRunWriter . cont) fields0_
+    if any isJust fields1_ then
+      pure (Just (TyConApp tc_ (zipWith fromMaybe fields0_ fields1_)))
+    else
+      pure Nothing
+   where
+    cont = if tc_ `elem` knownTyCons then go else normaliseNatEverywhere
+  go _ = pure Nothing
 
 normaliseSimplifyNat :: Type -> Writer [(Type, Type)] Type
 normaliseSimplifyNat ty
