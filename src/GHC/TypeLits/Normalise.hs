@@ -479,11 +479,13 @@ simplifyNats opts@Opts {..} eqsG eqsW = do
       _  -> do
         tcPluginTrace ("simplifyNats(backtrack: " ++ show (length fancyGivens) ++ ")")
                       (ppr varEqs)
-        foldr findFirstSimpliedWanted (Simplified []) <$>
-              mapM (\v -> do let eqs = v ++ eqsW
-                             tcPluginTrace "simplifyNats" (ppr eqs)
-                             simples [] [] [] [] eqs)
-              fancyGivens
+
+        allSimplified <- forM fancyGivens $ \v -> do
+          let eqs = v ++ eqsW
+          tcPluginTrace "simplifyNats" (ppr eqs)
+          simples [] [] [] [] eqs
+
+        pure (foldr findFirstSimpliedWanted (Simplified []) allSimplified)
   where
     simples :: [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
