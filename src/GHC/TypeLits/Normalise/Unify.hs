@@ -368,15 +368,20 @@ unifyNats' ct u v
        then if containsConstants u || containsConstants v
                then if u == v
                        then Win
-                       else Draw (filter diffFromConstraint (unifiers ct u v))
+                       else Draw (filter isUnifier (unifiers ct u v))
                else if u == v
                        then Win
                        else Lose
-       else Draw (filter diffFromConstraint (unifiers ct u v))
+       else Draw (filter isUnifier (unifiers ct u v))
   where
+    isUnifier unifier = diffFromConstraint unifier && mightBeNat unifier
     -- A unifier is only a unifier if differs from the original constraint
     diffFromConstraint (UnifyItem x y) = not (x == u && y == v)
     diffFromConstraint _               = True
+    -- A unifier is only a unifier if we know the substitution might be a natural.
+    mightBeNat unifier = let rhsSOP (UnifyItem _ y) = y
+                             rhsSOP (SubstItem _ y) = y
+                         in maybe True fst (runWriterT (isNatural (rhsSOP unifier)))
 
 -- | Find unifiers for two SOP terms
 --
@@ -601,9 +606,12 @@ integerLogBase _ _ = Nothing
 isNatural :: CoreSOP -> WriterT (Set CType) Maybe Bool
 isNatural (S [])           = return True
 isNatural (S [P []])       = return True
+isNatural (S [P [I i]])    = return (i >= 0 )
 isNatural (S [P (I i:ps)])
   | i >= 0    = isNatural (S [P ps])
-  | otherwise = return False
+  | otherwise = WriterT Nothing
+  -- If i is not a natural number then their sum *might* be natural,
+  -- but we simply can't be sure.
 isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
 isNatural (S [P (E s p:ps)]) = do
   sN <- isNatural s

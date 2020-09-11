@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## Unreleased
+* Fixes [#1518](https://github.com/clash-lang/clash-compiler/issues/1518)
+  Removed wrong assumption that the result of any natural multiplied with any negative integer is a non-natural.
+
 ## 0.7.2 *March 9 2020*
 * Fixes [#44](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/44) infinite loop due to boxed equality
 
