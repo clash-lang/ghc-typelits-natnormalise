@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.7.3
+## 0.7.3 *January 1st 2021*
 * Build on GHC 9.0.1-rc1
 
 ## 0.7.2 *March 9 2020*
