@@ -282,7 +282,7 @@ leToPlus
   -> (forall (m :: Nat) . f (m + k) -> r)
   -- ^ Function with the @(n + k)@ constraint
   -> r
-leToPlus _ a f = f @ (n-k) a
+leToPlus _ a f = f @(n-k) a
 
 data BNat :: Nat -> Type where
   BT :: BNat 0
@@ -576,7 +576,7 @@ tests = testGroup "ghc-typelits-natnormalise"
       , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
       , testCase "Show (Boo n) => Show (Boo (n - 1 + 1))" $
           testProxy17 `throws` test17Errors
-      , testCase "1 <= m, m <= rp implies 1 <= rp - m" $ (testProxy19 (Proxy @ 1) (Proxy @ 1)) `throws` test19Errors
+      , testCase "1 <= m, m <= rp implies 1 <= rp - m" $ (testProxy19 (Proxy @1) (Proxy @1)) `throws` test19Errors
       ]
     ]
   ]

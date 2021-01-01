@@ -60,6 +60,21 @@ import GHC.Integer            (smallInteger)
 import GHC.Integer.Logarithms (integerLogBase#)
 
 -- GHC API
+#if MIN_VERSION_ghc(9,0,0)
+import GHC.Builtin.Types (boolTy, promotedTrueDataCon, typeNatKind)
+import GHC.Builtin.Types.Literals
+  (typeNatAddTyCon, typeNatExpTyCon, typeNatLeqTyCon, typeNatMulTyCon, typeNatSubTyCon)
+import GHC.Core.Predicate (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
+import GHC.Core.TyCon (TyCon)
+import GHC.Core.Type
+  (PredType, TyVar, coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy, nonDetCmpType, typeKind)
+import GHC.Core.TyCo.Rep (Kind, Type (..), TyLit (..))
+import GHC.Tc.Plugin (TcPluginM, tcPluginTrace)
+import GHC.Tc.Types.Constraint (Ct, ctEvidence, ctEvId, ctEvPred, isGiven)
+import GHC.Types.Unique.Set
+  (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets, unitUniqSet)
+import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
+#else
 import Outputable    (Outputable (..), (<+>), ($$), text)
 import TcPluginM     (TcPluginM, tcPluginTrace)
 import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
@@ -80,6 +95,7 @@ import Predicate  (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
 import TcRnMonad  (Ct, ctEvidence, isGiven)
 import TcRnTypes  (ctEvPred)
 import Type       (EqRel (NomEq), PredTree (EqPred), classifyPredType, mkPrimEqPred)
+#endif
 #endif
 
 -- Internal

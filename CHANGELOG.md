@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.7.3
+* Build on GHC 9.0.1-rc1
+
 ## 0.7.2 *March 9 2020*
 * Fixes [#44](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/44) infinite loop due to boxed equality
 
