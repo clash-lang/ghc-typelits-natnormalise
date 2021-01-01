@@ -10,14 +10,6 @@ sudo: false
 git:
   submodules: false  # whether to recursively clone submodules
 
-notifications:
-  irc:
-    channels:
-      - "irc.freenode.org#clash-lang"
-    skip_join: true
-    template:
-      - "\x0313ghc-typelits-natnormalise\x03/\x0306%{branch}\x03 \x0314%{commit}\x03 %{build_url} %{message}"
-
 cache:
   directories:
     - $HOME/.cabal/packages
@@ -36,11 +28,11 @@ before_cache:
 
 matrix:
   include:
-    - compiler: "ghc-8.10.1"
+    - compiler: "ghc-8.10.3"
       env: HEADHACKAGE=true
-      addons: {apt: {packages: [ghc-ppa-tools,cabal-install-3.0,ghc-8.10.1], sources: [hvr-ghc]}}
-    - compiler: "ghc-8.8.1"
-      addons: {apt: {packages: [ghc-ppa-tools,cabal-install-3.0,ghc-8.8.1], sources: [hvr-ghc]}}
+      addons: {apt: {packages: [ghc-ppa-tools,cabal-install-3.2,ghc-8.10.3], sources: [hvr-ghc]}}
+    - compiler: "ghc-8.8.4"
+      addons: {apt: {packages: [ghc-ppa-tools,cabal-install-3.2,ghc-8.8.4], sources: [hvr-ghc]}}
     - compiler: "ghc-8.6.5"
       addons: {apt: {packages: [ghc-ppa-tools,cabal-install-2.4,ghc-8.6.5], sources: [hvr-ghc]}}
     - compiler: "ghc-8.4.4"

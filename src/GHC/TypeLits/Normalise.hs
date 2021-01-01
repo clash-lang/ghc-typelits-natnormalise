@@ -164,6 +164,7 @@ import Control.Monad       (replicateM)
 #endif
 import Control.Monad.Trans.Writer.Strict
 import Data.Either         (partitionEithers, rights)
+import Data.IORef
 import Data.List           (intersect, partition, stripPrefix, find)
 import Data.Maybe          (mapMaybe, catMaybes)
 import Data.Set            (Set, empty, toList, notMember, fromList, union)
@@ -175,6 +176,31 @@ import GHC.TcPluginM.Extra (flattenGivens)
 import Text.Read           (readMaybe)
 
 -- GHC API
+#if MIN_VERSION_ghc(9,0,0)
+import GHC.Builtin.Names (knownNatClassName, eqTyConKey, heqTyConKey, hasKey)
+import GHC.Builtin.Types (promotedFalseDataCon, promotedTrueDataCon, typeNatKind)
+import GHC.Builtin.Types.Literals
+  (typeNatAddTyCon, typeNatExpTyCon, typeNatLeqTyCon, typeNatMulTyCon,
+   typeNatSubTyCon)
+import GHC.Core (Expr (..))
+import GHC.Core.Coercion (CoercionHole, Role (..), mkUnivCo)
+import GHC.Core.Predicate
+  (EqRel (NomEq), Pred (EqPred), classifyPredType, getEqPredTys, mkClassPred,
+   mkPrimEqPred, isEqPred, isEqPrimPred)
+import GHC.Core.TyCo.Rep (Type (..), UnivCoProvenance (..))
+import GHC.Core.Type
+  (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe, typeKind)
+import GHC.Driver.Plugins (Plugin (..), defaultPlugin, purePlugin)
+import GHC.Tc.Plugin
+  (TcPluginM, newCoercionHole, tcLookupClass, tcPluginTrace, tcPluginIO)
+import GHC.Tc.Types (TcPlugin (..), TcPluginResult (..))
+import GHC.Tc.Types.Constraint
+  (Ct, CtEvidence (..), CtLoc, TcEvDest (..), ShadowInfo (WDeriv), ctEvidence,
+   ctLoc, ctLocSpan, isGiven, isWanted, mkNonCanonical, setCtLoc, setCtLocSpan,
+   isWantedCt, ctEvLoc, ctEvPred, ctEvExpr)
+import GHC.Tc.Types.Evidence (EvTerm (..), evCast)
+import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
+#else
 #if MIN_VERSION_ghc(8,5,0)
 import CoreSyn    (Expr (..))
 #endif
@@ -207,7 +233,6 @@ import TcTypeNats (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
 
 import TcTypeNats (typeNatLeqTyCon)
 import TysWiredIn (promotedFalseDataCon, promotedTrueDataCon)
-import Data.IORef
 
 #if MIN_VERSION_ghc(8,10,0)
 import Constraint
@@ -247,6 +272,7 @@ import TcRnTypes  (ShadowInfo (WDeriv))
 
 #if MIN_VERSION_ghc(8,10,0)
 import TcType (isEqPrimPred)
+#endif
 #endif
 
 -- internal

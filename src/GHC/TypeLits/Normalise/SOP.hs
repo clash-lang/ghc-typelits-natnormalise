@@ -73,6 +73,9 @@ is flattened to:
 x^(y*z)
 @
 -}
+
+{-# LANGUAGE CPP #-}
+
 module GHC.TypeLits.Normalise.SOP
   ( -- * SOP types
     Symbol (..)
@@ -94,7 +97,11 @@ import Data.Either (partitionEithers)
 import Data.List   (sort)
 
 -- GHC API
-import Outputable  (Outputable (..), (<+>), text, hcat, integer, punctuate)
+#if MIN_VERSION_ghc(9,0,0)
+import GHC.Utils.Outputable (Outputable (..), (<+>), text, hcat, integer, punctuate)
+#else
+import Outputable (Outputable (..), (<+>), text, hcat, integer, punctuate)
+#endif
 
 data Symbol v c
   = I Integer                 -- ^ Integer constant
