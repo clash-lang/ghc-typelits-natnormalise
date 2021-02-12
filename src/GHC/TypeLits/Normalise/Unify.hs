@@ -593,7 +593,13 @@ eqFV :: CoreSOP -> CoreSOP -> Bool
 eqFV = (==) `on` fvSOP
 
 containsConstants :: CoreSOP -> Bool
-containsConstants = any (any (\c -> case c of {(C _) -> True; _ -> False}) . unP) . unS
+containsConstants =
+  any (any symbolContainsConstant . unP) . unS
+  where
+    symbolContainsConstant c = case c of
+      C {} -> True
+      E s p -> containsConstants s || containsConstants (S [p])
+      _ -> False
 
 safeDiv :: Integer -> Integer -> Maybe Integer
 safeDiv i j
