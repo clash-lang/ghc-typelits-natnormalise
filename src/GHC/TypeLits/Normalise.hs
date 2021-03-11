@@ -186,19 +186,20 @@ import GHC.Core (Expr (..))
 import GHC.Core.Coercion (CoercionHole, Role (..), mkUnivCo)
 import GHC.Core.Predicate
   (EqRel (NomEq), Pred (EqPred), classifyPredType, getEqPredTys, mkClassPred,
-   mkPrimEqPred, isEqPred, isEqPrimPred)
+   mkPrimEqPred, isEqPred, isEqPrimPred, getClassPredTys_maybe)
 import GHC.Core.TyCo.Rep (Type (..), UnivCoProvenance (..))
 import GHC.Core.Type
   (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe, typeKind)
 import GHC.Driver.Plugins (Plugin (..), defaultPlugin, purePlugin)
 import GHC.Tc.Plugin
-  (TcPluginM, newCoercionHole, tcLookupClass, tcPluginTrace, tcPluginIO)
+  (TcPluginM, newCoercionHole, tcLookupClass, tcPluginTrace, tcPluginIO,
+   newEvVar)
 import GHC.Tc.Types (TcPlugin (..), TcPluginResult (..))
 import GHC.Tc.Types.Constraint
   (Ct, CtEvidence (..), CtLoc, TcEvDest (..), ShadowInfo (WDeriv), ctEvidence,
    ctLoc, ctLocSpan, isGiven, isWanted, mkNonCanonical, setCtLoc, setCtLocSpan,
    isWantedCt, ctEvLoc, ctEvPred, ctEvExpr)
-import GHC.Tc.Types.Evidence (EvTerm (..), evCast)
+import GHC.Tc.Types.Evidence (EvTerm (..), evCast, evId)
 import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
 #else
 #if MIN_VERSION_ghc(8,5,0)
@@ -213,17 +214,18 @@ import PrelNames  (hasKey, knownNatClassName)
 import PrelNames  (eqTyConKey, heqTyConKey)
 import TcEvidence (EvTerm (..))
 #if MIN_VERSION_ghc(8,6,0)
-import TcEvidence (evCast)
+import TcEvidence (evCast, evId)
 #endif
 #if !MIN_VERSION_ghc(8,4,0)
 import TcPluginM  (zonkCt)
 #endif
 import TcPluginM  (TcPluginM, tcPluginTrace, tcPluginIO)
-import Type       (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe)
+import Type
+  (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe)
 import TysWiredIn (typeNatKind)
 
 import Coercion   (CoercionHole, Role (..), mkUnivCo)
-import TcPluginM  (newCoercionHole, tcLookupClass)
+import TcPluginM  (newCoercionHole, tcLookupClass, newEvVar)
 import TcRnTypes  (TcPlugin (..), TcPluginResult(..))
 import TyCoRep    (UnivCoProvenance (..))
 import TcType     (isEqPred)
@@ -241,7 +243,7 @@ import Constraint
    isWantedCt)
 import Predicate
   (EqRel (NomEq), Pred (EqPred), classifyPredType, getEqPredTys, mkClassPred,
-   mkPrimEqPred)
+   mkPrimEqPred, getClassPredTys_maybe)
 import Type (typeKind)
 #else
 import TcRnTypes
@@ -250,8 +252,11 @@ import TcRnTypes
    isWantedCt)
 import TcType (typeKind)
 import Type
-  (EqRel (NomEq), PredTree (EqPred), classifyPredType, getEqPredTys, mkClassPred,
-   mkPrimEqPred)
+  (EqRel (NomEq), PredTree (EqPred), classifyPredType, mkClassPred, mkPrimEqPred,
+   getClassPredTys_maybe)
+#if MIN_VERSION_ghc(8,4,0)
+import Type (getEqPredTys)
+#endif
 #endif
 
 #if MIN_VERSION_ghc(8,10,0)
@@ -360,7 +365,7 @@ decideEqualSOP opts gen'd givens _deriveds [] = do
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
 -- containing naturals.
-decideEqualSOP opts gen'd givens  _deriveds wanteds = do
+decideEqualSOP opts gen'd givens deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
 #if MIN_VERSION_ghc(8,4,0)
     let simplGivens = givens ++ flattenGivens givens
@@ -373,8 +378,12 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
     let wanteds0 = map (\ct -> (OrigCt ct, ct)) wanteds
     simplGivens <- mapM zonkCt givens
 #endif
-    let wanteds' = filter (isWanted . ctEvidence) wanteds
-        unit_wanteds = mapMaybe toNatEquality wanteds'
+    let wanteds1 = filter (isWanted . ctEvidence) wanteds
+        -- only return solve deriveds when there are wanteds to solve
+        wanteds2 = case wanteds1 of
+                     [] -> []
+                     w  -> w ++ deriveds
+        unit_wanteds = mapMaybe toNatEquality wanteds2
         nonEqs = filter (not . (\p -> isEqPred p || isEqPrimPred p) . ctEvPred . ctEvidence.snd)
                  $ filter (isWanted. ctEvidence.snd) wanteds0
     done <- tcPluginIO $ readIORef gen'd
@@ -403,13 +412,17 @@ decideEqualSOP opts gen'd givens  _deriveds wanteds = do
         let unit_givens = mapMaybe toNatEquality simplGivens
         sr <- simplifyNats opts unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
-        reds <- forM reducible_wanteds $ \(origCt,(term, ws)) -> do
+        reds <- forM reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
           wants <- evSubtPreds origCt $ subToPred opts ws
-          return ((term, origCt), wants)
+          return ((term, origCt), wDicts ++ wants)
         case sr of
           Simplified evs -> do
-            let simpld = filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs
-                (solved',newWanteds) = second concat (unzip $ simpld ++ reds)
+            let simpld = filter (not . isGiven . ctEvidence . (\((_,x),_) -> x)) evs
+                -- Only solve derived when we solved a wanted
+                simpld1 = case filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs ++ reds of
+                            [] -> []
+                            _  -> simpld
+                (solved',newWanteds) = second concat (unzip $ simpld1 ++ reds)
             return (TcPluginOk solved' $ newWanteds ++ ineqForRedWants)
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
@@ -452,7 +465,7 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: [Ct] -> Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)]))
+reduceNatConstr :: [Ct] -> Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)], [Ct]))
 reduceNatConstr givens ct =  do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere pred0
@@ -460,8 +473,35 @@ reduceNatConstr givens ct =  do
     Nothing -> return Nothing
     Just pred' -> do
       case find ((`eqType` pred') .ctEvPred . ctEvidence) givens of
-        Nothing -> return Nothing
-        Just c  -> return (Just (toReducedDict (ctEvidence c) pred0, tests))
+        -- No existing evidence found
+        Nothing -> case getClassPredTys_maybe pred' of
+          -- Are we trying to solve a class instance?
+          Just _ -> do
+            -- Create new evidence binding for normalized class constraint
+            evVar <- newEvVar pred'
+            -- Bind the evidence to a new wanted normalized class constraint
+            let wDict = mkNonCanonical
+                          (CtWanted pred' (EvVarDest evVar)
+#if MIN_VERSION_ghc(8,2,0)
+                          WDeriv
+#endif
+                          (ctLoc ct))
+            -- Evidence for current wanted is simply the coerced binding for
+            -- the new binding
+                evCo = mkUnivCo (PluginProv "ghc-typelits-natnormalise")
+                         Representational
+                         pred' pred0
+#if MIN_VERSION_ghc(8,6,0)
+                ev = evId evVar `evCast` evCo
+#else
+                ev = EvId evVar `EvCast` evCo
+#endif
+            -- Use newly created coerced wanted as evidence, and emit the
+            -- normalized wanted as a new constraint to solve.
+            return (Just (ev, tests, [wDict]))
+          _ -> return Nothing
+        -- Use existing evidence
+        Just c  -> return (Just (toReducedDict (ctEvidence c) pred0, tests, []))
 
 toReducedDict :: CtEvidence -> PredType -> EvTerm
 toReducedDict ct pred' =
