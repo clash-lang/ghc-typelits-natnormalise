@@ -4,10 +4,12 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE FunctionalDependencies    #-}
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NoImplicitPrelude         #-}
 {-# LANGUAGE PolyKinds                 #-}
+{-# LANGUAGE RoleAnnotations           #-}
 {-# LANGUAGE Rank2Types                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE TypeApplications          #-}
@@ -297,6 +299,23 @@ predBNat (B1 a) = case a of
   BT -> BT
   a' -> B0 a'
 predBNat (B0 x)  = B1 (predBNat x)
+
+-- issue 52 begin
+type role Signal nominal representational
+data Signal (dom :: Symbol) a = a :- Signal dom a
+
+type role BitVector nominal
+newtype BitVector (n :: Nat) = BV { unsafeToNatural :: Integer }
+
+class Bundle (f :: Type -> Type) a res | f a -> res, f res -> a, a res -> f
+bundle :: Bundle f a res => res -> f a
+bundle = bundle
+
+instance Bundle (Signal dom) (a,b) (Signal dom a, Signal dom b)
+
+issue52 :: (1 <= n, KnownNat n) => (Signal dom (),Signal dom (BitVector (n-1+1))) -> Signal dom ((),BitVector n)
+issue52 = bundle
+-- issue 52 end
 
 proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
 proxyInEq1 = proxyInEq
