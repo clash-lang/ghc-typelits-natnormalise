@@ -379,18 +379,13 @@ decideEqualSOP opts gen'd givens deriveds wanteds = do
     simplGivens <- mapM zonkCt givens
 #endif
     let wanteds1 = filter (isWanted . ctEvidence) wanteds
-        -- only return solve deriveds when there are wanteds to solve
-        wanteds2 = case wanteds1 of
-                     [] -> []
-                     w  -> w ++ deriveds
-        unit_wanteds = mapMaybe toNatEquality wanteds2
-        nonEqs = filter (not . (\p -> isEqPred p || isEqPrimPred p) . ctEvPred . ctEvidence.snd)
-                 $ filter (isWanted. ctEvidence.snd) wanteds0
     done <- tcPluginIO $ readIORef gen'd
     let redGs = reduceGivens opts done simplGivens
         newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
     redGivens <- forM redGs $ \(origCt, (pred', evTerm, _)) ->
       mkNonCanonical' (ctLoc origCt) <$> newGiven (ctLoc origCt) pred' evTerm
+    let nonEqs = filter (not . (\p -> isEqPred p || isEqPrimPred p) . ctEvPred . ctEvidence . snd)
+               $ filter (isWanted . ctEvidence . snd) wanteds0
     reducible_wanteds
       <- catMaybes <$>
             mapM
@@ -398,6 +393,11 @@ decideEqualSOP opts gen'd givens deriveds wanteds = do
                   reduceNatConstr (simplGivens ++ redGivens) ct
               )
             nonEqs
+    -- only return solve deriveds when there are _reducible_ wanteds to solve
+    let wanteds2 = case reducible_wanteds of
+                     [] -> wanteds1
+                     _  -> wanteds1 ++ deriveds
+        unit_wanteds = mapMaybe toNatEquality wanteds2
     if null unit_wanteds && null reducible_wanteds
     then return $ TcPluginOk [] []
     else do
