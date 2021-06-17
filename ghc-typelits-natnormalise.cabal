@@ -67,7 +67,7 @@ library
                        GHC.TypeLits.Normalise.Unify
   build-depends:       base                >=4.9   && <5,
                        containers          >=0.5.7.1 && <0.7,
-                       ghc                 >=8.0.1 && <9.2,
+                       ghc                 >=8.0.1 && <9.4,
                        ghc-tcplugins-extra >=0.3.1,
                        transformers        >=0.5.2.0 && < 0.6
   if impl(ghc >= 9.0.0)
