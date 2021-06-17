@@ -61,9 +61,16 @@ import GHC.Integer.Logarithms (integerLogBase#)
 
 -- GHC API
 #if MIN_VERSION_ghc(9,0,0)
-import GHC.Builtin.Types (boolTy, promotedTrueDataCon, typeNatKind)
+import GHC.Builtin.Types (boolTy, promotedTrueDataCon)
 import GHC.Builtin.Types.Literals
-  (typeNatAddTyCon, typeNatExpTyCon, typeNatLeqTyCon, typeNatMulTyCon, typeNatSubTyCon)
+  (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon)
+#if MIN_VERSION_ghc(9,2,0)
+import GHC.Builtin.Types (naturalTy, promotedFalseDataCon)
+import GHC.Builtin.Types.Literals (typeNatCmpTyCon)
+#else
+import GHC.Builtin.Types (typeNatKind)
+import GHC.Builtin.Types.Literals (typeNatLeqTyCon)
+#endif
 import GHC.Core.Predicate (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
 import GHC.Core.TyCon (TyCon)
 import GHC.Core.Type
@@ -103,6 +110,11 @@ import GHC.TypeLits.Normalise.SOP
 
 -- Used for haddock
 import GHC.TypeLits (Nat)
+
+#if MIN_VERSION_ghc(9,2,0)
+typeNatKind :: Type
+typeNatKind = naturalTy
+#endif
 
 newtype CType = CType { unCType :: Type }
   deriving Outputable
@@ -304,12 +316,23 @@ ineqToSubst _
   = Nothing
 
 subtractionToPred
-  :: (Type,Type)
+  :: TyCon
+  -> (Type,Type)
   -> (PredType, Kind)
-subtractionToPred (x,y) =
-  (mkPrimEqPred (mkTyConApp typeNatLeqTyCon [y,x])
+subtractionToPred ordCond (x,y) =
+#if MIN_VERSION_ghc(9,2,0)
+  let cmpNat = mkTyConApp typeNatCmpTyCon [y,x]
+      trueTc = mkTyConApp promotedTrueDataCon []
+      falseTc = mkTyConApp promotedFalseDataCon []
+      ordCmp = mkTyConApp ordCond
+                [boolTy,cmpNat,trueTc,trueTc,falseTc]
+      predTy = mkPrimEqPred ordCmp trueTc
+   in (predTy,boolTy)
+#else
+  (mkPrimEqPred (mkTyConApp ordCond [y,x])
                 (mkTyConApp promotedTrueDataCon [])
   ,boolTy)
+#endif
 
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being

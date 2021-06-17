@@ -1,7 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.7.5
+## 0.7.5 *June 17th 2021*
 * Fixes [#52](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/50) Plugin doesn't solve inside arbitrary class constraints
+* Build on GHC 9.2.0.20210422
 
 ## 0.7.4 *February 12th 2021*
 * Fixes [#50](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/50) `x ^ C ~ y` erroneously deemed hard insoluable, a contradiction, when `C` is some type family other than +,-,*,^

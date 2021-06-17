@@ -112,7 +112,11 @@ testProxy6 :: Proxy 7
 testProxy6 = proxyFun6 (Proxy :: Proxy 7)
 
 testProxy6Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 902
+  ["Expected: Proxy 7"
+  ,"  Actual: Proxy (2 ^ k0)"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy (2 ^ k0)"
   ,"  Actual: Proxy 7"
   ]
@@ -139,31 +143,69 @@ testProxy8Errors =
   ]
 #endif
 
-proxyInEq :: (a <= b) => Proxy a -> Proxy b -> ()
+proxyInEq :: (a <= b) => Proxy (a :: Nat) -> Proxy b -> ()
 proxyInEq _ _ = ()
 
-proxyInEq' :: ((a <=? b) ~ 'False) => Proxy a -> Proxy b -> ()
+proxyInEq' :: ((a <=? b) ~ 'False) => Proxy (a :: Nat) -> Proxy b -> ()
 proxyInEq' _ _ = ()
 
 testProxy9 :: Proxy (a + 1) -> Proxy a -> ()
 testProxy9 = proxyInEq
 
 testProxy9Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat (a + 1) a) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat (a + 1) a) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'True’"
+          else litE $ stringL "with 'True"
+    )
+  ]
+#else
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘(a + 1) <=? a’ with ‘'True’"
           else litE $ stringL "Couldn't match type `(a + 1) <=? a' with 'True"
     )]
+#endif
 
 testProxy10 :: Proxy (a :: Nat) -> Proxy (a + 2) -> ()
 testProxy10 = proxyInEq'
 
 testProxy10Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat a (a + 2)) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat a (a + 2)) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'False"
+          else litE $ stringL "with 'False"
+    )
+  ]
+#else
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘a <=? (a + 2)’ with ‘'False’"
           else litE $ stringL "Couldn't match type `a <=? (a + 2)' with 'False"
     )]
+#endif
 
 testProxy11 :: Proxy (a :: Nat) -> Proxy a -> ()
 testProxy11 = proxyInEq'
@@ -179,31 +221,88 @@ testProxy12 :: Proxy (a + b) -> Proxy (a + c) -> ()
 testProxy12 = proxyInEq
 
 testProxy12Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat (a + b) (a + c)) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat (a + b) (a + c)) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'True’"
+          else litE $ stringL "with 'True"
+    )
+  ]
+#else
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘(a + b) <=? (a + c)’ with ‘'True’"
           else litE $ stringL "Couldn't match type `(a + b) <=? (a + c)' with 'True"
     )]
+#endif
 
 testProxy13 :: Proxy (4*a) -> Proxy (2*a) ->()
 testProxy13 = proxyInEq
 
 testProxy13Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat (4 * a) (2 * a)) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat (4 * a) (2 * a)) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'True’"
+          else litE $ stringL "with 'True"
+    )
+  ]
+#else
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘(4 * a) <=? (2 * a)’ with ‘'True’"
           else litE $ stringL "Couldn't match type `(4 * a) <=? (2 * a)' with 'True"
     )]
+#endif
 
 testProxy14 :: Proxy (2*a) -> Proxy (4*a) -> ()
 testProxy14 = proxyInEq'
 
 testProxy14Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat (2 * a) (4 * a)) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat (2 * a) (4 * a)) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'False"
+          else litE $ stringL "with 'False"
+    )
+  ]
+#else
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘(2 * a) <=? (4 * a)’ with ‘'False’"
           else litE $ stringL "Couldn't match type `(2 * a) <=? (4 * a)' with 'False"
     )]
+#endif
 
 type family CLog (b :: Nat) (x :: Nat) :: Nat
 type instance CLog 2 2 = 1
@@ -232,11 +331,30 @@ test16 n = case n of
   x -> FS (test16 @(n-1) (x-1))
 
 test16Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat 1 n) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat 1 n) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'True’"
+          else litE $ stringL "with 'True"
+    )
+  ]
+#else
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
           else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
     )]
+#endif
 
 data Dict c where
   Dict :: c => Dict c
@@ -249,12 +367,7 @@ test17 = const show
 testProxy17 :: String
 
 testProxy17 = test17 (Proxy :: Proxy 17) Boo
-test17Errors =
-  [$(do localeEncoding <- runIO (getLocaleEncoding)
-        if textEncodingName localeEncoding == textEncodingName utf8
-          then litE $ stringL "Couldn't match type ‘1 <=? n’ with ‘'True’"
-          else litE $ stringL "Couldn't match type `1 <=? n' with 'True"
-    )]
+test17Errors = test16Errors
 
 test19f :: (1 <= n)
   => Proxy n -> Proxy n
@@ -268,4 +381,11 @@ testProxy19 :: (1 <= m, m <= rp)
 testProxy19 _ _ = test19f
 
 test19Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [ "Could not deduce: Data.Type.Ord.OrdCond"
+  , "(CmpNat 1 (rp - m)) 'True 'True 'False"
+  , "~ 'True"
+  ]
+#else
   ["Could not deduce: (1 <=? (rp - m)) ~ 'True"]
+#endif

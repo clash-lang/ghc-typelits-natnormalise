@@ -26,6 +26,10 @@ jobs:
     strategy:
       matrix:
         include:
+          - compiler: ghc-9.2.0.20210422
+            ghc: 9.2.0.20210422
+            allow-failure: false
+            ghc-source: ghcup
           - compiler: ghc-9.0.1
             allow-failure: false
             ghc-source: ppa
@@ -205,6 +209,9 @@ jobs:
       - name: build
         run: |
           $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH all --write-ghc-environment-files=always
+      - name: tests
+        run: |
+          $CABAL v2-test $ARG_COMPILER $ARG_TESTS $ARG_BENCH all --test-show-details=direct
       - name: cabal check
         run: |
           cd ${PKGDIR_ghc_typelits_natnormalise} || false
