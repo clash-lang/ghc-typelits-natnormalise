@@ -389,3 +389,32 @@ test19Errors =
 #else
   ["Could not deduce: (1 <=? (rp - m)) ~ 'True"]
 #endif
+
+testProxy20 :: Proxy 1 -> Proxy (m ^ 2) -> ()
+testProxy20 = proxyInEq
+
+testProxy20Errors =
+#if __GLASGOW_HASKELL__ >= 902
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat 1 (m ^ 2)) 'True 'True 'False’"
+          else litE $ stringL "(CmpNat 1 (m ^ 2)) 'True 'True 'False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘'True’"
+          else litE $ stringL "with 'True"
+    )
+  ]
+#else
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘1 <=? (m ^ 2)’ with ‘'True’"
+          else litE $ stringL "Couldn't match type `1 <=? (m ^ 2)' with 'True"
+    )]
+#endif
