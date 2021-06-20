@@ -656,15 +656,6 @@ isNatural (S [P (E s p:ps)]) = do
   if sN && pN
      then isNatural (S [P ps])
      else WriterT Nothing
--- This is a quick hack, it determines that
---
--- > a^b - 1
---
--- is a natural number as long as 'a' and 'b' are natural numbers.
--- This used to assert that:
---
--- > (1 <=? a^b) ~ True
-isNatural (S [P [I (-1)],P [E s p]]) = (&&) <$> isNatural s <*> isNatural (S [p])
 -- We give up for all other products for now
 isNatural (S [P (C c:ps)]) = do
   tell (Set.singleton c)
