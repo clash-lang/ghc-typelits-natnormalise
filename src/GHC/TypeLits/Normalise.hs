@@ -192,6 +192,7 @@ import GHC.Builtin.Types (typeNatKind)
 import GHC.Builtin.Types.Literals (typeNatLeqTyCon)
 #endif
 import GHC.Core (Expr (..))
+import GHC.Core.Class (className)
 import GHC.Core.Coercion (CoercionHole, Role (..), mkUnivCo)
 import GHC.Core.Predicate
   (EqRel (NomEq), Pred (EqPred), classifyPredType, getEqPredTys, mkClassPred,
@@ -243,6 +244,7 @@ import Type
 import TysWiredIn (typeNatKind)
 
 import Coercion   (CoercionHole, Role (..), mkUnivCo)
+import Class      (className)
 import TcPluginM  (newCoercionHole, tcLookupClass, newEvVar)
 import TcRnTypes  (TcPlugin (..), TcPluginResult(..))
 import TyCoRep    (UnivCoProvenance (..))
@@ -521,7 +523,7 @@ reduceNatConstr givens ct =  do
         -- No existing evidence found
         Nothing -> case getClassPredTys_maybe pred' of
           -- Are we trying to solve a class instance?
-          Just _ -> do
+          Just (cls,_) | className cls /= knownNatClassName -> do
             -- Create new evidence binding for normalized class constraint
             evVar <- newEvVar pred'
             -- Bind the evidence to a new wanted normalized class constraint
