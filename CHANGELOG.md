@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.7.6 *June 20th 2021*
+* Do not vacuously solve `forall a b . 1 <=? a^b ~ True`
+
 ## 0.7.5 *June 17th 2021*
 * Fixes [#52](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/50) Plugin doesn't solve inside arbitrary class constraints
 * Build on GHC 9.2.0.20210422
