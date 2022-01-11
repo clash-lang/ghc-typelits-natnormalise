@@ -71,7 +71,7 @@ library
                        ghc-tcplugins-extra >=0.3.1,
                        transformers        >=0.5.2.0 && < 0.6
   if impl(ghc >= 9.0.0)
-    build-depends:     ghc-bignum >=1.0 && <1.1
+    build-depends:     ghc-bignum >=1.0 && <1.2
   else
     build-depends:     integer-gmp >=1.0 && <1.1
   hs-source-dirs:      src
