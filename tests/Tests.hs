@@ -477,6 +477,27 @@ proxyInEq8
   -> Proxy n
 proxyInEq8 = proxyInEq8fun
 
+data H2 = H2 { p :: Nat }
+
+class Q (dom :: Symbol) where
+  type G2 dom :: H2
+
+type family P (c :: H2) :: Nat where
+  P ('H2 p) = p
+
+type F2 (dom :: Symbol) = P (G2 dom)
+
+type Dom = "System"
+
+instance Q Dom where
+  type G2 Dom = 'H2 2
+
+tyFamMonotonicityFun :: (1 <= F2 dom) => Proxy (dom :: Symbol) -> ()
+tyFamMonotonicityFun _ = ()
+
+tyFamMonotonicity :: (2 <= F2 dom) => Proxy (dom :: Symbol) -> ()
+tyFamMonotonicity dom = tyFamMonotonicityFun dom
+
 main :: IO ()
 main = defaultMain tests
 
@@ -574,6 +595,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "`(1 <= n)` only implies `(1 <= n + F n)` when `KnownNat (F n)`" $
       show (proxyInEq8 (Proxy :: Proxy 2)) @?=
       "Proxy"
+    , testCase "2 <= P (G2 dom) implies 1 <= P (G2 dom)" $
+      show (tyFamMonotonicity (Proxy :: Proxy Dom)) @?=
+      "()"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
