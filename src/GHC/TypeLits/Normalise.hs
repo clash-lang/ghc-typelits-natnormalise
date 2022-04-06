@@ -414,25 +414,25 @@ decideEqualSOP opts (gen'd,ordCond) givens _deriveds [] = do
 -- containing naturals.
 decideEqualSOP opts (gen'd,ordCond) givens deriveds wanteds = do
     -- GHC 7.10.1 puts deriveds with the wanteds, so filter them out
+    let flat_wanteds0 = map (\ct -> (OrigCt ct, ct)) wanteds
 #if MIN_VERSION_ghc(8,4,0)
+    -- flattenGivens should actually be called unflattenGivens
     let simplGivens = givens ++ flattenGivens givens
         subst = fst $ unzip $ TcPluginM.mkSubst' givens
-        wanteds0 = map (\ct -> (OrigCt ct,
-                                TcPluginM.substCt subst ct
-                                )
-                       ) wanteds
+        unflattenWanted (oCt, ct) = (oCt, TcPluginM.substCt subst ct)
+        unflat_wanteds0 = map unflattenWanted flat_wanteds0
 #else
-    let wanteds0 = map (\ct -> (OrigCt ct, ct)) wanteds
+    let unflat_wanteds0 = flat_wanteds0
     simplGivens <- mapM zonkCt givens
 #endif
-    let wanteds1 = filter (isWanted . ctEvidence) wanteds
+    let unflat_wanteds1 = filter (isWanted . ctEvidence . snd) unflat_wanteds0
         -- only return solve deriveds when there are wanteds to solve
-        wanteds2 = case wanteds1 of
+        unflat_wanteds2 = case unflat_wanteds1 of
                      [] -> []
-                     w  -> w ++ deriveds
-        unit_wanteds = mapMaybe (toNatEquality ordCond) wanteds2
+                     w  -> w ++ (map (\a -> (OrigCt a,a)) deriveds)
+        unit_wanteds = mapMaybe (toNatEquality ordCond) unflat_wanteds2
         nonEqs = filter (not . (\p -> isEqPred p || isEqPrimPred p) . ctEvPred . ctEvidence.snd)
-                 $ filter (isWanted. ctEvidence.snd) wanteds0
+                 $ filter (isWanted. ctEvidence.snd) unflat_wanteds0
     done <- tcPluginIO $ readIORef gen'd
     let redGs = reduceGivens opts ordCond done simplGivens
         newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
@@ -456,7 +456,9 @@ decideEqualSOP opts (gen'd,ordCond) givens deriveds wanteds = do
           fmap (mkNonCanonical' (ctLoc ct)) . newWanted (ctLoc ct)
         tcPluginIO $
           modifyIORef' gen'd $ union (fromList newlyDone)
-        let unit_givens = mapMaybe (toNatEquality ordCond) simplGivens
+        let unit_givens = mapMaybe
+                            (toNatEquality ordCond)
+                            (map (\a -> (OrigCt a, a)) simplGivens)
         sr <- simplifyNats opts ordCond unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
@@ -728,8 +730,8 @@ subToPred Opts{..} ordCond
   | otherwise  = map (subtractionToPred ordCond)
 
 -- Extract the Nat equality constraints
-toNatEquality :: TyCon -> Ct -> Maybe (Either NatEquality NatInEquality,[(Type,Type)])
-toNatEquality ordCond ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
+toNatEquality :: TyCon -> (OrigCt, Ct) -> Maybe (Either NatEquality NatInEquality,[(Type,Type)])
+toNatEquality ordCond (OrigCt oCt, ct) = case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2
       -> go t1 t2
     _ -> Nothing
@@ -744,7 +746,7 @@ toNatEquality ordCond ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
             , isNatKind (typeKind y)
             , let (x',k1) = runWriter (normaliseNat x)
             , let (y',k2) = runWriter (normaliseNat y)
-            -> Just (Left (ct, x', y'),k1 ++ k2)
+            -> Just (Left (oCt, x', y'),k1 ++ k2)
           _ -> Nothing
 #if MIN_VERSION_ghc(9,2,0)
       | tc == ordCond
@@ -762,9 +764,9 @@ toNatEquality ordCond ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
       , let ks      = k1 ++ k2
       = case tc' of
          _ | tc' == promotedTrueDataCon
-           -> Just (Right (ct, (x', y', True)), ks)
+           -> Just (Right (oCt, (x', y', True)), ks)
          _ | tc' == promotedFalseDataCon
-           -> Just (Right (ct, (x', y', False)), ks)
+           -> Just (Right (oCt, (x', y', False)), ks)
          _ -> Nothing
 #else
       | tc == ordCond
@@ -774,9 +776,9 @@ toNatEquality ordCond ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
       , let ks      = k1 ++ k2
       = case tc' of
          _ | tc' == promotedTrueDataCon
-           -> Just (Right (ct, (x', y', True)), ks)
+           -> Just (Right (oCt, (x', y', True)), ks)
          _ | tc' == promotedFalseDataCon
-           -> Just (Right (ct, (x', y', False)), ks)
+           -> Just (Right (oCt, (x', y', False)), ks)
          _ -> Nothing
 #endif
 
@@ -785,7 +787,7 @@ toNatEquality ordCond ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
       , isNatKind (typeKind y)
       , let (x',k1) = runWriter (normaliseNat x)
       , let (y',k2) = runWriter (normaliseNat y)
-      = Just (Left (ct,x',y'),k1 ++ k2)
+      = Just (Left (oCt,x',y'),k1 ++ k2)
       | otherwise
       = Nothing
 
