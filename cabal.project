@@ -2,3 +2,8 @@ packages: ./ghc-typelits-natnormalise.cabal
 
 package ghc-typelits-natnormalise
     flags: +deverror
+
+source-repository-package
+  type: git
+  location: https://github.com/clash-lang/ghc-tcplugins-extra.git
+  tag: 8852d8ad94effa39e3400a243b21ae444df6c69e

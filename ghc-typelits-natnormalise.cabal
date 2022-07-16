@@ -49,7 +49,8 @@ extra-source-files:  README.md
                      CHANGELOG.md
 cabal-version:       >=1.10
 tested-with:         GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.4, GHC == 8.6.5,
-                     GHC == 8.8.4, GHC == 8.10.4, GHC == 9.0.2, GHC == 9.2.1
+                     GHC == 8.8.4, GHC == 8.10.7, GHC == 9.0.2, GHC == 9.2.4,
+                     GHC == 9.4.2
 
 source-repository head
   type: git
@@ -67,14 +68,18 @@ library
                        GHC.TypeLits.Normalise.Unify
   build-depends:       base                >=4.9   && <5,
                        containers          >=0.5.7.1 && <0.7,
-                       ghc                 >=8.0.1 && <9.4,
+                       ghc                 >=8.0.1 && <9.6,
                        ghc-tcplugins-extra >=0.3.1,
                        transformers        >=0.5.2.0 && < 0.6
   if impl(ghc >= 9.0.0)
-    build-depends:     ghc-bignum >=1.0 && <1.3
+    build-depends:     ghc-bignum >=1.0 && <1.4
   else
     build-depends:     integer-gmp >=1.0 && <1.1
   hs-source-dirs:      src
+  if impl(ghc >= 8.0) && impl(ghc < 9.4)
+    hs-source-dirs:    src-pre-ghc-9.4
+  if impl(ghc >= 9.4) && impl(ghc < 9.6)
+    hs-source-dirs:    src-ghc-9.4
   default-language:    Haskell2010
   other-extensions:    CPP
                        LambdaCase
@@ -85,7 +90,7 @@ library
   else
     ghc-options:         -Wall
 
-test-suite test-ghc-typelits-natnormalise
+test-suite unit-tests
   type:                exitcode-stdio-1.0
   main-is:             Tests.hs
   Other-Modules:       ErrorTests
@@ -94,6 +99,8 @@ test-suite test-ghc-typelits-natnormalise
                        tasty >= 0.10,
                        tasty-hunit >= 0.9,
                        template-haskell >= 2.11.0.0
+  if impl(ghc >= 9.4)
+    build-depends:     ghc-prim >= 0.9
   hs-source-dirs:      tests
   default-language:    Haskell2010
   other-extensions:    DataKinds
@@ -105,4 +112,4 @@ test-suite test-ghc-typelits-natnormalise
                        TypeOperators
                        ScopedTypeVariables
   if flag(deverror)
-    ghc-options:       -O0 -dcore-lint
+    ghc-options:       -dcore-lint

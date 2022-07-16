@@ -20,6 +20,9 @@ module ErrorTests where
 
 import Data.Proxy
 import GHC.TypeLits
+#if __GLASGOW_HASKELL__ >= 904
+import GHC.Types
+#endif
 
 import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
 import Language.Haskell.TH        (litE, stringL)
@@ -143,7 +146,11 @@ testProxy8Errors =
   ]
 #endif
 
+#if __GLASGOW_HASKELL__ >= 904
+proxyInEq :: ((a <= b) ~ (() :: Constraint)) => Proxy (a :: Nat) -> Proxy b -> ()
+#else
 proxyInEq :: (a <= b) => Proxy (a :: Nat) -> Proxy b -> ()
+#endif
 proxyInEq _ _ = ()
 
 proxyInEq' :: ((a <=? b) ~ 'False) => Proxy (a :: Nat) -> Proxy b -> ()
@@ -153,7 +160,9 @@ testProxy9 :: Proxy (a + 1) -> Proxy a -> ()
 testProxy9 = proxyInEq
 
 testProxy9Errors =
-#if __GLASGOW_HASKELL__ >= 902
+#if __GLASGOW_HASKELL__ >= 904
+  ["Cannot satisfy: a + 1 <= a"]
+#elif __GLASGOW_HASKELL__ >= 902
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
@@ -221,7 +230,9 @@ testProxy12 :: Proxy (a + b) -> Proxy (a + c) -> ()
 testProxy12 = proxyInEq
 
 testProxy12Errors =
-#if __GLASGOW_HASKELL__ >= 902
+#if __GLASGOW_HASKELL__ >= 904
+  ["Cannot satisfy: a + b <= a + c"]
+#elif __GLASGOW_HASKELL__ >= 902
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
@@ -250,7 +261,9 @@ testProxy13 :: Proxy (4*a) -> Proxy (2*a) ->()
 testProxy13 = proxyInEq
 
 testProxy13Errors =
-#if __GLASGOW_HASKELL__ >= 902
+#if __GLASGOW_HASKELL__ >= 904
+  ["Cannot satisfy: 4 * a <= 2 * a"]
+#elif __GLASGOW_HASKELL__ >= 902
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
@@ -331,7 +344,9 @@ test16 n = case n of
   x -> FS (test16 @(n-1) (x-1))
 
 test16Errors =
-#if __GLASGOW_HASKELL__ >= 902
+#if __GLASGOW_HASKELL__ >= 904
+  ["Cannot satisfy: 1 <= n"]
+#elif __GLASGOW_HASKELL__ >= 902
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
@@ -369,7 +384,11 @@ testProxy17 :: String
 testProxy17 = test17 (Proxy :: Proxy 17) Boo
 test17Errors = test16Errors
 
+#if __GLASGOW_HASKELL__ >= 904
+test19f :: ((1 <= n) ~ (() :: Constraint))
+#else
 test19f :: (1 <= n)
+#endif
   => Proxy n -> Proxy n
 test19f = id
 
@@ -381,7 +400,9 @@ testProxy19 :: (1 <= m, m <= rp)
 testProxy19 _ _ = test19f
 
 test19Errors =
-#if __GLASGOW_HASKELL__ >= 902
+#if __GLASGOW_HASKELL__ >= 904
+  [ "Cannot satisfy: 1 <= rp - m" ]
+#elif __GLASGOW_HASKELL__ >= 902
   [ "Could not deduce: Data.Type.Ord.OrdCond"
   , "(CmpNat 1 (rp - m)) 'True 'True 'False"
   , "~ 'True"
@@ -394,7 +415,9 @@ testProxy20 :: Proxy 1 -> Proxy (m ^ 2) -> ()
 testProxy20 = proxyInEq
 
 testProxy20Errors =
-#if __GLASGOW_HASKELL__ >= 902
+#if __GLASGOW_HASKELL__ >= 904
+  ["Cannot satisfy: 1 <= m ^ 2"]
+#elif __GLASGOW_HASKELL__ >= 902
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
