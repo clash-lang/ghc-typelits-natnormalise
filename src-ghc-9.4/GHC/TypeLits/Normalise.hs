@@ -514,6 +514,7 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
                  -- `1 <= x^y`
                  -- OR
                 (instantSolveIneq depth u:
+                instantSolveIneq depth uS:
                 -- This inequality is either a given constraint, or it is a wanted
                 -- constraint, which in normal form is equal to another given
                 -- constraint, hence it can be solved.
