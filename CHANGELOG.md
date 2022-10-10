@@ -1,7 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## Unreleased
+## 0.7.7 *October 10th 2022*
 * Solve unflattened wanteds instead of the wanteds passed to the plugin. Fixes [#1901]https://github.com/clash-lang/clash-compiler/issues/1901.
+* Add support for GHC 9.4
 
 ## 0.7.6 *June 20th 2021*
 * Do not vacuously solve `forall a b . 1 <=? a^b ~ True`
