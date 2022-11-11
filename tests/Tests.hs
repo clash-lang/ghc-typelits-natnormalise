@@ -498,6 +498,12 @@ tyFamMonotonicityFun _ = ()
 tyFamMonotonicity :: (2 <= F2 dom) => Proxy (dom :: Symbol) -> ()
 tyFamMonotonicity dom = tyFamMonotonicityFun dom
 
+oneLtPowSubst :: forall a b. (b ~ (2^a)) => Proxy a -> Proxy a
+oneLtPowSubst = go
+  where
+    go :: 1 <= b => Proxy a -> Proxy a
+    go = id 
+
 main :: IO ()
 main = defaultMain tests
 
@@ -598,6 +604,9 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "2 <= P (G2 dom) implies 1 <= P (G2 dom)" $
       show (tyFamMonotonicity (Proxy :: Proxy Dom)) @?=
       "()"
+    , testCase "b ~ (2^a) => 1 <= b" $
+      show (oneLtPowSubst (Proxy :: Proxy 0)) @?=
+      "Proxy"
     ]
   , testGroup "errors"
     [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
