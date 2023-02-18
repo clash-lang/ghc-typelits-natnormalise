@@ -143,6 +143,7 @@ xs :: OptVector t (n-l)
 where /n-l/ is a negative number.
 -}
 
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -185,8 +186,15 @@ import GHC.Core.Predicate
    mkPrimEqPred, isEqPred, isEqPrimPred, getClassPredTys_maybe)
 import GHC.Core.TyCo.Rep (Type (..), UnivCoProvenance (..))
 import GHC.Core.TyCon (TyCon)
+#if MIN_VERSION_ghc(9,6,0)
+import GHC.Core.Type
+  (Kind, PredType, mkTyVarTy, tyConAppTyCon_maybe, typeKind, mkTyConApp)
+import GHC.Core.TyCo.Compare
+  (eqType)
+#else
 import GHC.Core.Type
   (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe, typeKind, mkTyConApp)
+#endif
 import GHC.Driver.Plugins (Plugin (..), defaultPlugin, purePlugin)
 import GHC.Tc.Plugin
   (TcPluginM, tcLookupClass, tcPluginTrace, tcPluginIO, newEvVar)

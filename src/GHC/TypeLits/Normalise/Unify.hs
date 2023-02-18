@@ -73,8 +73,15 @@ import GHC.Builtin.Types.Literals (typeNatLeqTyCon)
 #endif
 import GHC.Core.Predicate (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
 import GHC.Core.TyCon (TyCon)
+#if MIN_VERSION_ghc(9,6,0)
+import GHC.Core.Type
+  (PredType, TyVar, coreView, mkNumLitTy, mkTyConApp, mkTyVarTy, typeKind)
+import GHC.Core.TyCo.Compare
+  (eqType, nonDetCmpType)
+#else
 import GHC.Core.Type
   (PredType, TyVar, coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy, nonDetCmpType, typeKind)
+#endif
 import GHC.Core.TyCo.Rep (Kind, Type (..), TyLit (..))
 import GHC.Tc.Plugin (TcPluginM, tcPluginTrace)
 import GHC.Tc.Types.Constraint (Ct, ctEvidence, ctEvId, ctEvPred, isGiven)
