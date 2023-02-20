@@ -25,6 +25,10 @@
 {-# OPTIONS_GHC -dcore-lint #-}
 
 import GHC.TypeLits
+#if MIN_VERSION_base(4,18,0)
+  hiding (type SNat)
+#endif
+
 import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
