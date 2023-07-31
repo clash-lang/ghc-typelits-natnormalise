@@ -251,7 +251,7 @@ reifySOP = combineP . map negateP . unS
 reifyProduct :: CoreProduct -> Type
 reifyProduct (P ps) =
     let ps' = map reifySymbol (foldr mergeExp [] ps)
-    in  foldr (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2]) (head ps') (tail ps')
+    in  foldr1 (\t1 t2 -> mkTyConApp typeNatMulTyCon [t1,t2]) ps'
   where
     -- "2 ^ -1 * 2 ^ a" must be merged into "2 ^ (a-1)", otherwise GHC barfs
     -- at the "2 ^ -1" because of the negative exponent.
