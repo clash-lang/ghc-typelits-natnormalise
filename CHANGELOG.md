@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.7.9 *October 10th 2023*
+* Support for GHC 9.8.1
+
 ## 0.7.8 *February 20th 2023*
 * Try and outright solve substituted constraints, the same as is done with the unsubstituted constraint. Partially Fixes [#65](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/65).
 * Support for GHC-9.6.0.20230210
