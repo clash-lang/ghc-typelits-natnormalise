@@ -149,6 +149,7 @@ where /n-l/ is a negative number.
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections   #-}
 {-# LANGUAGE ViewPatterns    #-}
+{-# LANGUAGE TemplateHaskellQuotes #-}
 
 {-# OPTIONS_HADDOCK show-extensions #-}
 
@@ -166,9 +167,10 @@ import Data.List (intersect, partition, stripPrefix, find)
 import Data.Maybe (mapMaybe, catMaybes)
 import Data.Set (Set, empty, toList, notMember, fromList, union)
 import Text.Read (readMaybe)
+import qualified Data.Type.Ord
+import qualified GHC.TypeError
 
-import GHC.TcPluginM.Extra
-  (tracePlugin, lookupModule, lookupName, newGiven, newWanted)
+import GHC.TcPluginM.Extra (tracePlugin, newGiven, newWanted)
 
 -- GHC API
 import GHC.Builtin.Names (knownNatClassName, eqTyConKey, heqTyConKey, hasKey)
@@ -195,21 +197,24 @@ import GHC.Core.TyCo.Compare
 import GHC.Core.Type
   (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe, typeKind, mkTyConApp)
 #endif
+import GHC.Data.IOEnv (getEnv)
 import GHC.Driver.Plugins (Plugin (..), defaultPlugin, purePlugin)
+import GHC.Plugins (thNameToGhcNameIO, HscEnv (hsc_NC))
 import GHC.Tc.Plugin
   (TcPluginM, tcLookupClass, tcPluginTrace, tcPluginIO, newEvVar)
-import GHC.Tc.Plugin (tcLookupTyCon)
-import GHC.Tc.Types (TcPlugin (..), TcPluginSolveResult(..))
+import GHC.Tc.Plugin (tcLookupTyCon, unsafeTcPluginTcM)
+import GHC.Tc.Types (TcPlugin (..), TcPluginSolveResult(..), Env (env_top))
 import GHC.Tc.Types.Constraint
   (Ct, CtEvidence (..), CtLoc, TcEvDest (..), ctEvidence,
    ctLoc, ctLocSpan, isGiven, isWanted, mkNonCanonical, setCtLocSpan,
    isWantedCt, ctEvLoc, ctEvPred, ctEvExpr, emptyRewriterSet, setCtEvLoc)
 import GHC.Tc.Types.Evidence (EvBindsVar, EvTerm (..), evCast, evId)
-import GHC.Data.FastString (fsLit)
-import GHC.Types.Name.Occurrence (mkTcOcc)
 import GHC.Types.Unique.FM (emptyUFM)
-import GHC.Unit.Module (mkModuleName)
 import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
+import GHC (Name)
+
+-- template-haskell
+import qualified Language.Haskell.TH as TH
 
 -- internal
 import GHC.TypeLits.Normalise.SOP
@@ -254,17 +259,16 @@ type ExtraDefs = (IORef (Set CType), (TyCon,TyCon,TyCon))
 lookupExtraDefs :: TcPluginM ExtraDefs
 lookupExtraDefs = do
     ref <- tcPluginIO (newIORef empty)
-    md <- lookupModule ordModule basePackage
-    ordCond <- look md "OrdCond"
-    leqT <- look md "<="
-    md1 <- lookupModule typeErrModule basePackage
-    assertT <- look md1 "Assert"
+    ordCond <- lookupTHName ''Data.Type.Ord.OrdCond >>= tcLookupTyCon
+    leqT <- lookupTHName ''(Data.Type.Ord.<=) >>= tcLookupTyCon
+    assertT <- lookupTHName ''GHC.TypeError.Assert >>= tcLookupTyCon
     return (ref, (leqT,assertT,ordCond))
-  where
-    look md s = tcLookupTyCon =<< lookupName md (mkTcOcc s)
-    ordModule = mkModuleName "Data.Type.Ord"
-    typeErrModule = mkModuleName "GHC.TypeError"
-    basePackage = fsLit "base"
+
+lookupTHName :: TH.Name -> TcPluginM Name
+lookupTHName th = do
+    nc <- unsafeTcPluginTcM (hsc_NC . env_top <$> getEnv)
+    res <- tcPluginIO $ thNameToGhcNameIO nc th
+    maybe (fail $ "Failed to lookup " ++ show th) return res
 
 decideEqualSOP
   :: Opts
