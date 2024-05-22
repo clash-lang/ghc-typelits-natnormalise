@@ -191,7 +191,24 @@ testProxy10 :: Proxy (a :: Nat) -> Proxy (a + 2) -> ()
 testProxy10 = proxyInEq'
 
 testProxy10Errors =
-#if __GLASGOW_HASKELL__ >= 910
+#if __GLASGOW_HASKELL__ >= 912
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat a (a + 2)) True True False’"
+          else litE $ stringL "(CmpNat a (a + 2)) True True False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘False"
+          else litE $ stringL "with `False"
+    )
+  ]
+#elif __GLASGOW_HASKELL__ >= 910
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘ghc-internal-9.1001.0:GHC.Internal.Data.Type.Ord.OrdCond"
@@ -334,7 +351,24 @@ testProxy14 :: Proxy (2*a) -> Proxy (4*a) -> ()
 testProxy14 = proxyInEq'
 
 testProxy14Errors =
-#if __GLASGOW_HASKELL__ >= 910
+#if __GLASGOW_HASKELL__ >= 912
+  [$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "Couldn't match type ‘ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "(CmpNat (2 * a) (4 * a)) True True False’"
+          else litE $ stringL "(CmpNat (2 * a) (4 * a)) True True False'"
+    )
+  ,$(do localeEncoding <- runIO (getLocaleEncoding)
+        if textEncodingName localeEncoding == textEncodingName utf8
+          then litE $ stringL "with ‘False"
+          else litE $ stringL "with `False"
+    )
+  ]
+#elif __GLASGOW_HASKELL__ >= 910
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
           then litE $ stringL "Couldn't match type ‘ghc-internal-9.1001.0:GHC.Internal.Data.Type.Ord.OrdCond"
