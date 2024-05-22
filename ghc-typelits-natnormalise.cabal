@@ -1,5 +1,5 @@
 name:                ghc-typelits-natnormalise
-version:             0.7.9
+version:             0.7.10
 synopsis:            GHC typechecker plugin for types of kind GHC.TypeLits.Nat
 description:
   A type checker plugin for GHC that can solve /equalities/ and /inequalities/
@@ -50,7 +50,7 @@ extra-source-files:  README.md
 cabal-version:       >=1.10
 tested-with:         GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.4, GHC == 8.6.5,
                      GHC == 8.8.4, GHC == 8.10.7, GHC == 9.0.2, GHC == 9.2.8,
-                     GHC == 9.4.7, GHC == 9.6.3, GHC == 9.8.1
+                     GHC == 9.4.7, GHC == 9.6.3, GHC == 9.8.2, GHC == 9.10.1
 
 source-repository head
   type: git
@@ -67,8 +67,8 @@ library
                        GHC.TypeLits.Normalise.SOP,
                        GHC.TypeLits.Normalise.Unify
   build-depends:       base                >=4.9   && <5,
-                       containers          >=0.5.7.1 && <0.7,
-                       ghc                 >=8.0.1 && <9.10,
+                       containers          >=0.5.7.1 && <0.8,
+                       ghc                 >=8.0.1 && <9.12,
                        ghc-tcplugins-extra >=0.3.1,
                        transformers        >=0.5.2.0 && < 0.7
   if impl(ghc >= 9.0.0)
@@ -80,7 +80,7 @@ library
     hs-source-dirs:    src-pre-ghc-9.4
   if impl(ghc >= 9.4) && impl(ghc < 9.12)
     hs-source-dirs:    src-ghc-9.4
-    build-depends:     template-haskell    >=2.17 && <2.22
+    build-depends:     template-haskell    >=2.17 && <2.23
   default-language:    Haskell2010
   other-extensions:    CPP
                        LambdaCase
