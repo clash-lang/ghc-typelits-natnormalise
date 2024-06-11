@@ -640,8 +640,9 @@ simplifyNats opts@Opts {..} ordCond eqsG eqsW = do
           x'    = substsSOP subst x
           y'    = substsSOP subst y
           uS    = (x',y',b)
-          leqsG' | isGiven (ctEvidence ct) = (x',y',b):leqsG
-                 | otherwise               = leqsG
+          isG   = isGiven (ctEvidence ct)
+          leqsG' | isG       = (x',y',b):leqsG
+                 | otherwise = leqsG
           ineqs = concat [ leqsG
                          , map (substLeq subst) leqsG
                          , map snd (rights (map fst eqsG))
@@ -652,7 +653,7 @@ simplifyNats opts@Opts {..} ordCond eqsG eqsW = do
           evs' <- maybe evs (:evs) <$> evMagic ct knW (subToPred opts ordCond k)
           simples subst evs' leqsG' xs eqs'
 
-        Just (False,_) | null k -> return (Impossible (fst eq))
+        Just (False,_) | null k && not isG -> return (Impossible (fst eq))
         _ -> do
           let solvedIneq = mapMaybe runWriterT
                  -- it is an inequality that can be instantly solved, such as
