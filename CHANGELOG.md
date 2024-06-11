@@ -1,5 +1,8 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## Unreleased
+* Fix `n <= 0` constrained being reported as impossible.
+
 ## 0.7.10 *May 22nd 2024*
 * Support for GHC 9.10.1
 

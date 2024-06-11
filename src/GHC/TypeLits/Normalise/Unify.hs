@@ -568,8 +568,8 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
   Just (s1',s2',_)
     | s1' /= s1 || s2' /= s1
-    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
-    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
+    , maybe False (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
+    , maybe False (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
     -> unifiers' ct s1' s2'
   _ | null psx
     , length ps1 == length ps2
@@ -655,7 +655,9 @@ isNatural (S [])           = return True
 isNatural (S [P []])       = return True
 isNatural (S [P (I i:ps)])
   | i >= 0    = isNatural (S [P ps])
-  | otherwise = return False
+  | otherwise = WriterT Nothing
+  -- If i is not a natural number then their sum *might* be natural,
+  -- but we simply can't be sure since ps might be zero
 isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
 isNatural (S [P (E s p:ps)]) = do
   sN <- isNatural s
