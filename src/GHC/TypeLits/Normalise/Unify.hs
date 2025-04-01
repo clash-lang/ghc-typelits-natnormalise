@@ -71,7 +71,14 @@ import GHC.Builtin.Types.Literals (typeNatCmpTyCon)
 import GHC.Builtin.Types (typeNatKind)
 import GHC.Builtin.Types.Literals (typeNatLeqTyCon)
 #endif
-import GHC.Core.Predicate (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
+import GHC.Core.Predicate
+  ( EqRel (NomEq), Pred (EqPred), classifyPredType
+#if MIN_VERSION_ghc(9,13,0)
+  , mkNomEqPred
+#else
+  , mkPrimEqPred
+#endif
+  )
 import GHC.Core.TyCon (TyCon)
 #if MIN_VERSION_ghc(9,6,0)
 import GHC.Core.Type
@@ -333,7 +340,11 @@ subtractionToPred ordCond (x,y) =
       falseTc = mkTyConApp promotedFalseDataCon []
       ordCmp = mkTyConApp ordCond
                 [boolTy,cmpNat,trueTc,trueTc,falseTc]
+#if MIN_VERSION_ghc(9,13,0)
+      predTy = mkNomEqPred ordCmp trueTc
+#else
       predTy = mkPrimEqPred ordCmp trueTc
+#endif
    in (predTy,boolTy)
 #else
   (mkPrimEqPred (mkTyConApp ordCond [y,x])
