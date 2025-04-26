@@ -706,17 +706,17 @@ evSubtPreds :: CtLoc -> [PredType] -> TcPluginM [Ct]
 evSubtPreds loc = mapM (fmap mkNonCanonical . newWanted loc)
 
 evMagic :: Ct -> [Coercion] -> Set CType -> [PredType] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
-evMagic ct deps knW preds = do
+evMagic ct _deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
   knWanted <- mapM (mkKnWanted (ctLoc ct)) (toList knW)
   let newWant = knWanted ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
-      let ctEv = mkUnivCo (PluginProv "ghc-typelits-natnormalise") deps Nominal t1 t2
+      let ctEv = mkUnivCo (PluginProv "ghc-typelits-natnormalise") [] Nominal t1 t2
       in return (Just ((EvExpr (Coercion ctEv), ct),newWant))
     IrredPred p ->
       let t1 = mkTyConApp (cTupleTyCon 0) []
-          co = mkUnivCo (PluginProv "ghc-typelits-natnormalise") deps Representational t1 p
+          co = mkUnivCo (PluginProv "ghc-typelits-natnormalise") [] Representational t1 p
           dcApp = evId (dataConWrapId (cTupleDataCon 0))
        in return (Just ((evCast dcApp co, ct),newWant))
     _ -> return Nothing

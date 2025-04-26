@@ -245,6 +245,31 @@ merge :: Vec n a -> Vec n a -> Vec (n + n) a
 merge Nil       Nil       = Nil
 merge (x :> xs) (y :> ys) = x :> y :> merge xs ys
 
+-- | \"'select' @f s n xs@\" selects /n/ elements with step-size /s/ and
+-- offset @f@ from /xs/.
+--
+-- >>> select (SNat :: SNat 1) (SNat :: SNat 2) (SNat :: SNat 3) (1:>2:>3:>4:>5:>6:>7:>8:>Nil)
+-- 2 :> 4 :> 6 :> Nil
+-- >>> select d1 d2 d3 (1:>2:>3:>4:>5:>6:>7:>8:>Nil)
+-- 2 :> 4 :> 6 :> Nil
+select :: forall i s n f a. s * n + 1 <= i + s
+       => SNat f
+       -> SNat s
+       -> SNat n
+       -> Vec (f + i) a
+       -> Vec n a
+select f s n xs = select' (toUNat n) $ drop f xs
+ where
+  select' :: forall m j b. (s * m + 1 <= j + s) => UNat m -> Vec j b -> Vec m b
+  select' m vs = case m of
+    UZero -> Nil
+    USucc UZero -> head @(j - 1) vs :> Nil
+    USucc m'@(USucc _) -> case deduce @(s * (m - 1) + 1) @j Proxy Proxy of
+      Dict -> head @(j - 1) vs :> select' m' (drop @s @(j - s) s vs)
+
+  deduce :: e + s <= k + s => p e -> p k -> Dict (e <= k)
+  deduce _ _ = Dict
+
 -- | 'drop' @n xs@ returns the suffix of @xs@ after the first @n@ elements
 --
 -- >>> drop (snat :: SNat 3) (1:>2:>3:>4:>5:>Nil)
