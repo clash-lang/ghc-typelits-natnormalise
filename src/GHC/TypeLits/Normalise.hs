@@ -143,87 +143,65 @@ xs :: OptVector t (n-l)
 where /n-l/ is a negative number.
 -}
 
-{-# LANGUAGE CPP             #-}
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE NamedFieldPuns  #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TupleSections   #-}
-{-# LANGUAGE ViewPatterns    #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE ExplicitNamespaces    #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE TupleSections         #-}
+{-# LANGUAGE ViewPatterns          #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
 
+{-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 {-# OPTIONS_HADDOCK show-extensions #-}
 
 module GHC.TypeLits.Normalise
   ( plugin )
 where
 
--- external
-import Control.Arrow (second)
-import Control.Monad ((<=<), forM)
+-- base
+import Control.Arrow
+  ( second )
+import Control.Monad
+  ( (<=<), forM )
+import Control.Monad.IO.Class
+  ( liftIO )
 import Control.Monad.Trans.Writer.Strict
-import Data.Either (partitionEithers, rights)
+  ( WriterT(runWriterT), runWriter )
+import Data.Either
+  ( partitionEithers, rights )
 import Data.IORef
-import Data.List (intersect, partition, stripPrefix, find)
-import Data.Maybe (mapMaybe, catMaybes)
-import Data.Set (Set, empty, toList, notMember, fromList, union)
-import Text.Read (readMaybe)
-import qualified Data.Type.Ord
-import qualified GHC.TypeError
+  ( IORef, newIORef, readIORef, modifyIORef' )
+import Data.List
+  ( partition, stripPrefix, find )
+import Data.Maybe
+  ( mapMaybe, catMaybes )
+import Data.Set
+  ( Set, empty, toList, notMember, fromList, union )
+import Text.Read
+  ( readMaybe )
 
-import GHC.TcPluginM.Extra (tracePlugin, newGiven, newWanted)
-
--- GHC API
-import GHC.Builtin.Names (knownNatClassName, eqTyConKey, heqTyConKey, hasKey)
-import GHC.Builtin.Types (promotedFalseDataCon, promotedTrueDataCon)
+-- ghc
+import GHC.Builtin.Names
+  ( knownNatClassName )
 import GHC.Builtin.Types.Literals
-  (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon)
-import GHC.Builtin.Types (naturalTy, cTupleDataCon, cTupleTyCon)
-import GHC.Builtin.Types.Literals (typeNatCmpTyCon)
-import GHC.Core (Expr (..))
-import GHC.Core.Class (className)
-import GHC.Core.Coercion (Role (..), mkUnivCo)
-import GHC.Core.DataCon (dataConWrapId)
-import GHC.Core.Predicate
-  (EqRel (NomEq), Pred (EqPred, IrredPred), classifyPredType, mkClassPred,
-   mkPrimEqPred, isEqPred, isEqPrimPred, getClassPredTys_maybe)
-import GHC.Core.TyCo.Rep (Type (..), UnivCoProvenance (..))
-import GHC.Core.TyCon (TyCon)
-#if MIN_VERSION_ghc(9,6,0)
-import GHC.Core.Type
-  (Kind, PredType, mkTyVarTy, tyConAppTyCon_maybe, typeKind, mkTyConApp)
-import GHC.Core.TyCo.Compare
-  (eqType)
-#else
-import GHC.Core.Type
-  (Kind, PredType, eqType, mkTyVarTy, tyConAppTyCon_maybe, typeKind, mkTyConApp)
-#endif
-import GHC.Data.IOEnv (getEnv)
-import GHC.Driver.Plugins (Plugin (..), defaultPlugin, purePlugin)
-import GHC.Plugins (thNameToGhcNameIO, HscEnv (hsc_NC))
-import GHC.Tc.Plugin
-  (TcPluginM, tcLookupClass, tcPluginTrace, tcPluginIO, newEvVar)
-import GHC.Tc.Plugin (tcLookupTyCon, unsafeTcPluginTcM)
-import GHC.Tc.Types (TcPlugin (..), TcPluginSolveResult(..), Env (env_top))
-import GHC.Tc.Types.Constraint
-  (Ct, CtEvidence (..), CtLoc, TcEvDest (..), ctEvidence,
-   ctLoc, ctLocSpan, isGiven, isWanted, mkNonCanonical, setCtLocSpan,
-   isWantedCt, ctEvLoc, ctEvPred, ctEvExpr, emptyRewriterSet, setCtEvLoc)
-import GHC.Tc.Types.Evidence (EvBindsVar, EvTerm (..), evCast, evId)
-import GHC.Types.Unique.FM (emptyUFM)
-import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
-import GHC (Name)
+  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon )
 
--- template-haskell
-import qualified Language.Haskell.TH as TH
+-- ghc-tcplugin-api
+import GHC.TcPlugin.API
+import GHC.Plugins
+  ( Plugin(..), defaultPlugin, purePlugin )
+import GHC.Utils.Outputable
+  ( ($$), (<+>), text )
 
--- internal
+-- ghc-typelits-natnormalise
+import GHC.TypeLits.Normalise.Compat
 import GHC.TypeLits.Normalise.SOP
-import GHC.TypeLits.Normalise.Unify hiding (subtractionToPred)
+  ( SOP(S), Product(P), Symbol(V) )
+import GHC.TypeLits.Normalise.Unify
 
-isEqPredClass :: PredType -> Bool
-isEqPredClass ty = case tyConAppTyCon_maybe ty of
-  Just tc -> tc `hasKey` eqTyConKey || tc `hasKey` heqTyConKey
-  _ -> False
+--------------------------------------------------------------------------------
 
 -- | To use the plugin, add
 --
@@ -235,7 +213,8 @@ isEqPredClass ty = case tyConAppTyCon_maybe ty of
 plugin :: Plugin
 plugin
   = defaultPlugin
-  { tcPlugin = fmap (normalisePlugin . foldr id defaultOpts) . traverse parseArgument
+  { tcPlugin = \ p -> do opts <- foldr id defaultOpts <$> traverse parseArgument p
+                         return $ mkTcPlugin $ normalisePlugin opts
   , pluginRecompile = purePlugin
   }
  where
@@ -247,28 +226,28 @@ plugin
 data Opts = Opts { negNumbers :: Bool, depth :: Word }
 
 normalisePlugin :: Opts -> TcPlugin
-normalisePlugin opts = tracePlugin "ghc-typelits-natnormalise"
+normalisePlugin opts =
   TcPlugin { tcPluginInit    = lookupExtraDefs
            , tcPluginSolve   = decideEqualSOP opts
            , tcPluginRewrite = const emptyUFM
            , tcPluginStop    = const (return ())
            }
 
-type ExtraDefs = (IORef (Set CType), (TyCon,TyCon,TyCon))
+data ExtraDefs
+  = ExtraDefs
+    { gen'dRef :: IORef (Set CType)
+    , tyCons :: LookedUpTyCons
+    }
 
-lookupExtraDefs :: TcPluginM ExtraDefs
+lookupExtraDefs :: TcPluginM Init ExtraDefs
 lookupExtraDefs = do
-    ref <- tcPluginIO (newIORef empty)
-    ordCond <- lookupTHName ''Data.Type.Ord.OrdCond >>= tcLookupTyCon
-    leqT <- lookupTHName ''(Data.Type.Ord.<=) >>= tcLookupTyCon
-    assertT <- lookupTHName ''GHC.TypeError.Assert >>= tcLookupTyCon
-    return (ref, (leqT,assertT,ordCond))
-
-lookupTHName :: TH.Name -> TcPluginM Name
-lookupTHName th = do
-    nc <- unsafeTcPluginTcM (hsc_NC . env_top <$> getEnv)
-    res <- tcPluginIO $ thNameToGhcNameIO nc th
-    maybe (fail $ "Failed to lookup " ++ show th) return res
+  ref <- liftIO (newIORef empty)
+  tcs <- lookupTyCons
+  return $
+    ExtraDefs
+      { gen'dRef = ref
+      , tyCons = tcs
+      }
 
 decideEqualSOP
   :: Opts
@@ -280,10 +259,9 @@ decideEqualSOP
       --
       --   2. For GHc 9.2: TyCon of Data.Type.Ord.OrdCond
       --      For older: TyCon of GHC.TypeLits.<=?
-  -> EvBindsVar
   -> [Ct]
   -> [Ct]
-  -> TcPluginM TcPluginSolveResult
+  -> TcPluginM Solve TcPluginSolveResult
 
 -- Simplification phase: Derives /simplified/ givens;
 -- we can reduce given constraints like @Show (Foo (n + 2))@
@@ -294,33 +272,33 @@ decideEqualSOP
 -- without this phase, we cannot derive, e.g.,
 -- @IsVector UVector (Fin (n + 1))@ from
 -- @Unbox (1 + n)@!
-decideEqualSOP opts (gen'd,(leqT,_,_)) ev givens [] = do
-    done <- tcPluginIO $ readIORef gen'd
+decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens [] = do
+    done <- liftIO $ readIORef gen'd
     let reds =
           filter (\(_,(_,_,v)) -> null v || negNumbers opts) $
-          reduceGivens opts leqT done givens
+          reduceGivens opts tcs done givens
         newlyDone = map (\(_,(prd, _,_)) -> CType prd) reds
-    tcPluginIO $
+    liftIO $
       modifyIORef' gen'd $ union (fromList newlyDone)
     newGivens <- forM reds $ \(origCt, (pred', evTerm, _)) ->
-      mkNonCanonical' (ctLoc origCt) <$> newGiven ev (ctLoc origCt) pred' evTerm
+      mkNonCanonical <$> newGiven (ctLoc origCt) pred' evTerm
     return (TcPluginOk [] newGivens)
 
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
 -- containing naturals.
-decideEqualSOP opts (gen'd,tcs@(leqT,_,_)) ev givens wanteds = do
-    let unit_wanteds = mapMaybe (toNatEquality tcs) wanteds
+decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanteds = do
+    let unit_wanteds = concatMap (toNatEquality tcs) wanteds
         nonEqs = filter ( not
-                        . (\p -> isEqPred p || isEqPrimPred p)
+                        . (\p -> isEqPred p || isEqClassPred p)
                         . ctEvPred
                         . ctEvidence )
                  wanteds
-    done <- tcPluginIO $ readIORef gen'd
-    let redGs = reduceGivens opts leqT done givens
+    done <- liftIO $ readIORef gen'd
+    let redGs = reduceGivens opts tcs done givens
         newlyDone = map (\(_,(prd, _,_)) -> CType prd) redGs
-    redGivens <- forM redGs $ \(origCt, (pred', evTerm, _)) ->
-      mkNonCanonical' (ctLoc origCt) <$> newGiven ev (ctLoc origCt) pred' evTerm
+    redGivens <- forM redGs $ \(origCt, (pred', evExpr, _)) ->
+      mkNonCanonical <$> newGiven (ctLoc origCt) pred' evExpr
     reducible_wanteds
       <- catMaybes <$> mapM (\ct -> fmap (ct,) <$>
                                     reduceNatConstr (givens ++ redGivens) ct)
@@ -333,16 +311,14 @@ decideEqualSOP opts (gen'd,tcs@(leqT,_,_)) ev givens wanteds = do
         -- Here, we generate such additional inequalities for reduction
         -- that is to be added to new [W]anteds.
         ineqForRedWants <- fmap concat $ forM redGs $ \(ct, (_,_, ws)) -> forM ws $
-          fmap (mkNonCanonical' (ctLoc ct)) . newWanted (ctLoc ct)
-        tcPluginIO $
+          fmap mkNonCanonical . newWanted (ctLoc ct)
+        liftIO $
           modifyIORef' gen'd $ union (fromList newlyDone)
-        let unit_givens = mapMaybe
-                            (toNatEquality tcs)
-                            givens
-        sr <- simplifyNats opts leqT unit_givens unit_wanteds
+        let unit_givens = concatMap (toNatEquality tcs) givens
+        sr <- simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
-          wants <- evSubtPreds (ctLoc origCt) $ subToPred opts leqT ws
+          wants <- evSubtPreds (ctLoc origCt) $ subToPred opts tcs ws
           return ((term, origCt), wDicts ++ wants)
         case sr of
           Simplified evs -> do
@@ -358,35 +334,38 @@ decideEqualSOP opts (gen'd,tcs@(leqT,_,_)) ev givens wanteds = do
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
 
-reduceGivens :: Opts -> TyCon -> Set CType -> [Ct] -> [(Ct, (Type, EvTerm, [PredType]))]
-reduceGivens opts leqT done givens =
+reduceGivens :: Opts -> LookedUpTyCons -> Set CType
+             -> [Ct] -> [(Ct, (Type, EvTerm, [PredType]))]
+reduceGivens opts tcs done givens =
   let nonEqs =
         [ ct
         | ct <- givens
         , let ev = ctEvidence ct
               prd = ctEvPred ev
         , isGiven ev
-        , not $ (\p -> isEqPred p || isEqPrimPred p || isEqPredClass p) prd
+        , not $ (\p -> isEqPred p || isEqClassPred p ) prd
         ]
   in filter
       (\(_, (prd, _, _)) ->
         notMember (CType prd) done
       )
     $ mapMaybe
-      (\ct -> (ct,) <$> tryReduceGiven opts leqT givens ct)
+      (\ct -> (ct,) <$> tryReduceGiven opts tcs givens ct)
       nonEqs
 
 tryReduceGiven
-  :: Opts -> TyCon -> [Ct] -> Ct
+  :: Opts -> LookedUpTyCons
+  -> [Ct] -> Ct
   -> Maybe (PredType, EvTerm, [PredType])
-tryReduceGiven opts leqT simplGivens ct = do
+tryReduceGiven opts tcs simplGivens ct = do
     let (mans, ws) =
           runWriter $ normaliseNatEverywhere $
           ctEvPred $ ctEvidence ct
         ws' = [ p
-              | p <- subToPred opts leqT ws
+              | p <- subToPred opts tcs ws
               , all (not . (`eqType` p). ctEvPred . ctEvidence) simplGivens
               ]
+        -- deps = unitDVarSet (ctEvId ct)
     pred' <- mans
     return (pred', toReducedDict (ctEvidence ct) pred', ws')
 
@@ -394,45 +373,45 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: [Ct] -> Ct -> TcPluginM (Maybe (EvTerm, [(Type, Type)], [Ct]))
+reduceNatConstr :: [Ct] -> Ct -> TcPluginM Solve (Maybe (EvTerm, [(Type, Type)], [Ct]))
 reduceNatConstr givens ct =  do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere pred0
   case mans of
     Nothing -> return Nothing
     Just pred' -> do
-      case find ((`eqType` pred') .ctEvPred . ctEvidence) givens of
+      case find ((`eqType` pred') . ctEvPred . ctEvidence) givens of
         -- No existing evidence found
-        Nothing -> case getClassPredTys_maybe pred' of
-          -- Are we trying to solve a class instance?
-          Just (cls,_) | className cls /= knownNatClassName -> do
-            -- Create new evidence binding for normalized class constraint
-            evVar <- newEvVar pred'
-            -- Bind the evidence to a new wanted normalized class constraint
-            let wDict = mkNonCanonical
-                          (CtWanted pred' (EvVarDest evVar) (ctLoc ct) emptyRewriterSet)
-            -- Evidence for current wanted is simply the coerced binding for
-            -- the new binding
-                evCo = mkUnivCo (PluginProv "ghc-typelits-natnormalise")
-                         Representational
-                         pred' pred0
-                ev = evId evVar `evCast` evCo
-            -- Use newly created coerced wanted as evidence, and emit the
-            -- normalized wanted as a new constraint to solve.
-            return (Just (ev, tests, [wDict]))
-          _ -> return Nothing
+        Nothing
+          | ClassPred cls _ <- classifyPredType pred'
+          , className cls /= knownNatClassName
+          -> do
+              -- Create new evidence binding for normalized class constraint
+              wtdDictCt <- mkNonCanonical <$> newWanted (ctLoc ct) pred'
+              -- Evidence for current wanted is simply the coerced binding for
+              -- the new binding
+              let evCo = mkPluginUnivCo "ghc-typelits-natnormalise"
+                           Representational
+                           []
+                           pred' pred0
+                  ev = evCast (evId $ ctEvId wtdDictCt) evCo
+              -- Use newly created coerced wanted as evidence, and emit the
+              -- normalized wanted as a new constraint to solve.
+              return (Just (EvExpr ev, tests, [wtdDictCt]))
+          | otherwise
+          -> return Nothing
         -- Use existing evidence
         Just c  -> return (Just (toReducedDict (ctEvidence c) pred0, tests, []))
 
 toReducedDict :: CtEvidence -> PredType -> EvTerm
 toReducedDict ct pred' =
   let pred0 = ctEvPred ct
-      evCo = mkUnivCo (PluginProv "ghc-typelits-natnormalise")
+      evCo = mkPluginUnivCo "ghc-typelits-natnormalise"
               Representational
+              []
               pred0 pred'
-      ev = ctEvExpr ct
-             `evCast` evCo
-  in ev
+      ev = evCast (ctEvExpr ct) evCo
+  in EvExpr ev
 
 data SimplifyResult
   = Simplified [((EvTerm,Ct),[Ct])]
@@ -445,14 +424,13 @@ instance Outputable SimplifyResult where
 simplifyNats
   :: Opts
   -- ^ Allow negated numbers (potentially unsound!)
-  -> TyCon
-  -- * TyCon of Data.Type.Ord.<=
+  -> LookedUpTyCons
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Given constraints
   -> [(Either NatEquality NatInEquality,[(Type,Type)])]
   -- ^ Wanted constraints
-  -> TcPluginM SimplifyResult
-simplifyNats opts@Opts {..} leqT eqsG eqsW = do
+  -> TcPluginM Solve SimplifyResult
+simplifyNats opts@Opts {..} tcs eqsG eqsW = do
     let eqsG1 = map (second (const ([] :: [(Type,Type)]))) eqsG
         (varEqs,otherEqs) = partition isVarEqs eqsG1
         fancyGivens = concatMap (makeGivensSet otherEqs) varEqs
@@ -460,7 +438,7 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
       [] -> do
         let eqs = otherEqs ++ eqsW
         tcPluginTrace "simplifyNats" (ppr eqs)
-        simples [] [] [] [] eqs
+        simples [] [] [] [] [] eqs
       _  -> do
         tcPluginTrace ("simplifyNats(backtrack: " ++ show (length fancyGivens) ++ ")")
                       (ppr varEqs)
@@ -468,41 +446,45 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
         allSimplified <- forM fancyGivens $ \v -> do
           let eqs = v ++ eqsW
           tcPluginTrace "simplifyNats" (ppr eqs)
-          simples [] [] [] [] eqs
+          simples [] [] [] [] [] eqs
 
         pure (foldr findFirstSimpliedWanted (Simplified []) allSimplified)
   where
-    simples :: [CoreUnify]
+    simples :: [Coercion]
+            -> [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
             -> [(CoreSOP,CoreSOP,Bool)]
             -> [(Either NatEquality NatInEquality,[(Type,Type)])]
             -> [(Either NatEquality NatInEquality,[(Type,Type)])]
-            -> TcPluginM SimplifyResult
-    simples _subst evs _leqsG _xs [] = return (Simplified evs)
-    simples subst evs leqsG xs (eq@(Left (ct,u,v),k):eqs') = do
+            -> TcPluginM Solve SimplifyResult
+    simples _ _subst evs _leqsG _xs [] = return (Simplified evs)
+    simples deps subst evs leqsG xs (eq@(Left (ct,u,v),k):eqs') = do
       let u' = substsSOP subst u
           v' = substsSOP subst v
       ur <- unifyNats ct u' v'
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
-          evs' <- maybe evs (:evs) <$> evMagic ct empty (subToPred opts leqT k)
-          simples subst evs' leqsG [] (xs ++ eqs')
+          evs' <- maybe evs (:evs) <$> evMagic tcs ct deps empty (subToPred opts tcs k)
+          simples deps subst evs' leqsG [] (xs ++ eqs')
         Lose -> if null evs && null eqs'
                    then return (Impossible (fst eq))
-                   else simples subst evs leqsG xs eqs'
-        Draw [] -> simples subst evs [] (eq:xs) eqs'
+                   else simples deps subst evs leqsG xs eqs'
+        Draw [] -> simples deps subst evs [] (eq:xs) eqs'
         Draw subst' -> do
-          evM <- evMagic ct empty (map unifyItemToPredType subst' ++
-                                   subToPred opts leqT k)
-          let leqsG' | isGiven (ctEvidence ct) = eqToLeq u' v' ++ leqsG
-                     | otherwise  = leqsG
+          evM <- evMagic tcs ct deps empty (map unifyItemToPredType subst' ++
+                                            subToPred opts tcs k)
+          let (leqsG1, deps1)
+                | isGiven (ctEvidence ct) = ( eqToLeq u' v' ++ leqsG
+                                            , ctEvCoercion (ctEvidence ct):deps)
+                | otherwise               = (leqsG, deps)
           case evM of
-            Nothing -> simples subst evs leqsG' xs eqs'
+            Nothing -> simples deps1 subst evs leqsG1 xs eqs'
             Just ev ->
-              simples (substsSubst subst' subst ++ subst')
-                      (ev:evs) leqsG' [] (xs ++ eqs')
-    simples subst evs leqsG xs (eq@(Right (ct,u@(x,y,b)),k):eqs') = do
+              simples (ctEvCoercion (ctEvidence ct):deps)
+                      (substsSubst subst' subst ++ subst')
+                      (ev:evs) leqsG1 [] (xs ++ eqs')
+    simples deps subst evs leqsG xs (eq@(Right (ct,u@(x,y,b)),k):eqs') = do
       let u'    = substsSOP subst (subtractIneq u)
           x'    = substsSOP subst x
           y'    = substsSOP subst y
@@ -516,8 +498,8 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs))
       case runWriterT (isNatural u') of
         Just (True,knW)  -> do
-          evs' <- maybe evs (:evs) <$> evMagic ct knW (subToPred opts leqT k)
-          simples subst evs' leqsG' xs eqs'
+          evs' <- maybe evs (:evs) <$> evMagic tcs ct deps knW (subToPred opts tcs k)
+          simples deps subst evs' leqsG' xs eqs'
 
         Just (False,_) | null k -> return (Impossible (fst eq))
         _ -> do
@@ -537,9 +519,9 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
               smallest = solvedInEqSmallestConstraint solvedIneq
           case smallest of
             (True,kW) -> do
-              evs' <- maybe evs (:evs) <$> evMagic ct kW (subToPred opts leqT k)
-              simples subst evs' leqsG' xs eqs'
-            _ -> simples subst evs leqsG (eq:xs) eqs'
+              evs' <- maybe evs (:evs) <$> evMagic tcs ct deps kW (subToPred opts tcs k)
+              simples deps subst evs' leqsG' xs eqs'
+            _ -> simples deps subst evs leqsG (eq:xs) eqs'
 
     eqToLeq x y = [(x,y,True),(y,x,True)]
     substLeq s (x,y,b) = (substsSOP s x, substsSOP s y, b)
@@ -584,7 +566,7 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
 
     findFirstSimpliedWanted (Impossible e)   _  = Impossible e
     findFirstSimpliedWanted (Simplified evs) s2
-      | any (isWantedCt . snd . fst) evs
+      | any (isWanted . ctEvidence . snd . fst) evs
       = Simplified evs
       | otherwise
       = s2
@@ -592,109 +574,60 @@ simplifyNats opts@Opts {..} leqT eqsG eqsW = do
 -- If we allow negated numbers we simply do not emit the inequalities
 -- derived from the subtractions that are converted to additions with a
 -- negated operand
-subToPred :: Opts -> TyCon -> [(Type, Type)] -> [PredType]
-subToPred Opts{..} leqT
+subToPred :: Opts -> LookedUpTyCons -> [(Type, Type)] -> [PredType]
+subToPred Opts{..} tcs
   | negNumbers = const []
-  | otherwise  = map leq
-  where
-    leq (a,b) =
-      let lhs = TyConApp leqT [naturalTy,b,a]
-          rhs = TyConApp (cTupleTyCon 0) []
-       in mkPrimEqPred lhs rhs
+  | otherwise  = map (uncurry $ mkLEqNat tcs)
 
--- Extract the Nat equality constraints
-toNatEquality :: (TyCon,TyCon,TyCon) -> Ct -> Maybe (Either NatEquality NatInEquality,[(Type,Type)])
-toNatEquality (_,assertT,ordCond) ct = case classifyPredType $ ctEvPred $ ctEvidence ct of
-    EqPred NomEq t1 t2
-      -> go t1 t2
-    IrredPred p
-      -> go2 p
-    _ -> Nothing
+-- | Extract all Nat equality and inequality constraints from another constraint.
+toNatEquality :: LookedUpTyCons -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+toNatEquality tcs ct0
+  | Just ((x,y), mbLTE) <- isNatRel tcs pred0
+  , let
+      (x',k1) = runWriter (normaliseNat x)
+      (y',k2) = runWriter (normaliseNat y)
+      ks      = k1 ++ k2
+  = case mbLTE of
+      Nothing ->
+        -- Equality constraint: x ~ y
+        [(Left (ct0, x', y'), ks)]
+      Just b ->
+        -- Inequality constraint: (x <=? y) ~ b
+        [(Right (ct0, (x', y', b)), ks)]
+  | otherwise
+  = case classifyPredType pred0 of
+      EqPred NomEq t1 t2
+        -> goNomEq t1 t2
+      _ -> []
   where
-    go (TyConApp tc xs) (TyConApp tc' ys)
-      | tc == tc'
-      , null ([tc,tc'] `intersect` [typeNatAddTyCon,typeNatSubTyCon
-                                   ,typeNatMulTyCon,typeNatExpTyCon])
-      = case filter (not . uncurry eqType) (zip xs ys) of
-          [(x,y)]
-            | isNatKind (typeKind x)
-            , isNatKind (typeKind y)
-            , let (x',k1) = runWriter (normaliseNat x)
-            , let (y',k2) = runWriter (normaliseNat y)
-            -> Just (Left (ct, x', y'),k1 ++ k2)
-          _ -> Nothing
-      | tc == ordCond
-      , [_,cmp,lt,eq,gt] <- xs
-      , TyConApp tcCmpNat [x,y] <- cmp
-      , tcCmpNat == typeNatCmpTyCon
-      , TyConApp ltTc [] <- lt
-      , ltTc == promotedTrueDataCon
-      , TyConApp eqTc [] <- eq
-      , eqTc == promotedTrueDataCon
-      , TyConApp gtTc [] <- gt
-      , gtTc == promotedFalseDataCon
-      , let (x',k1) = runWriter (normaliseNat x)
-      , let (y',k2) = runWriter (normaliseNat y)
-      , let ks      = k1 ++ k2
-      = case tc' of
-         _ | tc' == promotedTrueDataCon
-           -> Just (Right (ct, (x', y', True)), ks)
-         _ | tc' == promotedFalseDataCon
-           -> Just (Right (ct, (x', y', False)), ks)
-         _ -> Nothing
-      | tc == assertT
-      , tc' == (cTupleTyCon 0)
-      , [] <- ys
-      , [TyConApp ordCondTc zs, _] <- xs
-      , ordCondTc == ordCond
-      , [_,cmp,lt,eq,gt] <- zs
-      , TyConApp tcCmpNat [x,y] <- cmp
-      , tcCmpNat == typeNatCmpTyCon
-      , TyConApp ltTc [] <- lt
-      , ltTc == promotedTrueDataCon
-      , TyConApp eqTc [] <- eq
-      , eqTc == promotedTrueDataCon
-      , TyConApp gtTc [] <- gt
-      , gtTc == promotedFalseDataCon
-      , let (x',k1) = runWriter (normaliseNat x)
-      , let (y',k2) = runWriter (normaliseNat y)
-      , let ks      = k1 ++ k2
-      = Just (Right (ct, (x', y', True)), ks)
+    pred0 = ctPred ct0
+    -- x ~ y
+    goNomEq lhs rhs
+      -- Recur into a TyCon application for TyCons that we **do not** rewrite,
+      -- e.g. peek inside the Maybe in 'Maybe (x + y) ~ Maybe (y + x)'.
+      | Just (tc , xs) <- splitTyConApp_maybe lhs
+      , Just (tc', ys) <- splitTyConApp_maybe rhs
+      , tc == tc'
+      , not $ tc `elem` [typeNatAddTyCon, typeNatSubTyCon, typeNatMulTyCon, typeNatExpTyCon]
+      , let subs = filter (not . uncurry eqType) (zip xs ys)
+      = concatMap (uncurry rewrite) subs
+      | otherwise
+      = rewrite lhs rhs
 
-    go x y
+    rewrite x y
       | isNatKind (typeKind x)
       , isNatKind (typeKind y)
       , let (x',k1) = runWriter (normaliseNat x)
       , let (y',k2) = runWriter (normaliseNat y)
-      = Just (Left (ct,x',y'),k1 ++ k2)
+      = [(Left (ct0,x',y'),k1 ++ k2)]
       | otherwise
-      = Nothing
-
-    go2 (TyConApp tc ys)
-      | tc == assertT
-      , [TyConApp ordCondTc xs, _] <- ys
-      , ordCondTc == ordCond
-      , [_,cmp,lt,eq,gt] <- xs
-      , TyConApp tcCmpNat [x,y] <- cmp
-      , tcCmpNat == typeNatCmpTyCon
-      , TyConApp ltTc [] <- lt
-      , ltTc == promotedTrueDataCon
-      , TyConApp eqTc [] <- eq
-      , eqTc == promotedTrueDataCon
-      , TyConApp gtTc [] <- gt
-      , gtTc == promotedFalseDataCon
-      , let (x',k1) = runWriter (normaliseNat x)
-      , let (y',k2) = runWriter (normaliseNat y)
-      , let ks      = k1 ++ k2
-      = Just (Right (ct, (x', y', True)), ks)
-
-    go2 _ = Nothing
+      = []
 
     isNatKind :: Kind -> Bool
-    isNatKind = (`eqType` naturalTy)
+    isNatKind = (`eqType` natKind)
 
 unifyItemToPredType :: CoreUnify -> PredType
-unifyItemToPredType ui = mkPrimEqPred ty1 ty2
+unifyItemToPredType ui = mkEqPredRole Nominal ty1 ty2
   where
     ty1 = case ui of
             SubstItem {..} -> mkTyVarTy siVar
@@ -703,38 +636,31 @@ unifyItemToPredType ui = mkPrimEqPred ty1 ty2
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
 
-evSubtPreds :: CtLoc -> [PredType] -> TcPluginM [Ct]
+evSubtPreds :: CtLoc -> [PredType] -> TcPluginM Solve [Ct]
 evSubtPreds loc = mapM (fmap mkNonCanonical . newWanted loc)
 
-evMagic :: Ct -> Set CType -> [PredType] -> TcPluginM (Maybe ((EvTerm, Ct), [Ct]))
-evMagic ct knW preds = do
+evMagic :: LookedUpTyCons -> Ct -> [Coercion] -> Set CType -> [PredType] -> TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
+evMagic tcs ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
   knWanted <- mapM (mkKnWanted (ctLoc ct)) (toList knW)
   let newWant = knWanted ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
-      let ctEv = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Nominal t1 t2
+      let ctEv = mkPluginUnivCo "ghc-typelits-natnormalise" Nominal deps t1 t2
       in return (Just ((EvExpr (Coercion ctEv), ct),newWant))
     IrredPred p ->
-      let t1 = mkTyConApp (cTupleTyCon 0) []
-          co = mkUnivCo (PluginProv "ghc-typelits-natnormalise") Representational t1 p
-          dcApp = evId (dataConWrapId (cTupleDataCon 0))
-       in return (Just ((evCast dcApp co, ct),newWant))
+      let t1 = mkTyConApp (c0TyCon tcs) []
+          co = mkPluginUnivCo "ghc-typelits-natnormalise" Representational deps t1 p
+          dcApp = evDataConApp (c0DataCon tcs) [] []
+       in return (Just ((EvExpr $ evCast dcApp co, ct),newWant))
     _ -> return Nothing
-
-mkNonCanonical' :: CtLoc -> CtEvidence -> Ct
-mkNonCanonical' origCtl ev =
-  let ct_ls   = ctLocSpan origCtl
-      ctl     = ctEvLoc  ev
-  in mkNonCanonical (setCtEvLoc ev (setCtLocSpan ctl ct_ls))
 
 mkKnWanted
   :: CtLoc
   -> CType
-  -> TcPluginM Ct
+  -> TcPluginM Solve Ct
 mkKnWanted loc (CType ty) = do
   kc_clas <- tcLookupClass knownNatClassName
   let kn_pred = mkClassPred kc_clas [ty]
   wantedCtEv <- newWanted loc kn_pred
-  let wanted' = mkNonCanonical' loc wantedCtEv
-  return wanted'
+  return $ mkNonCanonical wantedCtEv

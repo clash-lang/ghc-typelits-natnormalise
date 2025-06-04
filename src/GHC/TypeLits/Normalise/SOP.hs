@@ -74,8 +74,6 @@ x^(y*z)
 @
 -}
 
-{-# LANGUAGE CPP #-}
-
 module GHC.TypeLits.Normalise.SOP
   ( -- * SOP types
     Symbol (..)
@@ -92,16 +90,17 @@ module GHC.TypeLits.Normalise.SOP
   )
 where
 
--- External
-import Data.Either (partitionEithers)
-import Data.List   (sort)
+-- base
+import Data.Either
+  ( partitionEithers )
+import Data.List
+  ( sort )
 
--- GHC API
-#if MIN_VERSION_ghc(9,0,0)
-import GHC.Utils.Outputable (Outputable (..), (<+>), text, hcat, integer, punctuate)
-#else
-import Outputable (Outputable (..), (<+>), text, hcat, integer, punctuate)
-#endif
+-- ghc-tcplugin-api
+import GHC.Utils.Outputable
+  ( Outputable (..), (<+>), text, hcat, integer, punctuate )
+
+--------------------------------------------------------------------------------
 
 data Symbol v c
   = I Integer                 -- ^ Integer constant

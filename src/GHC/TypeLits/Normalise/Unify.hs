@@ -5,15 +5,12 @@ License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 
-{-# LANGUAGE CPP                        #-}
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE RecordWildCards            #-}
 
-{-# OPTIONS_GHC -fno-warn-unused-imports #-}
-#if __GLASGOW_HASKELL__ < 801
-#define nonDetCmpType cmpType
-#endif
+{-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module GHC.TypeLits.Normalise.Unify
   ( -- * 'Nat' expressions \<-\> 'SOP' terms
@@ -38,7 +35,6 @@ module GHC.TypeLits.Normalise.Unify
   , subtractIneq
   , solveIneq
   , ineqToSubst
-  , subtractionToPred
   , instantSolveIneq
   , solvedInEqSmallestConstraint
     -- * Properties
@@ -46,89 +42,46 @@ module GHC.TypeLits.Normalise.Unify
   )
 where
 
--- External
-import Control.Arrow (first, second)
+-- base
+import Control.Arrow
+  ( first, second )
 import Control.Monad.Trans.Writer.Strict
-import Data.Function (on)
-import Data.List     ((\\), intersect, nub)
-import Data.Maybe    (fromMaybe, mapMaybe, isJust)
-import Data.Set      (Set)
+  ( Writer, WriterT(..), runWriter, tell )
+import Data.Function
+  ( on )
+import Data.List
+  ( (\\), intersect, nub )
+import Data.Maybe
+  ( fromMaybe, mapMaybe, isJust )
+import Data.Set
+  ( Set )
 import qualified Data.Set as Set
 
-import GHC.Base               (isTrue#,(==#))
-import GHC.Integer            (smallInteger)
-import GHC.Integer.Logarithms (integerLogBase#)
+import GHC.Base
+  ( (==#), isTrue# )
+import GHC.Integer
+  ( smallInteger )
+import GHC.Integer.Logarithms
+  ( integerLogBase# )
 
--- GHC API
-#if MIN_VERSION_ghc(9,0,0)
-import GHC.Builtin.Types (boolTy, promotedTrueDataCon)
+-- ghc
 import GHC.Builtin.Types.Literals
-  (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon)
-#if MIN_VERSION_ghc(9,2,0)
-import GHC.Builtin.Types (naturalTy, promotedFalseDataCon)
-import GHC.Builtin.Types.Literals (typeNatCmpTyCon)
-#else
-import GHC.Builtin.Types (typeNatKind)
-import GHC.Builtin.Types.Literals (typeNatLeqTyCon)
-#endif
-import GHC.Core.Predicate
-  ( EqRel (NomEq), Pred (EqPred), classifyPredType
-#if MIN_VERSION_ghc(9,13,0)
-  , mkNomEqPred
-#else
-  , mkPrimEqPred
-#endif
+  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon
   )
-import GHC.Core.TyCon (TyCon)
-#if MIN_VERSION_ghc(9,6,0)
-import GHC.Core.Type
-  (PredType, TyVar, coreView, mkNumLitTy, mkTyConApp, mkTyVarTy, typeKind)
-import GHC.Core.TyCo.Compare
-  (eqType, nonDetCmpType)
-#else
-import GHC.Core.Type
-  (PredType, TyVar, coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy, nonDetCmpType, typeKind)
-#endif
-import GHC.Core.TyCo.Rep (Kind, Type (..), TyLit (..))
-import GHC.Tc.Plugin (TcPluginM, tcPluginTrace)
-import GHC.Tc.Types.Constraint (Ct, ctEvidence, ctEvId, ctEvPred, isGiven)
 import GHC.Types.Unique.Set
-  (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets, unitUniqSet)
-import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
-#else
-import Outputable    (Outputable (..), (<+>), ($$), text)
-import TcPluginM     (TcPluginM, tcPluginTrace)
-import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
-                      typeNatSubTyCon, typeNatLeqTyCon)
-import TyCon         (TyCon)
-import Type          (TyVar,
-                      coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
-                      nonDetCmpType, PredType, typeKind)
-import TyCoRep       (Kind, Type (..), TyLit (..))
-import TysWiredIn    (boolTy, promotedTrueDataCon, typeNatKind)
-import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
-                      unitUniqSet)
+  ( UniqSet
+  , emptyUniqSet, unionManyUniqSets, unionUniqSets, unitUniqSet
+  )
+import GHC.Utils.Outputable
+  ( ($$), (<+>), text )
 
-#if MIN_VERSION_ghc(8,10,0)
-import Constraint (Ct,  ctEvidence, ctEvId, ctEvPred, isGiven)
-import Predicate  (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
-#else
-import TcRnMonad  (Ct, ctEvidence, isGiven)
-import TcRnTypes  (ctEvPred)
-import Type       (EqRel (NomEq), PredTree (EqPred), classifyPredType, mkPrimEqPred)
-#endif
-#endif
+-- ghc-tcplugin-api
+import GHC.TcPlugin.API
 
--- Internal
+-- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
 
--- Used for haddock
-import GHC.TypeLits (Nat)
-
-#if MIN_VERSION_ghc(9,2,0)
-typeNatKind :: Type
-typeNatKind = naturalTy
-#endif
+--------------------------------------------------------------------------------
 
 newtype CType = CType { unCType :: Type }
   deriving Outputable
@@ -151,20 +104,29 @@ type CoreSymbol  = Symbol TyVar CType
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
 normaliseNat :: Type -> Writer [(Type,Type)] CoreSOP
-normaliseNat ty | Just ty1 <- coreView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = return (S [P [V v]])
-normaliseNat (LitTy (NumTyLit i)) = return (S [P [I i]])
-normaliseNat (TyConApp tc [x,y])
-  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon = do
-    tell [(x,y)]
-    mergeSOPAdd <$> normaliseNat x
-                <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
-  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
-normaliseNat t = return (S [P [C (CType t)]])
+normaliseNat ty
+  | Just (tc, xs) <- splitTyConApp_maybe ty
+  = goTyConApp tc xs
+  | Just i <- isNumLitTy ty
+  = return (S [P [I i]])
+  | Just v <- getTyVar_maybe ty
+  = return (S [P [V v]])
+  | otherwise
+  = return (S [P [C (CType ty)]])
+    where
+      goTyConApp tc [x,y]
+        | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+        | tc == typeNatSubTyCon = do
+          tell [(x,y)]
+          mergeSOPAdd <$> normaliseNat x
+                      <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
+        | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
+        | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
+      goTyConApp tc xs =
+        return (S [P [C (CType $ mkTyConApp tc xs)]])
 
--- | Runs writer action. If the result /Nothing/ writer actions will be
+
+-- | Runs writer action. If the result is /Nothing/, writer actions will be
 -- discarded.
 maybeRunWriter
   :: Monoid a
@@ -180,38 +142,44 @@ maybeRunWriter w =
 -- the same as input, returns @'Nothing'@.
 normaliseNatEverywhere :: Type -> Writer [(Type, Type)] (Maybe Type)
 normaliseNatEverywhere ty0
-  | TyConApp tc _fields <- ty0
-  , tc `elem` knownTyCons = do
-    -- Normalize under current type constructor application. 'go' skips all
-    -- known type constructors.
-    ty1M <- maybeRunWriter (go ty0)
-    let ty1 = fromMaybe ty0 ty1M
-
-    -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-    ty2 <- normaliseSimplifyNat ty1
-    -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
-    -- TODO: probably cheaper than checking for equality here.
-    pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
-  | otherwise = go ty0
+  | Just (tc,fields) <- splitTyConApp_maybe ty0
+  = if tc `elem` knownTyCons
+    then do
+      -- Normalize under current type constructor application. 'go' skips all
+      -- known type constructors.
+      ty1M <- maybeRunWriter (go tc fields)
+      let ty1 = fromMaybe ty0 ty1M
+      -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
+      ty2 <- normaliseSimplifyNat ty1
+      -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
+      -- TODO: probably cheaper than checking for equality here.
+      pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
+    else go tc fields
+  | otherwise
+  = pure Nothing
  where
   knownTyCons :: [TyCon]
   knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
 
   -- Normalize given type, but ignore all top-level
-  go :: Type -> Writer [(Type, Type)] (Maybe Type)
-  go (TyConApp tc_ fields0_) = do
+  go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe Type)
+  go tc_ fields0_ = do
     fields1_ <- mapM (maybeRunWriter . cont) fields0_
     if any isJust fields1_ then
-      pure (Just (TyConApp tc_ (zipWith fromMaybe fields0_ fields1_)))
+      pure (Just (mkTyConApp tc_ (zipWith fromMaybe fields0_ fields1_)))
     else
       pure Nothing
    where
-    cont = if tc_ `elem` knownTyCons then go else normaliseNatEverywhere
-  go _ = pure Nothing
+    cont ty'
+      | tc_ `elem` knownTyCons
+      , Just (tc', fields') <- splitTyConApp_maybe ty'
+      = go tc' fields'
+      | otherwise
+      = normaliseNatEverywhere ty'
 
 normaliseSimplifyNat :: Type -> Writer [(Type, Type)] Type
 normaliseSimplifyNat ty
-  | typeKind ty `eqType` typeNatKind = do
+  | typeKind ty `eqType` natKind = do
       ty' <- normaliseNat ty
       return $ reifySOP $ simplifySOP ty'
   | otherwise = return ty
@@ -329,29 +297,6 @@ ineqToSubst (x,S [P [V v]],True)
 ineqToSubst _
   = Nothing
 
-subtractionToPred
-  :: TyCon
-  -> (Type,Type)
-  -> (PredType, Kind)
-subtractionToPred ordCond (x,y) =
-#if MIN_VERSION_ghc(9,2,0)
-  let cmpNat = mkTyConApp typeNatCmpTyCon [y,x]
-      trueTc = mkTyConApp promotedTrueDataCon []
-      falseTc = mkTyConApp promotedFalseDataCon []
-      ordCmp = mkTyConApp ordCond
-                [boolTy,cmpNat,trueTc,trueTc,falseTc]
-#if MIN_VERSION_ghc(9,13,0)
-      predTy = mkNomEqPred ordCmp trueTc
-#else
-      predTy = mkPrimEqPred ordCmp trueTc
-#endif
-   in (predTy,boolTy)
-#else
-  (mkPrimEqPred (mkTyConApp ordCond [y,x])
-                (mkTyConApp promotedTrueDataCon [])
-  ,boolTy)
-#endif
-
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
@@ -414,7 +359,7 @@ instance Outputable UnifyResult where
 --
 -- If @u@ and @v@ do not have the same free variables, we result in a 'Draw',
 -- ware @u@ and @v@ are only equal when the returned 'CoreSubst' holds.
-unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM UnifyResult
+unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM Solve UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
   return (unifyNats' ct u v)
