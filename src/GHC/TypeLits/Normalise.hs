@@ -577,7 +577,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
 subToPred :: Opts -> LookedUpTyCons -> [(Type, Type)] -> [PredType]
 subToPred Opts{..} tcs
   | negNumbers = const []
-  | otherwise  = map (uncurry $ mkLEqNat tcs)
+  | otherwise  = map (uncurry $ flip (mkLEqNat tcs))
 
 -- | Extract all Nat equality and inequality constraints from another constraint.
 toNatEquality :: LookedUpTyCons -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
