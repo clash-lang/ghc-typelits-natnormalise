@@ -80,6 +80,7 @@ library
     mixins:
       ghc
         ( TcTypeNats as GHC.Builtin.Types.Literals
+        , TyCon      as GHC.Core.TyCon
         , TysWiredIn as GHC.Builtin.Types
         )
 

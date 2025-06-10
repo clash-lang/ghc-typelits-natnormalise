@@ -20,13 +20,16 @@ module ErrorTests where
 
 import Data.Proxy
 import GHC.TypeLits
-#if __GLASGOW_HASKELL__ >= 904
+#if __GLASGOW_HASKELL__ >= 903
 import GHC.Types
 #endif
 
 import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
 import Language.Haskell.TH        (litE, stringL)
 import Language.Haskell.TH.Syntax (runIO)
+#if __GLASGOW_HASKELL__ >= 901
+import qualified Data.Type.Ord
+#endif
 
 #if __GLASGOW_HASKELL__ >= 901
 import qualified Data.Type.Ord

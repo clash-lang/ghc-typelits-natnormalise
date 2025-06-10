@@ -287,8 +287,12 @@ decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens [] = d
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
 -- containing naturals.
-decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanteds = do
-    let unit_wanteds = concatMap (toNatEquality tcs) wanteds
+decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanteds0 = do
+    deriveds <- askDeriveds
+    let wanteds = if null wanteds0
+                  then []
+                  else wanteds0 ++ deriveds
+        unit_wanteds = concatMap (toNatEquality tcs givens) wanteds
         nonEqs = filter ( not
                         . (\p -> isEqPred p || isEqClassPred p)
                         . ctEvPred
@@ -577,7 +581,9 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
 subToPred :: Opts -> LookedUpTyCons -> [(Type, Type)] -> [PredType]
 subToPred Opts{..} tcs
   | negNumbers = const []
-  | otherwise  = map (uncurry $ flip (mkLEqNat tcs))
+  | otherwise  =
+    -- Given 'a - b', require 'b <= a'.
+    map (\ (a, b) -> mkLEqNat tcs b a)
 
 -- | Extract all Nat equality and inequality constraints from another constraint.
 toNatEquality :: LookedUpTyCons -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]

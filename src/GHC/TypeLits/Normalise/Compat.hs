@@ -22,11 +22,14 @@ module GHC.TypeLits.Normalise.Compat
 -- base
 import GHC.TypeNats
   ( CmpNat )
-#if MIN_VERSION_ghc(9,2,0)
-import qualified Data.Type.Ord
-  ( OrdCond, type (<=) )
+#if MIN_VERSION_ghc(9,3,0)
 import qualified GHC.TypeError
   ( Assert )
+#endif
+#if MIN_VERSION_ghc(9,1,0)
+import qualified Data.Type.Ord
+  ( OrdCond, type (<=) )
+
 #else
 import GHC.TypeNats
   ( type (<=), type (<=?) )
@@ -43,7 +46,9 @@ import GHC.Builtin.Types
   ( cTupleTyCon, cTupleDataCon )
 #else
 import GHC.Builtin.Types
-  ( cTupleTyConName, cTupleDataConName )
+  ( cTupleTyConName )
+import GHC.Core.TyCon
+  ( tyConSingleDataCon )
 #endif
 
 -- ghc-tcplugin-api
@@ -54,46 +59,54 @@ import GHC.TcPlugin.API
 data LookedUpTyCons
   = LookedUpTyCons
     {
-#if MIN_VERSION_ghc(9,1,0)
-      ordCondTyCon :: TyCon
-    , assertTyCon :: TyCon
-       -- | @<= :: k -> k -> Constraint@
-    , leqTyCon :: TyCon
-#else
-      -- | @<= :: Nat -> Nat -> Constraint@
-      leqNatTyCon :: TyCon
-      -- | @<=? :: Nat -> Nat -> Constraint@
-    , leqQNatTyCon :: TyCon
+#if MIN_VERSION_ghc(9,3,0)
+      assertTyCon :: TyCon,
 #endif
-    , cmpNatTyCon :: TyCon
-    , c0TyCon   :: TyCon
-    , c0DataCon :: DataCon
+#if MIN_VERSION_ghc(9,1,0)
+       -- | @<= :: k -> k -> Constraint@
+      ordCondTyCon :: TyCon,
+      leqTyCon :: TyCon,
+#else
+       -- | @<= :: Nat -> Nat -> Constraint@
+      leqNatTyCon :: TyCon,
+      -- | @<=? :: Nat -> Nat -> Constraint@
+      leqQNatTyCon :: TyCon,
+#endif
+      cmpNatTyCon :: TyCon,
+      c0TyCon   :: TyCon,
+      c0DataCon :: DataCon
     }
 
 lookupTyCons :: TcPluginM Init LookedUpTyCons
 lookupTyCons = do
     cmpNatT <- lookupTHName ''GHC.TypeNats.CmpNat >>= tcLookupTyCon
+#if MIN_VERSION_ghc(9,3,0)
+    assertT <- lookupTHName ''GHC.TypeError.Assert >>= tcLookupTyCon
+#endif
 #if MIN_VERSION_ghc(9,1,0)
     leqT    <- lookupTHName ''(Data.Type.Ord.<=) >>= tcLookupTyCon
     ordCond <- lookupTHName ''Data.Type.Ord.OrdCond >>= tcLookupTyCon
-    assertT <- lookupTHName ''GHC.TypeError.Assert >>= tcLookupTyCon
     return $
       LookedUpTyCons
         { leqTyCon     = leqT
         , ordCondTyCon = ordCond
+#if MIN_VERSION_ghc(9,3,0)
         , assertTyCon  = assertT
+#endif
         , cmpNatTyCon  = cmpNatT
         , c0TyCon      = cTupleTyCon 0
         , c0DataCon    = cTupleDataCon 0
         }
 #else
-    leqNatT <- lookupTHName ''(GHC.TypeNats.<=) >>= tcLookupTyCon
-    leqQT   <- lookupTHName ''(GHC.TypeNats.<=?) >>= tcLookupTyCon
-    c0T <- tcLookupTyCon (cTupleTyConName 0)
-    c0D <- tcLookupDataCon (cTupleDataConName 0)
+    leqT  <- lookupTHName ''(GHC.TypeNats.<=)  >>= tcLookupTyCon
+    leqQT <- lookupTHName ''(GHC.TypeNats.<=?) >>= tcLookupTyCon
+    c0T   <- tcLookupTyCon (cTupleTyConName 0)
+    let c0D = tyConSingleDataCon c0T
+      -- somehow looking up the 0-tuple data constructor fails
+      -- with interface file errors, so use tyConSingleDataCon
     return $
       LookedUpTyCons
-        { leqNatTyCon  = leqNatT
+        { leqNatTyCon  = leqT
         , leqQNatTyCon = leqQT
         , c0TyCon      = c0T
         , c0DataCon    = c0D
@@ -101,13 +114,20 @@ lookupTyCons = do
         }
 #endif
 
--- | The constraint @a <= b@.
+-- | The constraint @(a <= b)@.
 mkLEqNat :: LookedUpTyCons -> Type -> Type -> PredType
 mkLEqNat tcs a b =
-#if MIN_VERSION_ghc(9,1,0)
-    mkTyConApp (leqTyCon tcs) [natKind,a,b]
+#if MIN_VERSION_ghc(9,3,0)
+  -- Starting from GHC 9.3, (a <= b) turns into 'Assert (a <=? b) msg'.
+  -- We prefer to emit 'Assert (a <=? b) msg ~ (() :: Constraint)',
+  -- in order to avoid creating an Irred constraint.
+  mkEqPredRole Nominal
+    (mkTyConApp (leqTyCon tcs) [natKind, a, b])
+    (mkTyConTy $ c0TyCon tcs)
+#elif MIN_VERSION_ghc(9,1,0)
+  mkTyConApp (leqTyCon tcs) [natKind, a, b]
 #else
-    mkTyConApp (leqNatTyCon tcs) [a,b]
+  mkTyConApp (leqNatTyCon tcs) [a, b]
 #endif
 
 -- | Is this type 'True' or 'False'?
@@ -169,15 +189,15 @@ natural numbers:
 
      (NB: it also becomes poly-kinded starting in GHC 9.1.)
   3. GHC.TypeNats.<=, which is defined:
-    (a) as @x <= y@ <=> @(x <=? y) ~ True@ in GHC prior to 9.1.
-    (b) as @Assert (x <=? y) ...@ in GHC 9.1 and above.
+    (a) as @x <= y@ <=> @(x <=? y) ~ True@ in GHC prior to 9.3.
+    (b) as @Assert (x <=? y) ...@ in GHC 9.3 and above.
 
 To catch all of these, we must thus handle all of the following type families:
 
   Case 1. CmpNat.
   Case 2. (<=?) in GHC 9.1 and prior.
   Case 3. OrdCond in GHC 9.1 and later.
-  Case 4. Assert, in GHC 9.1 and later.
+  Case 4. Assert, in GHC 9.3 and later.
 
 These are all the built-in type families defined in GHC used to express
 inequalities between natural numbers.
@@ -221,7 +241,7 @@ isNatRel tcs ty0
       = Nothing
 
     goTc _tc _tys
-#if MIN_VERSION_ghc(9,1,0)
+#if MIN_VERSION_ghc(9,3,0)
       -- Look through 'Assert'.
       -- Case 4 in Note [Recognising Nat inequalities]
       | _tc == assertTyCon tcs

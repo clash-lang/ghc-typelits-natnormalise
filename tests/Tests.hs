@@ -506,7 +506,7 @@ oneLtPowSubst :: forall a b. (b ~ (2^a)) => Proxy a -> Proxy a
 oneLtPowSubst = go
   where
     go :: 1 <= b => Proxy a -> Proxy a
-    go = id 
+    go = id
 
 main :: IO ()
 main = defaultMain tests
