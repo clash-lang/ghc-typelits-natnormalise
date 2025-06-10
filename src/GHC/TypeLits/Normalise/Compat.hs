@@ -20,6 +20,10 @@ module GHC.TypeLits.Normalise.Compat
   ) where
 
 -- base
+#if !MIN_VERSION_ghc(9,1,0)
+import Data.Maybe
+  ( mapMaybe )
+#endif
 import GHC.TypeNats
   ( CmpNat )
 #if MIN_VERSION_ghc(9,3,0)
@@ -206,16 +210,16 @@ inequalities between natural numbers.
 -- | Is this an equality or inequality between two natural numbers?
 --
 -- See Note [Recognising Nat inequalities].
-isNatRel :: LookedUpTyCons -> PredType -> Maybe Relation
-isNatRel tcs ty0
+isNatRel :: LookedUpTyCons -> [Ct] -> PredType -> Maybe Relation
+isNatRel tcs givens ty0
   | EqPred NomEq x y <- classifyPredType ty0
   = if
       -- (b :: Bool) ~ y
       | Just b <- boolean_maybe x
-      -> booleanRel b y
+      -> booleanRel givens b y
       -- x ~ (b :: Bool)
       | Just b <- boolean_maybe y
-      -> booleanRel b x
+      -> booleanRel givens b x
       | Just o <- ordering_maybe x
       -- (o :: Ordering) ~ y
       -> orderingRel o y
@@ -246,16 +250,15 @@ isNatRel tcs ty0
       -- Case 4 in Note [Recognising Nat inequalities]
       | _tc == assertTyCon tcs
       , [ty, _] <- _tys
-      = booleanRel True ty
+      = booleanRel givens True ty
 #endif
       | otherwise
       = Nothing
 
     -- Recognise whether @(b :: Bool) ~ ty@ is an equality/inequality
-    booleanRel :: Bool -> Type -> Maybe Relation
-    booleanRel b ty =
+    booleanRel :: [Ct] -> Bool -> Type -> Maybe Relation
+    booleanRel _givens' b ty =
       case splitTyConApp_maybe ty of
-        Nothing -> Nothing
         Just (tc, tys)
 #if MIN_VERSION_ghc(9,1,0)
           -- OrdCond (CmpNat x y) lt eq gt ~ b
@@ -300,7 +303,17 @@ isNatRel tcs ty0
 #endif
           | otherwise
           -> Nothing
+        Nothing
+#if !MIN_VERSION_ghc(9,1,0)
+          -- Deal with flattening variables in GHC 9.0 and below
 
+          -- TODO: clean this up.
+          | let tys' = lookupTypeInGivens ty _givens'
+          , r:_ <- mapMaybe (booleanRel [] b) tys'
+          -> Just r
+          | otherwise
+#endif
+          -> Nothing
     -- Recognise whether @(o :: Ordering) ~ ty@ is an equality/inequality
     orderingRel :: Ordering -> Type -> Maybe Relation
     orderingRel o ty =
@@ -324,3 +337,17 @@ isNatRel tcs ty0
                 Just ((x,y), Just False)
           | otherwise
           -> Nothing
+
+#if !MIN_VERSION_ghc(9,1,0)
+lookupTypeInGivens :: Type -> [Ct] -> [Type]
+lookupTypeInGivens ty = concatMap (go . classifyPredType . ctPred)
+  where
+    go (EqPred NomEq lhs rhs)
+      | eqType ty lhs
+      = [rhs]
+      | eqType ty rhs
+      = [lhs]
+      | otherwise
+      = []
+    go _ = []
+#endif

@@ -318,7 +318,7 @@ decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanted
           fmap mkNonCanonical . newWanted (ctLoc ct)
         liftIO $
           modifyIORef' gen'd $ union (fromList newlyDone)
-        let unit_givens = concatMap (toNatEquality tcs) givens
+        let unit_givens = concatMap (toNatEquality tcs givens) givens
         sr <- simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
@@ -586,9 +586,9 @@ subToPred Opts{..} tcs
     map (\ (a, b) -> mkLEqNat tcs b a)
 
 -- | Extract all Nat equality and inequality constraints from another constraint.
-toNatEquality :: LookedUpTyCons -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
-toNatEquality tcs ct0
-  | Just ((x,y), mbLTE) <- isNatRel tcs pred0
+toNatEquality :: LookedUpTyCons -> [Ct] -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+toNatEquality tcs givens ct0
+  | Just ((x,y), mbLTE) <- isNatRel tcs givens pred0
   , let
       (x',k1) = runWriter (normaliseNat x)
       (y',k2) = runWriter (normaliseNat y)
