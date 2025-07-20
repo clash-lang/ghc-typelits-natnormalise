@@ -28,6 +28,10 @@ import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
 import Language.Haskell.TH        (litE, stringL)
 import Language.Haskell.TH.Syntax (runIO)
 
+#if __GLASGOW_HASKELL__ >= 901
+import qualified Data.Type.Ord
+#endif
+
 testProxy1 :: Proxy (x + 1) -> Proxy (2 + x)
 testProxy1 = id
 
@@ -194,8 +198,8 @@ testProxy10Errors =
 #if __GLASGOW_HASKELL__ >= 912
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
-          then litE $ stringL "Couldn't match type ‘ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
-          else litE $ stringL "Couldn't match type `ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
     )
   ,$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
@@ -211,8 +215,8 @@ testProxy10Errors =
 #elif __GLASGOW_HASKELL__ >= 910
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
-          then litE $ stringL "Couldn't match type ‘ghc-internal-9.1001.0:GHC.Internal.Data.Type.Ord.OrdCond"
-          else litE $ stringL "Couldn't match type `ghc-internal-9.1001.0:GHC.Internal.Data.Type.Ord.OrdCond"
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
     )
   ,$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
@@ -354,8 +358,8 @@ testProxy14Errors =
 #if __GLASGOW_HASKELL__ >= 912
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
-          then litE $ stringL "Couldn't match type ‘ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
-          else litE $ stringL "Couldn't match type `ghc-internal-9.1201.0:GHC.Internal.Data.Type.Ord.OrdCond"
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
     )
   ,$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
@@ -371,8 +375,8 @@ testProxy14Errors =
 #elif __GLASGOW_HASKELL__ >= 910
   [$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
-          then litE $ stringL "Couldn't match type ‘ghc-internal-9.1001.0:GHC.Internal.Data.Type.Ord.OrdCond"
-          else litE $ stringL "Couldn't match type `ghc-internal-9.1001.0:GHC.Internal.Data.Type.Ord.OrdCond"
+          then litE $ stringL "Couldn't match type ‘Data.Type.Ord.OrdCond"
+          else litE $ stringL "Couldn't match type `Data.Type.Ord.OrdCond"
     )
   ,$(do localeEncoding <- runIO (getLocaleEncoding)
         if textEncodingName localeEncoding == textEncodingName utf8
