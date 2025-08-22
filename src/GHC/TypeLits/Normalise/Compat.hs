@@ -57,7 +57,7 @@ import GHC.Builtin.Types
 import GHC.Builtin.Types
   ( cTupleTyConName )
 #endif
-#if MIN_VERSION_ghc(9,5,0)
+#if MIN_VERSION_ghc(9,7,0)
 import GHC.Types.Unique.Map
   ( UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList )
 #else
@@ -353,7 +353,7 @@ upToGivens givensTyConSubst f ty =
     maybe [] NE.toList $ splitTyConApp_upTo givensTyConSubst ty
 
 --------------------------------------------------------------------------------
-#if !MIN_VERSION_ghc(9,5,0)
+#if !MIN_VERSION_ghc(9,7,0)
 
 newtype UniqMap k a = UniqMap ( UniqFM k (k, a) )
     deriving (Eq, Functor)
