@@ -1,12 +1,14 @@
 
 {-# LANGUAGE CPP                   #-}
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveFunctor         #-}
 {-# LANGUAGE ExplicitNamespaces    #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE RoleAnnotations       #-}
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE ViewPatterns          #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
@@ -17,13 +19,16 @@ module GHC.TypeLits.Normalise.Compat
   ( LookedUpTyCons(..), lookupTyCons
   , mkLEqNat
   , Relation, isNatRel
+
+  , UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList
+
   ) where
 
 -- base
-#if !MIN_VERSION_ghc(9,1,0)
-import Data.Maybe
-  ( mapMaybe )
-#endif
+import qualified Data.List.NonEmpty as NE
+  ( toList )
+import Data.Foldable
+  ( asum )
 import GHC.TypeNats
   ( CmpNat )
 #if MIN_VERSION_ghc(9,3,0)
@@ -51,12 +56,22 @@ import GHC.Builtin.Types
 #else
 import GHC.Builtin.Types
   ( cTupleTyConName )
-import GHC.Core.TyCon
-  ( tyConSingleDataCon )
 #endif
+#if MIN_VERSION_ghc(9,5,0)
+import GHC.Types.Unique.Map
+  ( UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList )
+#else
+import GHC.Types.Unique
+  ( Uniquable )
+import GHC.Types.Unique.FM
+  ( intersectUFM_C, nonDetEltsUFM )
+#endif
+
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
+import GHC.TcPlugin.API.TyConSubst
+  ( TyConSubst, splitTyConApp_upTo )
 
 --------------------------------------------------------------------------------
 
@@ -94,9 +109,9 @@ lookupTyCons = do
       LookedUpTyCons
         { leqTyCon     = leqT
         , ordCondTyCon = ordCond
-#if MIN_VERSION_ghc(9,3,0)
+#  if MIN_VERSION_ghc(9,3,0)
         , assertTyCon  = assertT
-#endif
+#  endif
         , cmpNatTyCon  = cmpNatT
         , c0TyCon      = cTupleTyCon 0
         , c0DataCon    = cTupleDataCon 0
@@ -135,40 +150,48 @@ mkLEqNat tcs a b =
 #endif
 
 -- | Is this type 'True' or 'False'?
-boolean_maybe :: Type -> Maybe Bool
-boolean_maybe ty
-  | Just (tc, []) <- splitTyConApp_maybe ty
-  = if | tc == promotedTrueDataCon
-       -> Just True
-       | tc == promotedFalseDataCon
-       -> Just False
-       | otherwise
-       -> Nothing
-  | otherwise
-  = Nothing
+boolean_maybe :: TyConSubst -> Type -> Maybe Bool
+boolean_maybe givensTyConSubst = upToGivens givensTyConSubst go
+  where
+    go (tc, [])
+      | tc == promotedTrueDataCon
+      = Just True
+      | tc == promotedFalseDataCon
+      = Just False
+    go _ = Nothing
 
 -- | Is this type 'LT', 'EQ' or 'GT'?
-ordering_maybe :: Type -> Maybe Ordering
-ordering_maybe ty
-  | Just (tc, []) <- splitTyConApp_maybe ty
-  = if | tc == promotedLTDataCon
-       -> Just LT
-       | tc == promotedEQDataCon
-       -> Just EQ
-       | tc == promotedGTDataCon
-       -> Just GT
-       | otherwise
-       -> Nothing
-  | otherwise
-  = Nothing
+ordering_maybe :: TyConSubst -> Type -> Maybe Ordering
+ordering_maybe givensTyConSubst = upToGivens givensTyConSubst go
+  where
+    go (tc, [])
+      | tc == promotedLTDataCon
+      = Just LT
+      | tc == promotedEQDataCon
+      = Just EQ
+      | tc == promotedGTDataCon
+      = Just GT
+    go _ = Nothing
+
+#if MIN_VERSION_ghc(9,1,0)
+cmpNat_maybe :: LookedUpTyCons -> TyConSubst -> Type -> Maybe (Type, Type)
+cmpNat_maybe tcs givensTyConSubst = upToGivens givensTyConSubst go
+  where
+    go (tc, [x,y])
+      | tc == cmpNatTyCon tcs
+      = Just (x,y)
+    go _ = Nothing
+#endif
 
 -- | Is this type @() :: Constraint@?
-isUnitCTuple :: PredType -> Bool
-isUnitCTuple pty
-  | Just (tc, []) <- splitTyConApp_maybe pty
-  = isCTupleTyConName (tyConName tc)
-  | otherwise
-  = False
+isUnitCTuple :: TyConSubst -> PredType -> Bool
+isUnitCTuple givensTyConSubst =
+  maybe False (const True) . upToGivens givensTyConSubst go
+    where
+      go (tc, [])
+        | isCTupleTyConName (tyConName tc)
+        = Just ()
+      go _ = Nothing
 
 -- | A relation between two natural numbers, @((x,y), mbRel)@.
 --
@@ -210,27 +233,27 @@ inequalities between natural numbers.
 -- | Is this an equality or inequality between two natural numbers?
 --
 -- See Note [Recognising Nat inequalities].
-isNatRel :: LookedUpTyCons -> [Ct] -> PredType -> Maybe Relation
-isNatRel tcs givens ty0
+isNatRel :: LookedUpTyCons -> TyConSubst -> PredType -> Maybe Relation
+isNatRel tcs givensTyConSubst ty0
   | EqPred NomEq x y <- classifyPredType ty0
   = if
       -- (b :: Bool) ~ y
-      | Just b <- boolean_maybe x
-      -> booleanRel givens b y
+      | Just b <- boolean_maybe givensTyConSubst x
+      -> booleanRel b y
       -- x ~ (b :: Bool)
-      | Just b <- boolean_maybe y
-      -> booleanRel givens b x
-      | Just o <- ordering_maybe x
+      | Just b <- boolean_maybe givensTyConSubst y
+      -> booleanRel b x
+      | Just o <- ordering_maybe givensTyConSubst x
       -- (o :: Ordering) ~ y
       -> orderingRel o y
-      | Just o <- ordering_maybe y
+      | Just o <- ordering_maybe givensTyConSubst y
       -- x ~ (o :: Ordering)
       -> orderingRel o x
       -- (() :: Constraint) ~ y
-      | isUnitCTuple x
+      | isUnitCTuple givensTyConSubst x
       -> goTy y
       -- x ~ (() :: Constraint)
-      | isUnitCTuple y
+      | isUnitCTuple givensTyConSubst y
       -> goTy x
       | otherwise
       -> Nothing
@@ -238,11 +261,7 @@ isNatRel tcs givens ty0
   = goTy ty0
   where
     goTy :: PredType -> Maybe Relation
-    goTy ty
-      | Just (tc, tys) <- splitTyConApp_maybe ty
-      = goTc tc tys
-      | otherwise
-      = Nothing
+    goTy = upToGivens givensTyConSubst (uncurry goTc)
 
     goTc _tc _tys
 #if MIN_VERSION_ghc(9,3,0)
@@ -250,104 +269,106 @@ isNatRel tcs givens ty0
       -- Case 4 in Note [Recognising Nat inequalities]
       | _tc == assertTyCon tcs
       , [ty, _] <- _tys
-      = booleanRel givens True ty
+      = booleanRel True ty
 #endif
       | otherwise
       = Nothing
 
     -- Recognise whether @(b :: Bool) ~ ty@ is an equality/inequality
-    booleanRel :: [Ct] -> Bool -> Type -> Maybe Relation
-    booleanRel _givens' b ty =
-      case splitTyConApp_maybe ty of
-        Just (tc, tys)
-#if MIN_VERSION_ghc(9,1,0)
-          -- OrdCond (CmpNat x y) lt eq gt ~ b
-          -- Case 3 in Note [Recognising Nat inequalities]
-          | tc == ordCondTyCon tcs
-          , [_,cmp,ltTy,eqTy,gtTy] <- tys
-          , Just lt <- boolean_maybe ltTy
-          , Just eq <- boolean_maybe eqTy
-          , Just gt <- boolean_maybe gtTy
-          , Just (tcCmpNat, [x,y]) <- splitTyConApp_maybe cmp
-          , tcCmpNat == cmpNatTyCon tcs
-          -> if -- (x <= y) ~ b
-                | lt && eq && not gt
-                -> Just ((x,y), Just b)
-                -- (x < y) ~ b
-                --   <=>
-                -- (y <= x) ~ not b
-                | lt && not eq && not gt
-                -> Just ((y,x), Just $ not b)
-                -- (x >= y) ~ b
-                --  <=>
-                -- (y <= x) ~ b
-                | not lt && eq && gt
-                -> Just ((y,x), Just b)
-                -- (x > y) ~ b
-                --   <=>
-                -- (x <= y) ~ not b
-                | not lt && not eq && gt
-                -> Just ((x,y), Just $ not b)
-                -- x ~ y
-                |  ( b && not lt && eq && not gt )
-                || ( not b && lt && not eq && gt )
-                -> Just ((x,y), Nothing)
-                | otherwise
-                -> Nothing
-#else
-          -- (x <=? y) ~ b
-          -- Case 2 in Note [Recognising Nat inequalities]
-          | tc == leqQNatTyCon tcs
-          , [x,y] <- tys
-          -> Just ((x,y), Just b)
-#endif
-          | otherwise
-          -> Nothing
-        Nothing
-#if !MIN_VERSION_ghc(9,1,0)
-          -- Deal with flattening variables in GHC 9.0 and below
+    booleanRel :: Bool -> Type -> Maybe Relation
+    booleanRel b = upToGivens givensTyConSubst (goBoolean b)
 
-          -- TODO: clean this up.
-          | let tys' = lookupTypeInGivens ty _givens'
-          , r:_ <- mapMaybe (booleanRel [] b) tys'
-          -> Just r
+    goBoolean :: Bool -> (TyCon, [Type]) -> Maybe Relation
+    goBoolean b (tc, tys)
+#if MIN_VERSION_ghc(9,1,0)
+      -- OrdCond (CmpNat x y) lt eq gt ~ b
+      -- Case 3 in Note [Recognising Nat inequalities]
+      | tc == ordCondTyCon tcs
+      , [_,cmp,ltTy,eqTy,gtTy] <- tys
+      , Just lt <- boolean_maybe givensTyConSubst ltTy
+      , Just eq <- boolean_maybe givensTyConSubst eqTy
+      , Just gt <- boolean_maybe givensTyConSubst gtTy
+      , Just (x,y) <- cmpNat_maybe tcs givensTyConSubst cmp
+      = if -- (x <= y) ~ b
+          | lt && eq && not gt
+          -> Just ((x,y), Just b)
+          -- (x < y) ~ b
+          --   <=>
+          -- (y <= x) ~ not b
+          | lt && not eq && not gt
+          -> Just ((y,x), Just $ not b)
+          -- (x >= y) ~ b
+          --  <=>
+          -- (y <= x) ~ b
+          | not lt && eq && gt
+          -> Just ((y,x), Just b)
+          -- (x > y) ~ b
+          --   <=>
+          -- (x <= y) ~ not b
+          | not lt && not eq && gt
+          -> Just ((x,y), Just $ not b)
+          -- x ~ y
+          |  ( b && not lt && eq && not gt )
+          || ( not b && lt && not eq && gt )
+          -> Just ((x,y), Nothing)
           | otherwise
-#endif
           -> Nothing
+#else
+      -- (x <=? y) ~ b
+      -- Case 2 in Note [Recognising Nat inequalities]
+      | tc == leqQNatTyCon tcs
+      , [x,y] <- tys
+      = Just ((x,y), Just b)
+#endif
+      | otherwise
+      = Nothing
+
     -- Recognise whether @(o :: Ordering) ~ ty@ is an equality/inequality
     orderingRel :: Ordering -> Type -> Maybe Relation
-    orderingRel o ty =
-      case splitTyConApp_maybe ty of
-        Nothing -> Nothing
-        Just (tc, tys)
-          -- CmpNat x y ~ o
-          -- Case 1 in Note [Recognising Nat inequalities]
-          | tc == cmpNatTyCon tcs
-          , [x,y] <- tys
-          ->
-            case o of
-              EQ ->
-                -- x ~ y
-                Just ((x,y), Nothing)
-              LT ->
-                -- x < y  <=>  (y <= x) ~ False
-                Just ((y,x), Just False)
-              GT ->
-                -- x > y  <=>  (x <= y) ~ False
-                Just ((x,y), Just False)
-          | otherwise
-          -> Nothing
+    orderingRel o = upToGivens givensTyConSubst (goOrdering o)
 
-#if !MIN_VERSION_ghc(9,1,0)
-lookupTypeInGivens :: Type -> [Ct] -> [Type]
-lookupTypeInGivens ty = concatMap (go . classifyPredType . ctPred)
-  where
-    go (EqPred NomEq lhs rhs)
-      | eqType ty lhs
-      = [rhs]
-      | eqType ty rhs
-      = [lhs]
+    goOrdering :: Ordering -> (TyCon, [Type]) -> Maybe Relation
+    goOrdering o (tc, tys)
+      -- CmpNat x y ~ o
+      -- Case 1 in Note [Recognising Nat inequalities]
+      | tc == cmpNatTyCon tcs
+      , [x,y] <- tys
+      =
+        case o of
+          EQ ->
+            -- x ~ y
+            Just ((x,y), Nothing)
+          LT ->
+            -- x < y  <=>  (y <= x) ~ False
+            Just ((y,x), Just False)
+          GT ->
+            -- x > y  <=>  (x <= y) ~ False
+            Just ((x,y), Just False)
       | otherwise
-      = []
-    go _ = []
+      = Nothing
+
+upToGivens :: TyConSubst -> ((TyCon, [Type]) -> Maybe a) -> Type -> Maybe a
+upToGivens givensTyConSubst f ty =
+  asum $ map f $
+    maybe [] NE.toList $ splitTyConApp_upTo givensTyConSubst ty
+
+--------------------------------------------------------------------------------
+#if !MIN_VERSION_ghc(9,5,0)
+
+newtype UniqMap k a = UniqMap ( UniqFM k (k, a) )
+    deriving (Eq, Functor)
+type role UniqMap nominal representational
+
+intersectUniqMap_C :: (a -> b -> c) -> UniqMap k a -> UniqMap k b -> UniqMap k c
+intersectUniqMap_C f (UniqMap m1) (UniqMap m2) = UniqMap $ intersectUFM_C (\(k, a) (_, b) -> (k, f a b)) m1 m2
+{-# INLINE intersectUniqMap_C #-}
+
+listToUniqMap :: Uniquable k => [(k,a)] -> UniqMap k a
+listToUniqMap kvs = UniqMap (listToUFM [ (k,(k,v)) | (k,v) <- kvs])
+{-# INLINE listToUniqMap #-}
+
+nonDetUniqMapToList :: UniqMap k a -> [(k, a)]
+nonDetUniqMapToList (UniqMap m) = nonDetEltsUFM m
+{-# INLINE nonDetUniqMapToList #-}
+
 #endif

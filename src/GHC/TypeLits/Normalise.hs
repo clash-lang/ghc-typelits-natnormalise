@@ -175,6 +175,7 @@ import Data.IORef
   ( IORef, newIORef, readIORef, modifyIORef' )
 import Data.List
   ( partition, stripPrefix, find )
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe
   ( mapMaybe, catMaybes )
 import Data.Set
@@ -190,6 +191,8 @@ import GHC.Builtin.Types.Literals
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
+import GHC.TcPlugin.API.TyConSubst
+  ( TyConSubst, mkTyConSubst, splitTyConApp_upTo )
 import GHC.Plugins
   ( Plugin(..), defaultPlugin, purePlugin )
 import GHC.Utils.Outputable
@@ -292,7 +295,8 @@ decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanted
     let wanteds = if null wanteds0
                   then []
                   else wanteds0 ++ deriveds
-        unit_wanteds = concatMap (toNatEquality tcs givens) wanteds
+        givensTyConSubst = mkTyConSubst givens
+        unit_wanteds = concatMap (toNatEquality tcs givensTyConSubst) wanteds
         nonEqs = filter ( not
                         . (\p -> isEqPred p || isEqClassPred p)
                         . ctEvPred
@@ -318,7 +322,7 @@ decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanted
           fmap mkNonCanonical . newWanted (ctLoc ct)
         liftIO $
           modifyIORef' gen'd $ union (fromList newlyDone)
-        let unit_givens = concatMap (toNatEquality tcs givens) givens
+        let unit_givens = concatMap (toNatEquality tcs givensTyConSubst) givens
         sr <- simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- forM reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
@@ -586,9 +590,9 @@ subToPred Opts{..} tcs
     map (\ (a, b) -> mkLEqNat tcs b a)
 
 -- | Extract all Nat equality and inequality constraints from another constraint.
-toNatEquality :: LookedUpTyCons -> [Ct] -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
-toNatEquality tcs givens ct0
-  | Just ((x,y), mbLTE) <- isNatRel tcs givens pred0
+toNatEquality :: LookedUpTyCons -> TyConSubst -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+toNatEquality tcs givensTyConSubst ct0
+  | Just ((x,y), mbLTE) <- isNatRel tcs givensTyConSubst pred0
   , let
       (x',k1) = runWriter (normaliseNat x)
       (y',k2) = runWriter (normaliseNat y)
@@ -611,9 +615,12 @@ toNatEquality tcs givens ct0
     goNomEq lhs rhs
       -- Recur into a TyCon application for TyCons that we **do not** rewrite,
       -- e.g. peek inside the Maybe in 'Maybe (x + y) ~ Maybe (y + x)'.
-      | Just (tc , xs) <- splitTyConApp_maybe lhs
-      , Just (tc', ys) <- splitTyConApp_maybe rhs
-      , tc == tc'
+      | Just tcApps1 <- splitTyConApp_upTo givensTyConSubst lhs
+      , Just tcApps2 <- splitTyConApp_upTo givensTyConSubst rhs
+      , let tcAppsMap1 = listToUniqMap $ NE.toList tcApps1
+            tcAppsMap2 = listToUniqMap $ NE.toList tcApps2
+            tcAppPairs = intersectUniqMap_C (,) tcAppsMap1 tcAppsMap2
+      , (tc, (xs, ys)):_ <- nonDetUniqMapToList tcAppPairs
       , not $ tc `elem` [typeNatAddTyCon, typeNatSubTyCon, typeNatMulTyCon, typeNatExpTyCon]
       , let subs = filter (not . uncurry eqType) (zip xs ys)
       = concatMap (uncurry rewrite) subs
