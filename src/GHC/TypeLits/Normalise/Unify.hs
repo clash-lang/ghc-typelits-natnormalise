@@ -10,6 +10,8 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE RecordWildCards            #-}
 
+{-# LANGUAGE BangPatterns #-}
+
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module GHC.TypeLits.Normalise.Unify
@@ -47,22 +49,27 @@ import Control.Arrow
   ( first, second )
 import Control.Monad.Trans.Writer.Strict
   ( Writer, WriterT(..), runWriter, tell )
+import Data.Foldable
+  ( asum )
 import Data.Function
   ( on )
 import Data.List
   ( (\\), intersect, nub )
 import Data.Maybe
   ( fromMaybe, mapMaybe, isJust )
-import Data.Set
-  ( Set )
-import qualified Data.Set as Set
-
+import Data.Traversable
+  ( for )
 import GHC.Base
   ( (==#), isTrue# )
 import GHC.Integer
   ( smallInteger )
 import GHC.Integer.Logarithms
   ( integerLogBase# )
+
+-- containers
+import Data.Set
+  ( Set )
+import qualified Data.Set as Set
 
 -- ghc
 import GHC.Builtin.Types.Literals
@@ -80,6 +87,8 @@ import GHC.TcPlugin.API
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
+import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
+import qualified Data.List.NonEmpty as NE
 
 --------------------------------------------------------------------------------
 
@@ -103,9 +112,10 @@ type CoreSymbol  = Symbol TyVar CType
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: Type -> Writer [(Type,Type)] CoreSOP
-normaliseNat ty
-  | Just (tc, xs) <- splitTyConApp_maybe ty
+normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] CoreSOP
+normaliseNat givensTyConSubst ty
+  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty
+  , (tc, xs) : _ <- NE.filter ((`elem` knownTyCons) . fst) tc_apps
   = goTyConApp tc xs
   | Just i <- isNumLitTy ty
   = return (S [P [I i]])
@@ -115,15 +125,18 @@ normaliseNat ty
   = return (S [P [C (CType ty)]])
     where
       goTyConApp tc [x,y]
-        | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
+        | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat givensTyConSubst x <*> normaliseNat givensTyConSubst y
         | tc == typeNatSubTyCon = do
           tell [(x,y)]
-          mergeSOPAdd <$> normaliseNat x
-                      <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
-        | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
-        | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
+          mergeSOPAdd <$> normaliseNat givensTyConSubst x
+                      <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat givensTyConSubst y)
+        | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat givensTyConSubst x <*> normaliseNat givensTyConSubst y
+        | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat givensTyConSubst x <*> normaliseNat givensTyConSubst y
       goTyConApp tc xs =
         return (S [P [C (CType $ mkTyConApp tc xs)]])
+
+knownTyCons :: [TyCon]
+knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
 
 
 -- | Runs writer action. If the result is /Nothing/, writer actions will be
@@ -140,26 +153,25 @@ maybeRunWriter w =
 -- | Applies 'normaliseNat' and 'simplifySOP' to type or predicates to reduce
 -- any occurrences of sub-terms of /kind/ 'GHC.TypeLits.Nat'. If the result is
 -- the same as input, returns @'Nothing'@.
-normaliseNatEverywhere :: Type -> Writer [(Type, Type)] (Maybe Type)
-normaliseNatEverywhere ty0
-  | Just (tc,fields) <- splitTyConApp_maybe ty0
-  = if tc `elem` knownTyCons
-    then do
-      -- Normalize under current type constructor application. 'go' skips all
-      -- known type constructors.
-      ty1M <- maybeRunWriter (go tc fields)
-      let ty1 = fromMaybe ty0 ty1M
-      -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-      ty2 <- normaliseSimplifyNat ty1
-      -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
-      -- TODO: probably cheaper than checking for equality here.
-      pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
-    else go tc fields
+normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe Type)
+normaliseNatEverywhere givensTyConSubst ty0
+  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty0
+  = fmap asum $ for tc_apps $ \ (tc, fields) ->
+      if tc `elem` knownTyCons
+      then do
+        -- Normalize under current type constructor application. 'go' skips all
+        -- known type constructors.
+        ty1M <- maybeRunWriter (go tc fields)
+        let ty1 = fromMaybe ty0 ty1M
+        -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
+        ty2 <- normaliseSimplifyNat givensTyConSubst ty1
+        -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
+        -- TODO: probably cheaper than checking for equality here.
+        pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
+      else go tc fields
   | otherwise
   = pure Nothing
  where
-  knownTyCons :: [TyCon]
-  knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
 
   -- Normalize given type, but ignore all top-level
   go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe Type)
@@ -172,15 +184,15 @@ normaliseNatEverywhere ty0
    where
     cont ty'
       | tc_ `elem` knownTyCons
-      , Just (tc', fields') <- splitTyConApp_maybe ty'
-      = go tc' fields'
+      , Just tc_apps' <- splitTyConApp_upTo givensTyConSubst ty'
+      = asum <$> traverse (uncurry go) tc_apps'
       | otherwise
-      = normaliseNatEverywhere ty'
+      = normaliseNatEverywhere givensTyConSubst ty'
 
-normaliseSimplifyNat :: Type -> Writer [(Type, Type)] Type
-normaliseSimplifyNat ty
+normaliseSimplifyNat :: TyConSubst -> Type -> Writer [(Type, Type)] Type
+normaliseSimplifyNat givensTyConSubst ty
   | typeKind ty `eqType` natKind = do
-      ty' <- normaliseNat ty
+      ty' <- normaliseNat givensTyConSubst ty
       return $ reifySOP $ simplifySOP ty'
   | otherwise = return ty
 

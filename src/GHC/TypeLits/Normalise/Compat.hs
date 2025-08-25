@@ -17,6 +17,7 @@
 
 module GHC.TypeLits.Normalise.Compat
   ( LookedUpTyCons(..), lookupTyCons
+  , upToGivens
   , mkLEqNat
   , Relation, isNatRel
 
