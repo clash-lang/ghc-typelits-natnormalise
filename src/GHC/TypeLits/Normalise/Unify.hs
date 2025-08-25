@@ -9,8 +9,8 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TupleSections              #-}
 
-{-# LANGUAGE BangPatterns #-}
 
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
@@ -55,6 +55,7 @@ import Data.Function
   ( on )
 import Data.List
   ( (\\), intersect, nub )
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe
   ( fromMaybe, mapMaybe, isJust )
 import Data.Traversable
@@ -88,7 +89,6 @@ import GHC.TcPlugin.API
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
 import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
-import qualified Data.List.NonEmpty as NE
 
 --------------------------------------------------------------------------------
 
@@ -112,28 +112,39 @@ type CoreSymbol  = Symbol TyVar CType
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] CoreSOP
+normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
 normaliseNat givensTyConSubst ty
   | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty
-  , (tc, xs) : _ <- NE.filter ((`elem` knownTyCons) . fst) tc_apps
-  = goTyConApp tc xs
+  , (tc, xs, cos0) : _ <- NE.filter (( \ ( tc, _, _) -> tc `elem` knownTyCons)) tc_apps
+  = second ( ++ cos0 ) <$> goTyConApp tc xs
   | Just i <- isNumLitTy ty
-  = return (S [P [I i]])
+  = return (S [P [I i]], [])
   | Just v <- getTyVar_maybe ty
-  = return (S [P [V v]])
+  = return (S [P [V v]], [])
   | otherwise
-  = return (S [P [C (CType ty)]])
+  = return (S [P [C (CType ty)]], [])
     where
+      goTyConApp :: TyCon -> [Type] -> Writer [(Type,Type)] (CoreSOP, [Coercion])
       goTyConApp tc [x,y]
-        | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat givensTyConSubst x <*> normaliseNat givensTyConSubst y
+        | tc == typeNatAddTyCon =
+            do (x', cos1) <- normaliseNat givensTyConSubst x
+               (y', cos2) <- normaliseNat givensTyConSubst y
+               return (mergeSOPAdd x' y', cos1 ++ cos2)
         | tc == typeNatSubTyCon = do
-          tell [(x,y)]
-          mergeSOPAdd <$> normaliseNat givensTyConSubst x
-                      <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat givensTyConSubst y)
-        | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat givensTyConSubst x <*> normaliseNat givensTyConSubst y
-        | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat givensTyConSubst x <*> normaliseNat givensTyConSubst y
+          (x', cos1) <- normaliseNat givensTyConSubst x
+          (y', cos2) <- normaliseNat givensTyConSubst y
+          tell [(reifySOP $ simplifySOP x', reifySOP $ simplifySOP y')]
+          return (mergeSOPAdd x' (mergeSOPMul (S [P [I (-1)]]) y'), cos1 ++ cos2)
+        | tc == typeNatMulTyCon =
+          do (x', cos1) <- normaliseNat givensTyConSubst x
+             (y', cos2) <- normaliseNat givensTyConSubst y
+             return (mergeSOPMul x' y', cos1 ++ cos2)
+        | tc == typeNatExpTyCon =
+          do (x', cos1) <- normaliseNat givensTyConSubst x
+             (y', cos2) <- normaliseNat givensTyConSubst y
+             return (normaliseExp x' y', cos1 ++ cos2)
       goTyConApp tc xs =
-        return (S [P [C (CType $ mkTyConApp tc xs)]])
+        return (S [P [C (CType $ mkTyConApp tc xs)]], [])
 
 knownTyCons :: [TyCon]
 knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
@@ -153,48 +164,50 @@ maybeRunWriter w =
 -- | Applies 'normaliseNat' and 'simplifySOP' to type or predicates to reduce
 -- any occurrences of sub-terms of /kind/ 'GHC.TypeLits.Nat'. If the result is
 -- the same as input, returns @'Nothing'@.
-normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe Type)
+normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
 normaliseNatEverywhere givensTyConSubst ty0
   | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty0
-  = fmap asum $ for tc_apps $ \ (tc, fields) ->
+  = fmap asum $ for tc_apps $ \ (tc, fields, cos1) ->
       if tc `elem` knownTyCons
       then do
         -- Normalize under current type constructor application. 'go' skips all
         -- known type constructors.
         ty1M <- maybeRunWriter (go tc fields)
-        let ty1 = fromMaybe ty0 ty1M
+        let (ty1, cos2) = fromMaybe (ty0, []) ty1M
         -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-        ty2 <- normaliseSimplifyNat givensTyConSubst ty1
+        (ty2, cos3) <- normaliseSimplifyNat givensTyConSubst ty1
         -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
         -- TODO: probably cheaper than checking for equality here.
-        pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
+        pure (if ty2 `eqType` ty1 then second ((cos1 ++ cos2) ++) <$> ty1M else Just (ty2, cos1 ++ cos2 ++ cos3))
       else go tc fields
   | otherwise
   = pure Nothing
  where
 
   -- Normalize given type, but ignore all top-level
-  go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe Type)
+  go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
   go tc_ fields0_ = do
     fields1_ <- mapM (maybeRunWriter . cont) fields0_
     if any isJust fields1_ then
-      pure (Just (mkTyConApp tc_ (zipWith fromMaybe fields0_ fields1_)))
+      let cos' = concat $ mapMaybe (fmap snd) fields1_
+      in
+         pure (Just (mkTyConApp tc_ (zipWith (\ f0 f1 -> maybe f0 fst f1) fields0_ fields1_), cos'))
     else
       pure Nothing
    where
     cont ty'
       | tc_ `elem` knownTyCons
       , Just tc_apps' <- splitTyConApp_upTo givensTyConSubst ty'
-      = asum <$> traverse (uncurry go) tc_apps'
+      = asum <$> traverse ( \ (tc', flds', cos') -> fmap (second (cos' ++)) <$> go tc' flds') tc_apps'
       | otherwise
       = normaliseNatEverywhere givensTyConSubst ty'
 
-normaliseSimplifyNat :: TyConSubst -> Type -> Writer [(Type, Type)] Type
+normaliseSimplifyNat :: TyConSubst -> Type -> Writer [(Type, Type)] (Type, [Coercion])
 normaliseSimplifyNat givensTyConSubst ty
   | typeKind ty `eqType` natKind = do
-      ty' <- normaliseNat givensTyConSubst ty
-      return $ reifySOP $ simplifySOP ty'
-  | otherwise = return ty
+      (ty', cos1) <- normaliseNat givensTyConSubst ty
+      return $ (reifySOP $ simplifySOP ty', cos1)
+  | otherwise = return (ty, [])
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
@@ -244,11 +257,26 @@ reifyProduct (P ps) =
     -- at the "2 ^ -1" because of the negative exponent.
     mergeExp :: CoreSymbol -> [Either CoreSymbol (CoreSOP,[CoreProduct])]
                            -> [Either CoreSymbol (CoreSOP,[CoreProduct])]
-    mergeExp (E s p)   []     = [Right (s,[p])]
+    mergeExp (E (S [P [I 1]]) _) ys = ys
+    mergeExp (E s p)             [] = [Right (s,[p])]
+    mergeExp (E (S [P [I s1]]) p1) (y:ys)
+      | Right ((S [P [I s2]]), p2s) <- y
+      , let s = gcd s1 s2
+            t1 = s1 `quot` s
+            t2 = s2 `quot` s
+      , s > 1
+      -- Deal with e.g. "2 ^ -1 * 6 ^ x", where the bases differ.
+      --
+      --   (s * t1) ^ p1 * (s * t2) ^ (p2 + ...) * rest
+      --     ===>
+      --   s ^ (p1 + p2 + ...) * t1 ^ p1 * t2 ^ (p2 + ..) * rest
+      = Right (S [P [I s]], (p1:p2s)) :
+         mergeExp (E (S [P [I t1]]) p1)
+           (Right ((S [P [I t2]]), p2s):ys)
     mergeExp (E s1 p1) (y:ys)
-      | Right (s2,p2) <- y
+      | Right (s2,p2s) <- y
       , s1 == s2
-      = Right (s1,(p1:p2)) : ys
+      = Right (s1,(p1:p2s)) : ys
       | otherwise
       = Right (s1,[p1]) : y : ys
     mergeExp x ys = Left x : ys
@@ -327,18 +355,18 @@ instance (Outputable v, Outputable c) => Outputable (UnifyItem v c) where
   ppr (UnifyItem {..}) = ppr siLHS <+> text " :~ " <+> ppr siRHS
 
 -- | Apply a substitution to a single normalised 'SOP' term
-substsSOP :: (Ord v, Ord c) => [UnifyItem v c] -> SOP v c -> SOP v c
+substsSOP :: (Outputable v, Outputable c, Ord v, Ord c) => [UnifyItem v c] -> SOP v c -> SOP v c
 substsSOP []                   u = u
 substsSOP ((SubstItem {..}):s) u = substsSOP s (substSOP siVar siSOP u)
 substsSOP ((UnifyItem {}):s)   u = substsSOP s u
 
-substSOP :: (Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
+substSOP :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
 substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
 
-substProduct :: (Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
+substProduct :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
 substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
 
-substSymbol :: (Ord v, Ord c) => v -> SOP v c -> Symbol v c -> SOP v c
+substSymbol :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> Symbol v c -> SOP v c
 substSymbol _  _ s@(I _) = S [P [s]]
 substSymbol _  _ s@(C _) = S [P [s]]
 substSymbol tv e (V tv')
@@ -347,7 +375,7 @@ substSymbol tv e (V tv')
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
 -- | Apply a substitution to a substitution
-substsSubst :: (Ord v, Ord c) => [UnifyItem v c] -> [UnifyItem v c] -> [UnifyItem v c]
+substsSubst :: (Outputable v, Outputable c, Ord v, Ord c) => [UnifyItem v c] -> [UnifyItem v c] -> [UnifyItem v c]
 substsSubst s = map subt
   where
     subt si@(SubstItem {..}) = si {siSOP = substsSOP s siSOP}
@@ -390,7 +418,7 @@ unifyNats' ct u v
   where
     -- A unifier is only a unifier if differs from the original constraint
     diffFromConstraint (UnifyItem x y) = not (x == u && y == v)
-    diffFromConstraint _               = True
+    diffFromConstraint (SubstItem x y) = not (S [P [V x]] == u && y == v)
 
 -- | Find unifiers for two SOP terms
 --

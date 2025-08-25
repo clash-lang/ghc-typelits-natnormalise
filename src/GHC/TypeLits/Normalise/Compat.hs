@@ -26,6 +26,8 @@ module GHC.TypeLits.Normalise.Compat
   ) where
 
 -- base
+import Control.Arrow
+  ( second )
 import qualified Data.List.NonEmpty as NE
   ( toList )
 import Data.Foldable
@@ -151,48 +153,51 @@ mkLEqNat tcs a b =
 #endif
 
 -- | Is this type 'True' or 'False'?
-boolean_maybe :: TyConSubst -> Type -> Maybe Bool
-boolean_maybe givensTyConSubst = upToGivens givensTyConSubst go
+boolean_maybe :: TyConSubst -> Type -> Maybe (Bool, [Coercion])
+boolean_maybe givensTyConSubst =
+  upToGivens givensTyConSubst ( \ tc tys -> (, []) <$> go tc tys )
   where
-    go (tc, [])
+    go tc []
       | tc == promotedTrueDataCon
       = Just True
       | tc == promotedFalseDataCon
       = Just False
-    go _ = Nothing
+    go _ _ = Nothing
 
 -- | Is this type 'LT', 'EQ' or 'GT'?
-ordering_maybe :: TyConSubst -> Type -> Maybe Ordering
-ordering_maybe givensTyConSubst = upToGivens givensTyConSubst go
+ordering_maybe :: TyConSubst -> Type -> Maybe (Ordering, [Coercion])
+ordering_maybe givensTyConSubst =
+  upToGivens givensTyConSubst ( \ tc tys -> (, []) <$> go tc tys )
   where
-    go (tc, [])
+    go tc []
       | tc == promotedLTDataCon
       = Just LT
       | tc == promotedEQDataCon
       = Just EQ
       | tc == promotedGTDataCon
       = Just GT
-    go _ = Nothing
+    go _ _ = Nothing
 
 #if MIN_VERSION_ghc(9,1,0)
-cmpNat_maybe :: LookedUpTyCons -> TyConSubst -> Type -> Maybe (Type, Type)
-cmpNat_maybe tcs givensTyConSubst = upToGivens givensTyConSubst go
+cmpNat_maybe :: LookedUpTyCons -> TyConSubst -> Type -> Maybe ((Type, Type), [Coercion])
+cmpNat_maybe tcs givensTyConSubst =
+  upToGivens givensTyConSubst ( \ tc tys -> (, []) <$> go tc tys )
   where
-    go (tc, [x,y])
+    go tc [x,y]
       | tc == cmpNatTyCon tcs
       = Just (x,y)
-    go _ = Nothing
+    go _ _ = Nothing
 #endif
 
 -- | Is this type @() :: Constraint@?
-isUnitCTuple :: TyConSubst -> PredType -> Bool
-isUnitCTuple givensTyConSubst =
-  maybe False (const True) . upToGivens givensTyConSubst go
+unitCTuple_maybe :: TyConSubst -> PredType -> Maybe ((), [Coercion])
+unitCTuple_maybe givensTyConSubst =
+  upToGivens givensTyConSubst ( \ tc tys -> (, []) <$> go tc tys )
     where
-      go (tc, [])
+      go tc []
         | isCTupleTyConName (tyConName tc)
         = Just ()
-      go _ = Nothing
+      go _ _ = Nothing
 
 -- | A relation between two natural numbers, @((x,y), mbRel)@.
 --
@@ -234,36 +239,37 @@ inequalities between natural numbers.
 -- | Is this an equality or inequality between two natural numbers?
 --
 -- See Note [Recognising Nat inequalities].
-isNatRel :: LookedUpTyCons -> TyConSubst -> PredType -> Maybe Relation
+isNatRel :: LookedUpTyCons -> TyConSubst -> PredType -> Maybe (Relation, [Coercion])
 isNatRel tcs givensTyConSubst ty0
   | EqPred NomEq x y <- classifyPredType ty0
   = if
       -- (b :: Bool) ~ y
-      | Just b <- boolean_maybe givensTyConSubst x
-      -> booleanRel b y
+      | Just ( b, cos1 ) <- boolean_maybe givensTyConSubst x
+      -> second ( ++ cos1 ) <$> booleanRel b y
       -- x ~ (b :: Bool)
-      | Just b <- boolean_maybe givensTyConSubst y
-      -> booleanRel b x
-      | Just o <- ordering_maybe givensTyConSubst x
+      | Just ( b, cos1 ) <- boolean_maybe givensTyConSubst y
+      -> second ( ++ cos1 ) <$> booleanRel b x
+      | Just ( o, cos1 ) <- ordering_maybe givensTyConSubst x
       -- (o :: Ordering) ~ y
-      -> orderingRel o y
-      | Just o <- ordering_maybe givensTyConSubst y
+      -> second ( ++ cos1 ) <$> orderingRel o y
+      | Just ( o, cos1 ) <- ordering_maybe givensTyConSubst y
       -- x ~ (o :: Ordering)
-      -> orderingRel o x
+      -> second ( ++ cos1 ) <$> orderingRel o x
       -- (() :: Constraint) ~ y
-      | isUnitCTuple givensTyConSubst x
-      -> goTy y
+      | Just ( (), cos1 ) <- unitCTuple_maybe givensTyConSubst x
+      -> second ( ++ cos1 ) <$> goTy y
       -- x ~ (() :: Constraint)
-      | isUnitCTuple givensTyConSubst y
-      -> goTy x
+      | Just ( (), cos1 ) <- unitCTuple_maybe givensTyConSubst y
+      -> second ( ++ cos1 ) <$> goTy x
       | otherwise
       -> Nothing
   | otherwise
   = goTy ty0
   where
-    goTy :: PredType -> Maybe Relation
-    goTy = upToGivens givensTyConSubst (uncurry goTc)
+    goTy :: PredType -> Maybe (Relation, [Coercion])
+    goTy = upToGivens givensTyConSubst goTc
 
+    goTc :: TyCon -> [Type] -> Maybe (Relation, [Coercion])
     goTc _tc _tys
 #if MIN_VERSION_ghc(9,3,0)
       -- Look through 'Assert'.
@@ -276,21 +282,22 @@ isNatRel tcs givensTyConSubst ty0
       = Nothing
 
     -- Recognise whether @(b :: Bool) ~ ty@ is an equality/inequality
-    booleanRel :: Bool -> Type -> Maybe Relation
+    booleanRel :: Bool -> Type -> Maybe (Relation, [Coercion])
     booleanRel b = upToGivens givensTyConSubst (goBoolean b)
 
-    goBoolean :: Bool -> (TyCon, [Type]) -> Maybe Relation
-    goBoolean b (tc, tys)
+    goBoolean :: Bool -> TyCon -> [Type] -> Maybe (Relation, [Coercion])
+    goBoolean b tc tys
 #if MIN_VERSION_ghc(9,1,0)
       -- OrdCond (CmpNat x y) lt eq gt ~ b
       -- Case 3 in Note [Recognising Nat inequalities]
       | tc == ordCondTyCon tcs
       , [_,cmp,ltTy,eqTy,gtTy] <- tys
-      , Just lt <- boolean_maybe givensTyConSubst ltTy
-      , Just eq <- boolean_maybe givensTyConSubst eqTy
-      , Just gt <- boolean_maybe givensTyConSubst gtTy
-      , Just (x,y) <- cmpNat_maybe tcs givensTyConSubst cmp
-      = if -- (x <= y) ~ b
+      , Just (lt, cos1) <- boolean_maybe givensTyConSubst ltTy
+      , Just (eq, cos2) <- boolean_maybe givensTyConSubst eqTy
+      , Just (gt, cos3) <- boolean_maybe givensTyConSubst gtTy
+      , Just ((x,y), cos4) <- cmpNat_maybe tcs givensTyConSubst cmp
+      = ( , cos1 ++ cos2 ++ cos3 ++ cos4 ) <$>
+        if -- (x <= y) ~ b
           | lt && eq && not gt
           -> Just ((x,y), Just b)
           -- (x < y) ~ b
@@ -319,22 +326,22 @@ isNatRel tcs givensTyConSubst ty0
       -- Case 2 in Note [Recognising Nat inequalities]
       | tc == leqQNatTyCon tcs
       , [x,y] <- tys
-      = Just ((x,y), Just b)
+      = Just (((x,y), Just b), [])
 #endif
       | otherwise
       = Nothing
 
     -- Recognise whether @(o :: Ordering) ~ ty@ is an equality/inequality
-    orderingRel :: Ordering -> Type -> Maybe Relation
+    orderingRel :: Ordering -> Type -> Maybe (Relation, [Coercion])
     orderingRel o = upToGivens givensTyConSubst (goOrdering o)
 
-    goOrdering :: Ordering -> (TyCon, [Type]) -> Maybe Relation
-    goOrdering o (tc, tys)
+    goOrdering :: Ordering -> TyCon -> [Type] -> Maybe (Relation, [Coercion])
+    goOrdering o tc tys
       -- CmpNat x y ~ o
       -- Case 1 in Note [Recognising Nat inequalities]
       | tc == cmpNatTyCon tcs
       , [x,y] <- tys
-      =
+      = ( , [] ) <$>
         case o of
           EQ ->
             -- x ~ y
@@ -348,9 +355,9 @@ isNatRel tcs givensTyConSubst ty0
       | otherwise
       = Nothing
 
-upToGivens :: TyConSubst -> ((TyCon, [Type]) -> Maybe a) -> Type -> Maybe a
+upToGivens :: TyConSubst -> (TyCon -> [Type] -> Maybe (a, [Coercion])) -> Type -> Maybe (a, [Coercion])
 upToGivens givensTyConSubst f ty =
-  asum $ map f $
+  asum $ map ( \ (tc, tys, deps) -> second ( deps ++ ) <$> f tc tys ) $
     maybe [] NE.toList $ splitTyConApp_upTo givensTyConSubst ty
 
 --------------------------------------------------------------------------------

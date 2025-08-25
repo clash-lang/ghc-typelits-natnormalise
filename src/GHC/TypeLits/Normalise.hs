@@ -164,20 +164,18 @@ where
 import Control.Arrow
   ( second )
 import Control.Monad
-  ( (<=<), forM )
-import Control.Monad.IO.Class
-  ( liftIO )
+  ( (<=<) )
 import Control.Monad.Trans.Writer.Strict
   ( WriterT(runWriterT), runWriter )
 import Data.Either
-  ( partitionEithers, rights )
-import Data.IORef
-  ( IORef, newIORef, readIORef, modifyIORef' )
+  ( rights, partitionEithers )
 import Data.List
-  ( partition, stripPrefix, find )
+  ( stripPrefix, find, partition )
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe
-  ( mapMaybe, catMaybes )
+  ( mapMaybe, catMaybes, fromMaybe )
+import Data.Traversable
+  ( for )
 import Text.Read
   ( readMaybe )
 
@@ -186,10 +184,6 @@ import Data.Set
   ( Set )
 import qualified Data.Set as Set
   ( elems, empty )
-import Data.Map.Strict
-  ( Map )
-import qualified Data.Map.Strict as Map
-  ( empty, fromList, member, union )
 
 -- ghc
 import GHC.Builtin.Names
@@ -204,7 +198,7 @@ import GHC.TcPlugin.API.TyConSubst
 import GHC.Plugins
   ( Plugin(..), defaultPlugin, purePlugin )
 import GHC.Utils.Outputable
-  ( ($$), (<+>), text )
+  ( ($$), (<+>), text, vcat )
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.Compat
@@ -246,19 +240,14 @@ normalisePlugin opts =
 
 data ExtraDefs
   = ExtraDefs
-    { gen'dRef :: IORef (Map CType Ct)
-    , tyCons :: LookedUpTyCons
-    }
+    { tyCons :: LookedUpTyCons }
 
 lookupExtraDefs :: TcPluginM Init ExtraDefs
 lookupExtraDefs = do
-  ref <- liftIO (newIORef Map.empty)
   tcs <- lookupTyCons
   return $
     ExtraDefs
-      { gen'dRef = ref
-      , tyCons = tcs
-      }
+      { tyCons = tcs }
 
 decideEqualSOP
   :: Opts
@@ -273,7 +262,6 @@ decideEqualSOP
   -> [Ct]
   -> [Ct]
   -> TcPluginM Solve TcPluginSolveResult
-
 -- Simplification phase: Derives /simplified/ givens;
 -- we can reduce given constraints like @Show (Foo (n + 2))@
 -- to its normal form @Show (Foo (2 + n))@, which is eventually
@@ -283,75 +271,106 @@ decideEqualSOP
 -- without this phase, we cannot derive, e.g.,
 -- @IsVector UVector (Fin (n + 1))@ from
 -- @Unbox (1 + n)@!
-decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens [] = do
-    done <- liftIO $ readIORef gen'd
-    let reds =
+decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
+   do
+    let givensTyConSubst = mkTyConSubst givens
+        reds =
           filter
-            (\(_,(prd,_,v)) ->
-              not (CType prd `Map.member` done)
-                &&
-              (null v || negNumbers opts)) $
-            reduceGivens opts tcs (mkTyConSubst givens) givens
-    newGivens <- forM reds $ \(origCt, (pred', evTerm, _)) ->
+            (\(_,(_,_,v)) -> null v || negNumbers opts) $
+              reduceGivens opts tcs (mkTyConSubst givens) givens
+
+    tcPluginTrace "decideEqualSOP Givens {" $
+      vcat [ text "givens:" <+> ppr givens ]
+
+    newGivens <- for reds $ \(origCt, (pred', evTerm, _)) ->
       mkNonCanonical <$> newGiven (ctLoc origCt) pred' evTerm
-    let newlyDone = zipWith (\ct (_,(prd, _,_)) -> (CType prd, ct)) newGivens reds
-    liftIO $
-      modifyIORef' gen'd $ Map.union (Map.fromList newlyDone)
-    return (TcPluginOk [] newGivens)
+    -- Try to find contradictory Givens, to improve pattern match warnings.
+    sr <- simplifyNats opts tcs [] $ concatMap (toNatEquality tcs givensTyConSubst) (givens ++ newGivens)
+    case sr of
+      Impossible eq -> do
+        let contra = fromNatEquality eq
+        tcPluginTrace "decideEqualSOP Givens (FAIL) }" $
+          vcat [ text "givens:" <+> ppr givens
+               , text "contra:" <+> ppr contra  ]
+        return $ TcPluginContradiction [contra]
+      Simplified {} -> do
+        tcPluginTrace "decideEqualSOP Givens (OK) }" $
+          vcat [ text "givens:" <+> ppr givens ]
+        return $ TcPluginOk [] []
 
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
 -- containing naturals.
-decideEqualSOP opts (ExtraDefs { gen'dRef = gen'd, tyCons = tcs }) givens wanteds0 = do
+decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
     deriveds <- askDeriveds
     let wanteds = if null wanteds0
                   then []
                   else wanteds0 ++ deriveds
         givensTyConSubst = mkTyConSubst givens
-        unit_wanteds = concatMap (toNatEquality tcs givensTyConSubst) wanteds
+        unit_wanteds0 = concatMap (toNatEquality tcs givensTyConSubst) wanteds
         nonEqs = filter ( not
                         . (\p -> isEqPred p || isEqClassPred p)
                         . ctEvPred
                         . ctEvidence )
                  wanteds
-    done <- liftIO $ readIORef gen'd
-    let (oldRedGs, newRedGs)
-          = partition (\(_, (prd, _, _)) -> CType prd `Map.member` done)
-          $ reduceGivens opts tcs givensTyConSubst givens
-    redGivens <- forM newRedGs $ \(origCt, (pred', evExpr, _)) ->
+    let newRedGs = reduceGivens opts tcs givensTyConSubst givens
+    redGivens <- for newRedGs $ \(origCt, (pred', evExpr, _)) ->
       mkNonCanonical <$> newGiven (ctLoc origCt) pred' evExpr
-    let alreadyDone = filter (isGiven . ctEvidence) $ map fst oldRedGs
-        newlyDone = zipWith (\ct (_,(prd, _,_)) -> (CType prd, ct)) redGivens newRedGs
     reducible_wanteds
       <- catMaybes <$> mapM (\ct -> fmap (ct,) <$>
-                                    reduceNatConstr givensTyConSubst (givens ++ alreadyDone ++ redGivens) ct)
+                                    reduceNatConstr givensTyConSubst (givens ++ redGivens) ct)
                             nonEqs
-    if null unit_wanteds && null reducible_wanteds
+
+    tcPluginTrace "decideEqualSOP Wanteds {" $
+       vcat [ text "givens:" <+> ppr givens
+            , text "new reduced givens:" <+> ppr redGivens
+            , text "newRedGs:" <+> ppr newRedGs
+            , text $ replicate 80 '-'
+            , text "wanteds:" <+> ppr wanteds
+            , text "unit_wanteds:" <+> ppr unit_wanteds0
+            , text "reducible_wanteds:" <+> ppr reducible_wanteds
+            ]
+    if null unit_wanteds0 && null reducible_wanteds
     then return $ TcPluginOk [] []
     else do
-        -- Since reducible wanteds also can have some negation/subtraction
+        -- Since reducible Wanteds also can have some negation/subtraction
         -- subterms, we have to make sure appropriate inequalities to hold.
         -- Here, we generate such additional inequalities for reduction
         -- that is to be added to new [W]anteds.
-        ineqForRedWants <- fmap concat $ forM newRedGs $ \(ct, (_,_, ws)) -> forM ws $
+        ineqForRedWants <- fmap concat $ for newRedGs $ \(ct, (_,_, ws)) -> for ws $
           fmap mkNonCanonical . newWanted (ctLoc ct)
-        liftIO $
-          modifyIORef' gen'd $ Map.union (Map.fromList newlyDone)
         let unit_givens = concatMap (toNatEquality tcs givensTyConSubst) givens
+            unit_wanteds = unit_wanteds0 ++ concatMap (toNatEquality tcs givensTyConSubst) ineqForRedWants
         sr <- simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
-        reds <- forM reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
+        reds <- for reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
           wants <- evSubtPreds (ctLoc origCt) $ subToPred opts tcs ws
           return ((term, origCt), wDicts ++ wants)
         case sr of
           Simplified evs -> do
             let simpld = filter (not . isGiven . ctEvidence . (\((_,x),_) -> x)) evs
-                -- Only solve derived when we solved a wanted
+                -- Only solve a Derived when there are Wanteds in play
                 simpld1 = case filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs ++ reds of
                             [] -> []
                             _  -> simpld
-                (solved',newWanteds) = second concat (unzip $ simpld1 ++ reds)
-            return (TcPluginOk solved' $ newWanteds ++ ineqForRedWants)
+                (solved,newWanteds) = second concat (unzip $ simpld1 ++ reds)
+
+            tcPluginTrace "decideEqualSOP Wanteds }" $
+               vcat [ text "givens:" <+> ppr givens
+                    , text "new reduced givens:" <+> ppr redGivens
+                    , text "newRedGs:" <+> ppr newRedGs
+                    , text $ replicate 80 '-'
+                    , text "wanteds:" <+> ppr wanteds
+                    , text "ineqForRedWants:" <+> ppr ineqForRedWants
+                    , text "unit_wanteds0:" <+> ppr (map (toNatEquality tcs givensTyConSubst) wanteds)
+                    , text "unit_wanteds:" <+> ppr unit_wanteds
+                    , text "reducible_wanteds:" <+> ppr reducible_wanteds
+                    , text $ replicate 80 '='
+                    , text "solved:" <+> ppr solved
+                    , text "newWanteds:" <+> ppr newWanteds
+                    ]
+
+            return (TcPluginOk solved $ newWanteds)
           Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
@@ -387,8 +406,8 @@ tryReduceGiven opts tcs givensTyConSubst simplGivens ct = do
               , all (not . (`eqType` p). ctEvPred . ctEvidence) simplGivens
               ]
         -- deps = unitDVarSet (ctEvId ct)
-    pred' <- mans
-    return (pred', toReducedDict (ctEvidence ct) pred', ws')
+    (pred', deps) <- mans
+    return (pred', toReducedDict (ctEvidence ct) pred' deps, ws')
 
 fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
@@ -398,38 +417,42 @@ reduceNatConstr :: TyConSubst -> [Ct] -> Ct -> TcPluginM Solve (Maybe (EvTerm, [
 reduceNatConstr givensTyConSubst givens ct = do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere givensTyConSubst pred0
-  case mans of
-    Nothing -> return Nothing
-    Just pred' -> do
-      case find ((`eqType` pred') . ctEvPred . ctEvidence) givens of
-        -- No existing evidence found
-        Nothing
-          | ClassPred cls _ <- classifyPredType pred'
-          , className cls /= knownNatClassName
-          -> do
-              -- Create new evidence binding for normalized class constraint
-              wtdDictCt <- mkNonCanonical <$> newWanted (ctLoc ct) pred'
-              -- Evidence for current wanted is simply the coerced binding for
-              -- the new binding
-              let evCo = mkPluginUnivCo "ghc-typelits-natnormalise"
-                           Representational
-                           []
-                           pred' pred0
-                  ev = evCast (evId $ ctEvId wtdDictCt) evCo
-              -- Use newly created coerced wanted as evidence, and emit the
-              -- normalized wanted as a new constraint to solve.
-              return (Just (EvExpr ev, tests, [wtdDictCt]))
-          | otherwise
-          -> return Nothing
-        -- Use existing evidence
-        Just c  -> return (Just (toReducedDict (ctEvidence c) pred0, tests, []))
 
-toReducedDict :: CtEvidence -> PredType -> EvTerm
-toReducedDict ct pred' =
+      -- Even if we didn't rewrite the Wanted,
+      -- we may still be able to solve it from a (rewritten) Given.
+      (pred', deps') = fromMaybe (pred0, []) mans
+  case find ((`eqType` pred') . ctEvPred . ctEvidence) givens of
+    -- No existing evidence found
+    Nothing
+      | ClassPred cls _ <- classifyPredType pred'
+      , className cls /= knownNatClassName
+
+      -- We actually did do some rewriting/normalisation.
+      , Just {} <- mans
+      -> do
+          -- Create new evidence binding for normalized class constraint
+          wtdDictCt <- mkNonCanonical <$> newWanted (ctLoc ct) pred'
+          -- Evidence for current wanted is simply the coerced binding for
+          -- the new binding
+          let evCo = mkPluginUnivCo "ghc-typelits-natnormalise"
+                       Representational
+                       deps'
+                       pred' pred0
+              ev = evCast (evId $ ctEvId wtdDictCt) evCo
+          -- Use newly created coerced wanted as evidence, and emit the
+          -- normalized wanted as a new constraint to solve.
+          return (Just (EvExpr ev, tests, [wtdDictCt]))
+      | otherwise
+      -> return Nothing
+    -- Use existing evidence
+    Just c  -> return (Just (toReducedDict (ctEvidence c) pred0 deps', tests, []))
+
+toReducedDict :: CtEvidence -> PredType -> [Coercion] -> EvTerm
+toReducedDict ct pred' deps' =
   let pred0 = ctEvPred ct
       evCo = mkPluginUnivCo "ghc-typelits-natnormalise"
               Representational
-              []
+              deps'
               pred0 pred'
       ev = evCast (ctEvExpr ct) evCo
   in EvExpr ev
@@ -442,18 +465,20 @@ instance Outputable SimplifyResult where
   ppr (Simplified evs) = text "Simplified" $$ ppr evs
   ppr (Impossible eq)  = text "Impossible" <+> ppr eq
 
+type NatCt = (Either NatEquality NatInEquality, [(Type,Type)], [Coercion])
+
 simplifyNats
   :: Opts
   -- ^ Allow negated numbers (potentially unsound!)
   -> LookedUpTyCons
-  -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+  -> [NatCt]
   -- ^ Given constraints
-  -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+  -> [NatCt]
   -- ^ Wanted constraints
   -> TcPluginM Solve SimplifyResult
 simplifyNats opts@Opts {..} tcs eqsG eqsW = do
-    let eqsG1 = map (second (const ([] :: [(Type,Type)]))) eqsG
-        (varEqs,otherEqs) = partition isVarEqs eqsG1
+    let eqsG1 = map (\ (eq, _, deps) -> (eq, [] :: [(Type, Type)], deps)) eqsG
+        (varEqs, otherEqs) = partition isVarEqs eqsG1
         fancyGivens = concatMap (makeGivensSet otherEqs) varEqs
     case varEqs of
       [] -> do
@@ -464,7 +489,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
         tcPluginTrace ("simplifyNats(backtrack: " ++ show (length fancyGivens) ++ ")")
                       (ppr varEqs)
 
-        allSimplified <- forM fancyGivens $ \v -> do
+        allSimplified <- for fancyGivens $ \v -> do
           let eqs = v ++ eqsW
           tcPluginTrace "simplifyNats" (ppr eqs)
           simples [] [] [] [] [] eqs
@@ -475,26 +500,31 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
             -> [CoreUnify]
             -> [((EvTerm, Ct), [Ct])]
             -> [(CoreSOP,CoreSOP,Bool)]
-            -> [(Either NatEquality NatInEquality,[(Type,Type)])]
-            -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+            -> [NatCt]
+            -> [NatCt]
             -> TcPluginM Solve SimplifyResult
     simples _ _subst evs _leqsG _xs [] = return (Simplified evs)
-    simples deps subst evs leqsG xs (eq@(Left (ct,u,v),k):eqs') = do
+    simples deps subst evs leqsG xs (eq@(lr@(Left (ct,u,v)),k,deps2):eqs') = do
       let u' = substsSOP subst u
           v' = substsSOP subst v
       ur <- unifyNats ct u' v'
       tcPluginTrace "unifyNats result" (ppr ur)
       case ur of
         Win -> do
-          evs' <- maybe evs (:evs) <$> evMagic tcs ct deps Set.empty (subToPred opts tcs k)
+          evs' <- maybe evs (:evs) <$> evMagic tcs ct (deps ++ deps2) Set.empty (subToPred opts tcs k)
           simples deps subst evs' leqsG [] (xs ++ eqs')
         Lose -> if null evs && null eqs'
-                   then return (Impossible (fst eq))
+                   then return (Impossible lr)
                    else simples deps subst evs leqsG xs eqs'
         Draw [] -> simples deps subst evs [] (eq:xs) eqs'
         Draw subst' -> do
           evM <- evMagic tcs ct deps Set.empty (map unifyItemToPredType subst' ++
                                                 subToPred opts tcs k)
+
+          tcPluginTrace "unifyNats: Draw (non-empty subst)" $
+             vcat [ text "subst':" <+> ppr subst'
+                  , text "evM:" <+> ppr evM ]
+
           let (leqsG1, deps1)
                 | isGiven (ctEvidence ct) = ( eqToLeq u' v' ++ leqsG
                                             , ctEvCoercion (ctEvidence ct):deps)
@@ -502,10 +532,10 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
           case evM of
             Nothing -> simples deps1 subst evs leqsG1 xs eqs'
             Just ev ->
-              simples (ctEvCoercion (ctEvidence ct):deps)
+              simples (ctEvCoercion (ctEvidence ct):deps ++ deps2)
                       (substsSubst subst' subst ++ subst')
                       (ev:evs) leqsG1 [] (xs ++ eqs')
-    simples deps subst evs leqsG xs (eq@(Right (ct,u@(x,y,b)),k):eqs') = do
+    simples deps subst evs leqsG xs (eq@(lr@(Right (ct,u@(x,y,b))),k,deps2):eqs') = do
       let u'    = substsSOP subst (subtractIneq u)
           x'    = substsSOP subst x
           y'    = substsSOP subst y
@@ -514,7 +544,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
                  | otherwise               = leqsG
           ineqs = concat [ leqsG
                          , map (substLeq subst) leqsG
-                         , map snd (rights (map fst eqsG))
+                         , map snd (rights (map (\ (lr', _, _) -> lr') eqsG))
                          ]
       tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs))
       case runWriterT (isNatural u') of
@@ -522,7 +552,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
           evs' <- maybe evs (:evs) <$> evMagic tcs ct deps knW (subToPred opts tcs k)
           simples deps subst evs' leqsG' xs eqs'
 
-        Just (False,_) | null k -> return (Impossible (fst eq))
+        Just (False,_) | null k -> return (Impossible lr)
         _ -> do
           let solvedIneq = mapMaybe runWriterT
                  -- it is an inequality that can be instantly solved, such as
@@ -540,16 +570,18 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
               smallest = solvedInEqSmallestConstraint solvedIneq
           case smallest of
             (True,kW) -> do
-              evs' <- maybe evs (:evs) <$> evMagic tcs ct deps kW (subToPred opts tcs k)
-              simples deps subst evs' leqsG' xs eqs'
+              let deps' = deps ++ deps2
+              evs' <- maybe evs (:evs) <$> evMagic tcs ct deps' kW (subToPred opts tcs k)
+              simples deps' subst evs' leqsG' xs eqs'
             _ -> simples deps subst evs leqsG (eq:xs) eqs'
 
     eqToLeq x y = [(x,y,True),(y,x,True)]
     substLeq s (x,y,b) = (substsSOP s x, substsSOP s y, b)
 
-    isVarEqs (Left (_,S [P [V _]], S [P [V _]]), _) = True
+    isVarEqs (Left (_,S [P [V _]], S [P [V _]]), _, _) = True
     isVarEqs _ = False
 
+    makeGivensSet :: [NatCt] -> NatCt -> [[NatCt]]
     makeGivensSet otherEqs varEq
       = let (noMentionsV,mentionsV)   = partitionEithers
                                           (map (matchesVarEq varEq) otherEqs)
@@ -565,24 +597,28 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
               [] -> [noMentionsV]
               _  -> givensLHS ++ givensRHS
 
-    matchesVarEq (Left (_, S [P [V v1]], S [P [V v2]]),_) r = case r of
-      (Left (_,S [P [V v3]],_),_)
-        | v1 == v3 -> Right (Left r)
-        | v2 == v3 -> Right (Right r)
-      (Left (_,_,S [P [V v3]]),_)
-        | v1 == v3 -> Right (Left r)
-        | v2 == v3 -> Right (Right r)
-      (Right (_,(S [P [V v3]],_,_)),_)
-        | v1 == v3 -> Right (Left r)
-        | v2 == v3 -> Right (Right r)
-      (Right (_,(_,S [P [V v3]],_)),_)
-        | v1 == v3 -> Right (Left r)
-        | v2 == v3 -> Right (Right r)
-      _ -> Left r
+    matchesVarEq :: NatCt
+                 -> NatCt
+                 -> Either NatCt (Either NatCt NatCt)
+    matchesVarEq (Left (_, S [P [V v1]], S [P [V v2]]), _, _) r@(e, _, _) =
+      case e of
+        Left (_,S [P [V v3]],_)
+          | v1 == v3 -> Right (Left r)
+          | v2 == v3 -> Right (Right r)
+        Left (_,_,S [P [V v3]])
+          | v1 == v3 -> Right (Left r)
+          | v2 == v3 -> Right (Right r)
+        Right (_,(S [P [V v3]],_,_))
+          | v1 == v3 -> Right (Left r)
+          | v2 == v3 -> Right (Right r)
+        Right (_,(_,S [P [V v3]],_))
+          | v1 == v3 -> Right (Left r)
+          | v2 == v3 -> Right (Right r)
+        _ -> Left r
     matchesVarEq _ _ = error "internal error"
 
-    swapVar (Left (ct,S [P [V v1]], S [P [V v2]]),ps) =
-      (Left (ct,S [P [V v2]], S [P [V v1]]),ps)
+    swapVar (Left (ct,S [P [V v1]], S [P [V v2]]), ps, deps) =
+      (Left (ct,S [P [V v2]], S [P [V v1]]), ps, deps)
     swapVar _ = error "internal error"
 
     findFirstSimpliedWanted (Impossible e)   _  = Impossible e
@@ -603,20 +639,20 @@ subToPred Opts{..} tcs
     map (\ (a, b) -> mkLEqNat tcs b a)
 
 -- | Extract all Nat equality and inequality constraints from another constraint.
-toNatEquality :: LookedUpTyCons -> TyConSubst -> Ct -> [(Either NatEquality NatInEquality,[(Type,Type)])]
+toNatEquality :: LookedUpTyCons -> TyConSubst -> Ct -> [(Either NatEquality NatInEquality, [(Type,Type)], [Coercion])]
 toNatEquality tcs givensTyConSubst ct0
-  | Just ((x,y), mbLTE) <- isNatRel tcs givensTyConSubst pred0
+  | Just (((x,y), mbLTE), cos0) <- isNatRel tcs givensTyConSubst pred0
   , let
-      (x',k1) = runWriter (normaliseNat givensTyConSubst x)
-      (y',k2) = runWriter (normaliseNat givensTyConSubst y)
+      ((x', cos1),k1) = runWriter (normaliseNat givensTyConSubst x)
+      ((y', cos2),k2) = runWriter (normaliseNat givensTyConSubst y)
       ks      = k1 ++ k2
   = case mbLTE of
       Nothing ->
         -- Equality constraint: x ~ y
-        [(Left (ct0, x', y'), ks)]
+        [(Left (ct0, x', y'), ks, cos0 ++ cos1 ++ cos2)]
       Just b ->
         -- Inequality constraint: (x <=? y) ~ b
-        [(Right (ct0, (x', y', b)), ks)]
+        [(Right (ct0, (x', y', b)), ks, cos0 ++ cos1 ++ cos2)]
   | otherwise
   = case classifyPredType pred0 of
       EqPred NomEq t1 t2
@@ -625,27 +661,30 @@ toNatEquality tcs givensTyConSubst ct0
   where
     pred0 = ctPred ct0
     -- x ~ y
+    goNomEq :: Type -> Type -> [(Either NatEquality NatInEquality, [(Type,Type)], [Coercion])]
     goNomEq lhs rhs
       -- Recur into a TyCon application for TyCons that we **do not** rewrite,
       -- e.g. peek inside the Maybe in 'Maybe (x + y) ~ Maybe (y + x)'.
       | Just tcApps1 <- splitTyConApp_upTo givensTyConSubst lhs
       , Just tcApps2 <- splitTyConApp_upTo givensTyConSubst rhs
-      , let tcAppsMap1 = listToUniqMap $ NE.toList tcApps1
-            tcAppsMap2 = listToUniqMap $ NE.toList tcApps2
+      , let tcAppsMap1 = listToUniqMap $ map (\ (tc, tys, deps) -> (tc, (tys, deps))) $ NE.toList tcApps1
+            tcAppsMap2 = listToUniqMap $ map (\ (tc, tys, deps) -> (tc, (tys, deps))) $ NE.toList tcApps2
             tcAppPairs = intersectUniqMap_C (,) tcAppsMap1 tcAppsMap2
-      , (tc, (xs, ys)):_ <- nonDetUniqMapToList tcAppPairs
+      , (tc, ((xs, cos1), (ys, cos2))):_ <- nonDetUniqMapToList tcAppPairs
       , not $ tc `elem` [typeNatAddTyCon, typeNatSubTyCon, typeNatMulTyCon, typeNatExpTyCon]
       , let subs = filter (not . uncurry eqType) (zip xs ys)
-      = concatMap (uncurry rewrite) subs
+      = (\ (eq, ws, deps) -> (eq, ws, cos1 ++ cos2 ++ deps)) <$>
+          concatMap (uncurry rewrite) subs
       | otherwise
       = rewrite lhs rhs
 
+    rewrite :: Type -> Type -> [(Either NatEquality NatInEquality, [(Type,Type)], [Coercion])]
     rewrite x y
       | isNatKind (typeKind x)
       , isNatKind (typeKind y)
-      , let (x',k1) = runWriter (normaliseNat givensTyConSubst x)
-      , let (y',k2) = runWriter (normaliseNat givensTyConSubst y)
-      = [(Left (ct0,x',y'),k1 ++ k2)]
+      , let ((x', cos1),k1) = runWriter (normaliseNat givensTyConSubst x)
+      , let ((y', cos2),k2) = runWriter (normaliseNat givensTyConSubst y)
+      = [(Left (ct0,x',y'),k1 ++ k2, cos1 ++ cos2)]
       | otherwise
       = []
 
