@@ -727,3 +727,23 @@ t1 :: (((1 + m1) + n1) ~ (1 + (m2 + n2))) => Proxy '(m1, n1, m2, n2) -> ()
 t1 _ = ()
 t2 :: ((m1 + n1) ~ (m2 + n2)) => Proxy '(m1, n1, m2, n2) -> ()
 t2 px = t1 px
+
+
+
+type family TF (a :: Nat) (b :: Nat) :: Nat
+
+proxyEq5
+  :: forall a b
+   . KnownNat (TF (a * 3) b * 3)
+  => Proxy a
+  -> Proxy b
+  -> Proxy (3 * TF (3 * a) b)
+proxyEq5 = theProxy
+ where
+  theProxy
+    :: forall a b
+     . KnownNat (TF (2 * a + a) b + (2 * TF (a + 2 * a) b))
+    => Proxy a
+    -> Proxy b
+    -> Proxy (3 * TF (3 * a) b)
+  theProxy _ _ = Proxy
