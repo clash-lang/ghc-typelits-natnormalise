@@ -85,10 +85,10 @@ import GHC.Utils.Outputable
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
+import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
-import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
 
 --------------------------------------------------------------------------------
 
@@ -398,7 +398,7 @@ instance Outputable UnifyResult where
 -- same, then we 'Win' if @u@ and @v@ are equal, and 'Lose' otherwise.
 --
 -- If @u@ and @v@ do not have the same free variables, we result in a 'Draw',
--- ware @u@ and @v@ are only equal when the returned 'CoreSubst' holds.
+-- where @u@ and @v@ are only equal when the returned 'CoreSubst' holds.
 unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM Solve UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
@@ -457,32 +457,39 @@ unifiers :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
 unifiers ct u@(S [P [V x]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 _
-        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct) -> [SubstItem x v]
+        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct)
+        -> [SubstItem x v]
       _ -> []
 unifiers ct u v@(S [P [V x]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq _ t2
-        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct) -> [SubstItem x u]
+        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct)
+        -> [SubstItem x u]
       _ -> []
 unifiers ct u@(S [P [C _]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+        -> [UnifyItem u v]
       _ -> []
 unifiers ct u v@(S [P [C _]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+        -> [UnifyItem u v]
       _ -> []
 unifiers ct u v             = unifiers' ct u v
 
 unifiers' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+unifiers' _ct (S [])        (S [])        = []
+
 unifiers' _ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]])]
 unifiers' _ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]])]
 
 unifiers' _ct (S [P [V x]]) s             = [SubstItem x s]
 unifiers' _ct s             (S [P [V x]]) = [SubstItem x s]
 
+unifiers' _ct (S [P [C {}]])   (S [P [C {}]])   = []
 unifiers' _ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2]
 unifiers' _ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2]
 
@@ -507,45 +514,41 @@ unifiers' ct (S [P p2]) (S [P [E (S [P s1]) p1]])
 -- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
 -- and `ceiling (logBase i j) == floor (logBase i j)`
 unifiers' ct (S [P [E (S [P [I i]]) p]]) (S [P [I j]])
-  = case integerLogBase i j of
-      Just k  -> unifiers' ct (S [p]) (S [P [I k]])
-      Nothing -> []
+  | Just k <- integerLogBase i j
+  = unifiers' ct (S [p]) (S [P [I k]])
 
 unifiers' ct (S [P [I j]]) (S [P [E (S [P [I i]]) p]])
-  = case integerLogBase i j of
-      Just k  -> unifiers' ct (S [p]) (S [P [I k]])
-      Nothing -> []
+  | Just k <- integerLogBase i j
+  = unifiers' ct (S [p]) (S [P [I k]])
 
 -- a^d * a^e ~ a^c ==> [c := d + e]
-unifiers' ct (S [P [E s1 p1]]) (S [p2]) = case collectBases p2 of
-  Just (b:bs,ps) | all (== s1) (b:bs) ->
-    unifiers' ct (S [p1]) (S ps)
-  _ -> []
+unifiers' ct (S [P [E s1 p1]]) (S [p2])
+  | Just (b:bs,ps) <- collectBases p2
+  , all (== s1) (b:bs)
+  = unifiers' ct (S [p1]) (S ps)
 
-unifiers' ct (S [p2]) (S [P [E s1 p1]]) = case collectBases p2 of
-  Just (b:bs,ps) | all (== s1) (b:bs) ->
-    unifiers' ct (S ps) (S [p1])
-  _ -> []
+unifiers' ct (S [p2]) (S [P [E s1 p1]])
+  | Just (b:bs,ps) <- collectBases p2
+  , all (== s1) (b:bs)
+  = unifiers' ct (S ps) (S [p1])
 
 -- (i * a) ~ j ==> [a := div j i]
 -- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
-unifiers' ct (S [P ((I i):ps)]) (S [P [I j]]) =
-  case safeDiv j i of
-    Just k -> unifiers' ct (S [P ps]) (S [P [I k]])
-    _      -> []
+unifiers' ct (S [P ((I i):ps)]) (S [P [I j]])
+  | Just k <- safeDiv j i
+  = unifiers' ct (S [P ps]) (S [P [I k]])
 
-unifiers' ct (S [P [I j]]) (S [P ((I i):ps)]) =
-  case safeDiv j i of
-    Just k -> unifiers' ct (S [P ps]) (S [P [I k]])
-    _      -> []
+unifiers' ct (S [P [I j]]) (S [P ((I i):ps)])
+  | Just k <- safeDiv j i
+  = unifiers' ct (S [P ps]) (S [P [I k]])
 
 -- (2*a) ~ (2*b) ==> [a := b]
 -- unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
 --     | p == p'   = unifiers' ct (S [P ps1]) (S [P ps2])
 --     | otherwise = []
 unifiers' ct (S [P ps1]) (S [P ps2])
-    | null psx  = []
-    | otherwise = unifiers' ct (S [P ps1'']) (S [P ps2''])
+  | not $ null psx
+  = unifiers' ct (S [P ps1'']) (S [P ps2''])
   where
     ps1'  = ps1 \\ psx
     ps2'  = ps2 \\ psx
@@ -557,28 +560,32 @@ unifiers' ct (S [P ps1]) (S [P ps2])
 
 -- (2 + a) ~ 5 ==> [a := 3]
 unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
-    | i < j     = unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
-    | i > j     = unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
+  = case compare i j of
+       EQ -> unifiers' ct (S ps1) (S ps2)
+       LT -> unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
+       GT -> unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
 
 -- (a + c) ~ (b + c) ==> [a := b]
-unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
-  Just (s1',s2',_)
-    | s1' /= s1 || s2' /= s1
-    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
-    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
-    -> unifiers' ct s1' s2'
-  _ | null psx
-    , length ps1 == length ps2
-    -> case nub (concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)) of
-        []                             -> unifiers'' ct (S ps1) (S ps2)
-        [k] | length ps1 == length ps2 -> [k]
-        _                              -> []
-    | null psx
-    , isGiven (ctEvidence ct)
-    -> unifiers'' ct (S ps1) (S ps2)
-    | null psx
-    -> []
-  _ -> unifiers' ct (S ps1'') (S ps2'')
+unifiers' ct s1@(S ps1) s2@(S ps2)
+  | Just (s1',s2',_) <- sopToIneq k1
+  , s1' /= s1 || s2' /= s2
+  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
+  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
+  = unifiers' ct s1' s2'
+  | null psx
+  , length ps1 == length ps2
+  , length ps1 > 1
+  , let unifs = nub $ concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)
+  , length unifs <= 1
+  = case unifs of
+        []  -> unifiers'' ct (S ps1) (S ps2)
+        [k] -> [k]
+        _   -> error "impossible"
+  | null psx
+  , isGiven (ctEvidence ct)
+  = unifiers'' ct (S ps1) (S ps2)
+  | not $ null psx
+  = unifiers' ct (S ps1'') (S ps2'')
   where
     k1 = subtractIneq (s1,s2,True)
     ps1'  = ps1 \\ psx
@@ -588,6 +595,8 @@ unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
     ps2'' | null ps2' = [P [I 0]]
           | otherwise = ps2'
     psx = intersect ps1 ps2
+
+unifiers' _ s1 s2 = [UnifyItem s1 s2]
 
 unifiers'' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
 unifiers'' ct (S [P [I i],P [V v]]) s2

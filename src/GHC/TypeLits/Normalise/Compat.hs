@@ -70,7 +70,6 @@ import GHC.Types.Unique.FM
   ( intersectUFM_C, nonDetEltsUFM )
 #endif
 
-
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
 import GHC.TcPlugin.API.TyConSubst

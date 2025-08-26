@@ -721,3 +721,9 @@ libFunc _ _ = ()
 useFunc :: forall (d :: Nat). Proxy d -> ()
 useFunc _ = libFunc (Proxy @0) (Proxy @(d+1))
 #endif
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/71
+t1 :: (((1 + m1) + n1) ~ (1 + (m2 + n2))) => Proxy '(m1, n1, m2, n2) -> ()
+t1 _ = ()
+t2 :: ((m1 + n1) ~ (m2 + n2)) => Proxy '(m1, n1, m2, n2) -> ()
+t2 px = t1 px
