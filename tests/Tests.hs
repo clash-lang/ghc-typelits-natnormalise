@@ -33,6 +33,10 @@ import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
 
+#if MIN_VERSION_base(4,16,0)
+import Data.Type.Ord
+#endif
+
 import Data.Kind (Type)
 import Data.List (isInfixOf)
 import Data.Proxy
@@ -709,3 +713,11 @@ instance FakeUnbox (n + 1) => IsVector WrapFakeVector n where
   touchVector = WFV . touchVector . unWrap
 instance FakeUnbox (n + 1) => IsMVector WrapFakeMVector n where
   touchMVector = MWFV . touchMVector . unWrapM
+
+#if MIN_VERSION_base(4,16,0)
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/70
+libFunc :: forall (i :: Nat) d. i < d => Proxy i -> Proxy d -> ()
+libFunc _ _ = ()
+useFunc :: forall (d :: Nat). Proxy d -> ()
+useFunc _ = libFunc (Proxy @0) (Proxy @(d+1))
+#endif
