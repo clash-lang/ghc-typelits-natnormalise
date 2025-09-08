@@ -657,6 +657,13 @@ toNatEquality tcs givensTyConSubst ct0
   = case classifyPredType pred0 of
       EqPred NomEq t1 t2
         -> goNomEq t1 t2
+      ClassPred kn [x]
+        -- From [G] KnownNat blah, also produce [G] 0 <= blah
+        -- See https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94.
+        | isGiven (ctEvidence ct0)
+        , className kn == knownNatClassName
+        , let ((x', cos0), ks) = runWriter (normaliseNat givensTyConSubst x)
+        -> [(Right (ct0, (S [], x', True)), ks, cos0)]
       _ -> []
   where
     pred0 = ctPred ct0

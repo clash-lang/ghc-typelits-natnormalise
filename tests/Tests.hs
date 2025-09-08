@@ -728,7 +728,14 @@ t1 _ = ()
 t2 :: ((m1 + n1) ~ (m2 + n2)) => Proxy '(m1, n1, m2, n2) -> ()
 t2 px = t1 px
 
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94
+t94 ::
+  (KnownNat n, KnownNat m, KnownNat s, s ~ (m - n)) =>
+  Proxy m -> Proxy n -> Proxy (s + 2) -> Proxy (s + 2)
+t94 _ _ = t94_aux
 
+t94_aux :: (1 <= n) => Proxy n -> Proxy n
+t94_aux px = px
 
 type family TF (a :: Nat) (b :: Nat) :: Nat
 
