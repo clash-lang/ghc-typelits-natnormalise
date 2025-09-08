@@ -1,5 +1,12 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.8 *September 8th 2025*
+* Uses https://hackage.haskell.org/package/ghc-tcplugin-api to make supporting new GHC versions easier
+* Support for GHC versions older than 8.8 is dropped
+* Fixes [#70](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/70) The constraint 0 < d+1 does not seem to resolve?
+* Fixes [#71](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/71) "Could not deduce ... from the context ...", but if the context removed, deduced outright
+* Fixes [#47](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/47) Could not deduce `KnownNat (F ((2 * a) + a) b + (2 * F (a + (2 * a)) b))` from `KnownNat (F (a * 3) b * 3)`
+
 ## 0.7.12 *August 22nd 2025*
 * Support for GHC 9.10.2
 
