@@ -33,6 +33,10 @@ import Unsafe.Coerce
 import Prelude hiding (head,tail,init,(++),splitAt,concat,drop)
 import qualified Prelude as P
 
+#if MIN_VERSION_base(4,16,0)
+import Data.Type.Ord
+#endif
+
 import Data.Kind (Type)
 import Data.List (isInfixOf)
 import Data.Proxy
@@ -506,7 +510,7 @@ oneLtPowSubst :: forall a b. (b ~ (2^a)) => Proxy a -> Proxy a
 oneLtPowSubst = go
   where
     go :: 1 <= b => Proxy a -> Proxy a
-    go = id 
+    go = id
 
 main :: IO ()
 main = defaultMain tests
@@ -709,3 +713,37 @@ instance FakeUnbox (n + 1) => IsVector WrapFakeVector n where
   touchVector = WFV . touchVector . unWrap
 instance FakeUnbox (n + 1) => IsMVector WrapFakeMVector n where
   touchMVector = MWFV . touchMVector . unWrapM
+
+#if MIN_VERSION_base(4,16,0)
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/70
+libFunc :: forall (i :: Nat) d. i < d => Proxy i -> Proxy d -> ()
+libFunc _ _ = ()
+useFunc :: forall (d :: Nat). Proxy d -> ()
+useFunc _ = libFunc (Proxy @0) (Proxy @(d+1))
+#endif
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/71
+t1 :: (((1 + m1) + n1) ~ (1 + (m2 + n2))) => Proxy '(m1, n1, m2, n2) -> ()
+t1 _ = ()
+t2 :: ((m1 + n1) ~ (m2 + n2)) => Proxy '(m1, n1, m2, n2) -> ()
+t2 px = t1 px
+
+
+
+type family TF (a :: Nat) (b :: Nat) :: Nat
+
+proxyEq5
+  :: forall a b
+   . KnownNat (TF (a * 3) b * 3)
+  => Proxy a
+  -> Proxy b
+  -> Proxy (3 * TF (3 * a) b)
+proxyEq5 = theProxy
+ where
+  theProxy
+    :: forall a b
+     . KnownNat (TF (2 * a + a) b + (2 * TF (a + 2 * a) b))
+    => Proxy a
+    -> Proxy b
+    -> Proxy (3 * TF (3 * a) b)
+  theProxy _ _ = Proxy

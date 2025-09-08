@@ -5,15 +5,14 @@ License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 
-{-# LANGUAGE CPP                        #-}
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TupleSections              #-}
 
-{-# OPTIONS_GHC -fno-warn-unused-imports #-}
-#if __GLASGOW_HASKELL__ < 801
-#define nonDetCmpType cmpType
-#endif
+
+{-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module GHC.TypeLits.Normalise.Unify
   ( -- * 'Nat' expressions \<-\> 'SOP' terms
@@ -38,7 +37,6 @@ module GHC.TypeLits.Normalise.Unify
   , subtractIneq
   , solveIneq
   , ineqToSubst
-  , subtractionToPred
   , instantSolveIneq
   , solvedInEqSmallestConstraint
     -- * Properties
@@ -46,82 +44,53 @@ module GHC.TypeLits.Normalise.Unify
   )
 where
 
--- External
-import Control.Arrow (first, second)
+-- base
+import Control.Arrow
+  ( first, second )
 import Control.Monad.Trans.Writer.Strict
-import Data.Function (on)
-import Data.List     ((\\), intersect, nub)
-import Data.Maybe    (fromMaybe, mapMaybe, isJust)
-import Data.Set      (Set)
+  ( Writer, WriterT(..), runWriter, tell )
+import Data.Foldable
+  ( asum )
+import Data.Function
+  ( on )
+import Data.List
+  ( (\\), intersect, nub )
+import qualified Data.List.NonEmpty as NE
+import Data.Maybe
+  ( fromMaybe, mapMaybe, isJust )
+import Data.Traversable
+  ( for )
+import GHC.Base
+  ( (==#), isTrue# )
+import GHC.Integer
+  ( smallInteger )
+import GHC.Integer.Logarithms
+  ( integerLogBase# )
+
+-- containers
+import Data.Set
+  ( Set )
 import qualified Data.Set as Set
 
-import GHC.Base               (isTrue#,(==#))
-import GHC.Integer            (smallInteger)
-import GHC.Integer.Logarithms (integerLogBase#)
-
--- GHC API
-#if MIN_VERSION_ghc(9,0,0)
-import GHC.Builtin.Types (boolTy, promotedTrueDataCon)
+-- ghc
 import GHC.Builtin.Types.Literals
-  (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon)
-#if MIN_VERSION_ghc(9,2,0)
-import GHC.Builtin.Types (naturalTy, promotedFalseDataCon)
-import GHC.Builtin.Types.Literals (typeNatCmpTyCon)
-#else
-import GHC.Builtin.Types (typeNatKind)
-import GHC.Builtin.Types.Literals (typeNatLeqTyCon)
-#endif
-import GHC.Core.Predicate (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
-import GHC.Core.TyCon (TyCon)
-#if MIN_VERSION_ghc(9,6,0)
-import GHC.Core.Type
-  (PredType, TyVar, coreView, mkNumLitTy, mkTyConApp, mkTyVarTy, typeKind)
-import GHC.Core.TyCo.Compare
-  (eqType, nonDetCmpType)
-#else
-import GHC.Core.Type
-  (PredType, TyVar, coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy, nonDetCmpType, typeKind)
-#endif
-import GHC.Core.TyCo.Rep (Kind, Type (..), TyLit (..))
-import GHC.Tc.Plugin (TcPluginM, tcPluginTrace)
-import GHC.Tc.Types.Constraint (Ct, ctEvidence, ctEvId, ctEvPred, isGiven)
+  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon
+  )
 import GHC.Types.Unique.Set
-  (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets, unitUniqSet)
-import GHC.Utils.Outputable (Outputable (..), (<+>), ($$), text)
-#else
-import Outputable    (Outputable (..), (<+>), ($$), text)
-import TcPluginM     (TcPluginM, tcPluginTrace)
-import TcTypeNats    (typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon,
-                      typeNatSubTyCon, typeNatLeqTyCon)
-import TyCon         (TyCon)
-import Type          (TyVar,
-                      coreView, eqType, mkNumLitTy, mkTyConApp, mkTyVarTy,
-                      nonDetCmpType, PredType, typeKind)
-import TyCoRep       (Kind, Type (..), TyLit (..))
-import TysWiredIn    (boolTy, promotedTrueDataCon, typeNatKind)
-import UniqSet       (UniqSet, unionManyUniqSets, emptyUniqSet, unionUniqSets,
-                      unitUniqSet)
+  ( UniqSet
+  , emptyUniqSet, unionManyUniqSets, unionUniqSets, unitUniqSet
+  )
+import GHC.Utils.Outputable
+  ( ($$), (<+>), text )
 
-#if MIN_VERSION_ghc(8,10,0)
-import Constraint (Ct,  ctEvidence, ctEvId, ctEvPred, isGiven)
-import Predicate  (EqRel (NomEq), Pred (EqPred), classifyPredType, mkPrimEqPred)
-#else
-import TcRnMonad  (Ct, ctEvidence, isGiven)
-import TcRnTypes  (ctEvPred)
-import Type       (EqRel (NomEq), PredTree (EqPred), classifyPredType, mkPrimEqPred)
-#endif
-#endif
+-- ghc-tcplugin-api
+import GHC.TcPlugin.API
+import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
 
--- Internal
+-- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
 
--- Used for haddock
-import GHC.TypeLits (Nat)
-
-#if MIN_VERSION_ghc(9,2,0)
-typeNatKind :: Type
-typeNatKind = naturalTy
-#endif
+--------------------------------------------------------------------------------
 
 newtype CType = CType { unCType :: Type }
   deriving Outputable
@@ -143,21 +112,45 @@ type CoreSymbol  = Symbol TyVar CType
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: Type -> Writer [(Type,Type)] CoreSOP
-normaliseNat ty | Just ty1 <- coreView ty = normaliseNat ty1
-normaliseNat (TyVarTy v)          = return (S [P [V v]])
-normaliseNat (LitTy (NumTyLit i)) = return (S [P [I i]])
-normaliseNat (TyConApp tc [x,y])
-  | tc == typeNatAddTyCon = mergeSOPAdd <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatSubTyCon = do
-    tell [(x,y)]
-    mergeSOPAdd <$> normaliseNat x
-                <*> (mergeSOPMul (S [P [I (-1)]]) <$> normaliseNat y)
-  | tc == typeNatMulTyCon = mergeSOPMul <$> normaliseNat x <*> normaliseNat y
-  | tc == typeNatExpTyCon = normaliseExp <$> normaliseNat x <*> normaliseNat y
-normaliseNat t = return (S [P [C (CType t)]])
+normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
+normaliseNat givensTyConSubst ty
+  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty
+  , (tc, xs, cos0) : _ <- NE.filter (( \ ( tc, _, _) -> tc `elem` knownTyCons)) tc_apps
+  = second ( ++ cos0 ) <$> goTyConApp tc xs
+  | Just i <- isNumLitTy ty
+  = return (S [P [I i]], [])
+  | Just v <- getTyVar_maybe ty
+  = return (S [P [V v]], [])
+  | otherwise
+  = return (S [P [C (CType ty)]], [])
+    where
+      goTyConApp :: TyCon -> [Type] -> Writer [(Type,Type)] (CoreSOP, [Coercion])
+      goTyConApp tc [x,y]
+        | tc == typeNatAddTyCon =
+            do (x', cos1) <- normaliseNat givensTyConSubst x
+               (y', cos2) <- normaliseNat givensTyConSubst y
+               return (mergeSOPAdd x' y', cos1 ++ cos2)
+        | tc == typeNatSubTyCon = do
+          (x', cos1) <- normaliseNat givensTyConSubst x
+          (y', cos2) <- normaliseNat givensTyConSubst y
+          tell [(reifySOP $ simplifySOP x', reifySOP $ simplifySOP y')]
+          return (mergeSOPAdd x' (mergeSOPMul (S [P [I (-1)]]) y'), cos1 ++ cos2)
+        | tc == typeNatMulTyCon =
+          do (x', cos1) <- normaliseNat givensTyConSubst x
+             (y', cos2) <- normaliseNat givensTyConSubst y
+             return (mergeSOPMul x' y', cos1 ++ cos2)
+        | tc == typeNatExpTyCon =
+          do (x', cos1) <- normaliseNat givensTyConSubst x
+             (y', cos2) <- normaliseNat givensTyConSubst y
+             return (normaliseExp x' y', cos1 ++ cos2)
+      goTyConApp tc xs =
+        return (S [P [C (CType $ mkTyConApp tc xs)]], [])
 
--- | Runs writer action. If the result /Nothing/ writer actions will be
+knownTyCons :: [TyCon]
+knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
+
+
+-- | Runs writer action. If the result is /Nothing/, writer actions will be
 -- discarded.
 maybeRunWriter
   :: Monoid a
@@ -171,43 +164,50 @@ maybeRunWriter w =
 -- | Applies 'normaliseNat' and 'simplifySOP' to type or predicates to reduce
 -- any occurrences of sub-terms of /kind/ 'GHC.TypeLits.Nat'. If the result is
 -- the same as input, returns @'Nothing'@.
-normaliseNatEverywhere :: Type -> Writer [(Type, Type)] (Maybe Type)
-normaliseNatEverywhere ty0
-  | TyConApp tc _fields <- ty0
-  , tc `elem` knownTyCons = do
-    -- Normalize under current type constructor application. 'go' skips all
-    -- known type constructors.
-    ty1M <- maybeRunWriter (go ty0)
-    let ty1 = fromMaybe ty0 ty1M
-
-    -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-    ty2 <- normaliseSimplifyNat ty1
-    -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
-    -- TODO: probably cheaper than checking for equality here.
-    pure (if ty2 `eqType` ty1 then ty1M else Just ty2)
-  | otherwise = go ty0
+normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
+normaliseNatEverywhere givensTyConSubst ty0
+  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty0
+  = fmap asum $ for tc_apps $ \ (tc, fields, cos1) ->
+      if tc `elem` knownTyCons
+      then do
+        -- Normalize under current type constructor application. 'go' skips all
+        -- known type constructors.
+        ty1M <- maybeRunWriter (go tc fields)
+        let (ty1, cos2) = fromMaybe (ty0, []) ty1M
+        -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
+        (ty2, cos3) <- normaliseSimplifyNat givensTyConSubst ty1
+        -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
+        -- TODO: probably cheaper than checking for equality here.
+        pure (if ty2 `eqType` ty1 then second ((cos1 ++ cos2) ++) <$> ty1M else Just (ty2, cos1 ++ cos2 ++ cos3))
+      else go tc fields
+  | otherwise
+  = pure Nothing
  where
-  knownTyCons :: [TyCon]
-  knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
 
   -- Normalize given type, but ignore all top-level
-  go :: Type -> Writer [(Type, Type)] (Maybe Type)
-  go (TyConApp tc_ fields0_) = do
+  go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
+  go tc_ fields0_ = do
     fields1_ <- mapM (maybeRunWriter . cont) fields0_
     if any isJust fields1_ then
-      pure (Just (TyConApp tc_ (zipWith fromMaybe fields0_ fields1_)))
+      let cos' = concat $ mapMaybe (fmap snd) fields1_
+      in
+         pure (Just (mkTyConApp tc_ (zipWith (\ f0 f1 -> maybe f0 fst f1) fields0_ fields1_), cos'))
     else
       pure Nothing
    where
-    cont = if tc_ `elem` knownTyCons then go else normaliseNatEverywhere
-  go _ = pure Nothing
+    cont ty'
+      | tc_ `elem` knownTyCons
+      , Just tc_apps' <- splitTyConApp_upTo givensTyConSubst ty'
+      = asum <$> traverse ( \ (tc', flds', cos') -> fmap (second (cos' ++)) <$> go tc' flds') tc_apps'
+      | otherwise
+      = normaliseNatEverywhere givensTyConSubst ty'
 
-normaliseSimplifyNat :: Type -> Writer [(Type, Type)] Type
-normaliseSimplifyNat ty
-  | typeKind ty `eqType` typeNatKind = do
-      ty' <- normaliseNat ty
-      return $ reifySOP $ simplifySOP ty'
-  | otherwise = return ty
+normaliseSimplifyNat :: TyConSubst -> Type -> Writer [(Type, Type)] (Type, [Coercion])
+normaliseSimplifyNat givensTyConSubst ty
+  | typeKind ty `eqType` natKind = do
+      (ty', cos1) <- normaliseNat givensTyConSubst ty
+      return $ (reifySOP $ simplifySOP ty', cos1)
+  | otherwise = return (ty, [])
 
 -- | Convert a 'SOP' term back to a type of /kind/ 'GHC.TypeLits.Nat'
 reifySOP :: CoreSOP -> Type
@@ -257,11 +257,26 @@ reifyProduct (P ps) =
     -- at the "2 ^ -1" because of the negative exponent.
     mergeExp :: CoreSymbol -> [Either CoreSymbol (CoreSOP,[CoreProduct])]
                            -> [Either CoreSymbol (CoreSOP,[CoreProduct])]
-    mergeExp (E s p)   []     = [Right (s,[p])]
+    mergeExp (E (S [P [I 1]]) _) ys = ys
+    mergeExp (E s p)             [] = [Right (s,[p])]
+    mergeExp (E (S [P [I s1]]) p1) (y:ys)
+      | Right ((S [P [I s2]]), p2s) <- y
+      , let s = gcd s1 s2
+            t1 = s1 `quot` s
+            t2 = s2 `quot` s
+      , s > 1
+      -- Deal with e.g. "2 ^ -1 * 6 ^ x", where the bases differ.
+      --
+      --   (s * t1) ^ p1 * (s * t2) ^ (p2 + ...) * rest
+      --     ===>
+      --   s ^ (p1 + p2 + ...) * t1 ^ p1 * t2 ^ (p2 + ..) * rest
+      = Right (S [P [I s]], (p1:p2s)) :
+         mergeExp (E (S [P [I t1]]) p1)
+           (Right ((S [P [I t2]]), p2s):ys)
     mergeExp (E s1 p1) (y:ys)
-      | Right (s2,p2) <- y
+      | Right (s2,p2s) <- y
       , s1 == s2
-      = Right (s1,(p1:p2)) : ys
+      = Right (s1,(p1:p2s)) : ys
       | otherwise
       = Right (s1,[p1]) : y : ys
     mergeExp x ys = Left x : ys
@@ -322,25 +337,6 @@ ineqToSubst (x,S [P [V v]],True)
 ineqToSubst _
   = Nothing
 
-subtractionToPred
-  :: TyCon
-  -> (Type,Type)
-  -> (PredType, Kind)
-subtractionToPred ordCond (x,y) =
-#if MIN_VERSION_ghc(9,2,0)
-  let cmpNat = mkTyConApp typeNatCmpTyCon [y,x]
-      trueTc = mkTyConApp promotedTrueDataCon []
-      falseTc = mkTyConApp promotedFalseDataCon []
-      ordCmp = mkTyConApp ordCond
-                [boolTy,cmpNat,trueTc,trueTc,falseTc]
-      predTy = mkPrimEqPred ordCmp trueTc
-   in (predTy,boolTy)
-#else
-  (mkPrimEqPred (mkTyConApp ordCond [y,x])
-                (mkTyConApp promotedTrueDataCon [])
-  ,boolTy)
-#endif
-
 -- | A substitution is essentially a list of (variable, 'SOP') pairs,
 -- but we keep the original 'Ct' that lead to the substitution being
 -- made, for use when turning the substitution back into constraints.
@@ -359,18 +355,18 @@ instance (Outputable v, Outputable c) => Outputable (UnifyItem v c) where
   ppr (UnifyItem {..}) = ppr siLHS <+> text " :~ " <+> ppr siRHS
 
 -- | Apply a substitution to a single normalised 'SOP' term
-substsSOP :: (Ord v, Ord c) => [UnifyItem v c] -> SOP v c -> SOP v c
+substsSOP :: (Outputable v, Outputable c, Ord v, Ord c) => [UnifyItem v c] -> SOP v c -> SOP v c
 substsSOP []                   u = u
 substsSOP ((SubstItem {..}):s) u = substsSOP s (substSOP siVar siSOP u)
 substsSOP ((UnifyItem {}):s)   u = substsSOP s u
 
-substSOP :: (Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
+substSOP :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
 substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
 
-substProduct :: (Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
+substProduct :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
 substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
 
-substSymbol :: (Ord v, Ord c) => v -> SOP v c -> Symbol v c -> SOP v c
+substSymbol :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> Symbol v c -> SOP v c
 substSymbol _  _ s@(I _) = S [P [s]]
 substSymbol _  _ s@(C _) = S [P [s]]
 substSymbol tv e (V tv')
@@ -379,7 +375,7 @@ substSymbol tv e (V tv')
 substSymbol tv e (E s p) = normaliseExp (substSOP tv e s) (substProduct tv e p)
 
 -- | Apply a substitution to a substitution
-substsSubst :: (Ord v, Ord c) => [UnifyItem v c] -> [UnifyItem v c] -> [UnifyItem v c]
+substsSubst :: (Outputable v, Outputable c, Ord v, Ord c) => [UnifyItem v c] -> [UnifyItem v c] -> [UnifyItem v c]
 substsSubst s = map subt
   where
     subt si@(SubstItem {..}) = si {siSOP = substsSOP s siSOP}
@@ -402,8 +398,8 @@ instance Outputable UnifyResult where
 -- same, then we 'Win' if @u@ and @v@ are equal, and 'Lose' otherwise.
 --
 -- If @u@ and @v@ do not have the same free variables, we result in a 'Draw',
--- ware @u@ and @v@ are only equal when the returned 'CoreSubst' holds.
-unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM UnifyResult
+-- where @u@ and @v@ are only equal when the returned 'CoreSubst' holds.
+unifyNats :: Ct -> CoreSOP -> CoreSOP -> TcPluginM Solve UnifyResult
 unifyNats ct u v = do
   tcPluginTrace "unifyNats" (ppr ct $$ ppr u $$ ppr v)
   return (unifyNats' ct u v)
@@ -422,7 +418,7 @@ unifyNats' ct u v
   where
     -- A unifier is only a unifier if differs from the original constraint
     diffFromConstraint (UnifyItem x y) = not (x == u && y == v)
-    diffFromConstraint _               = True
+    diffFromConstraint (SubstItem x y) = not (S [P [V x]] == u && y == v)
 
 -- | Find unifiers for two SOP terms
 --
@@ -461,32 +457,39 @@ unifiers :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
 unifiers ct u@(S [P [V x]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 _
-        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct) -> [SubstItem x v]
+        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct)
+        -> [SubstItem x v]
       _ -> []
 unifiers ct u v@(S [P [V x]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq _ t2
-        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct) -> [SubstItem x u]
+        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct)
+        -> [SubstItem x u]
       _ -> []
 unifiers ct u@(S [P [C _]]) v
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+        -> [UnifyItem u v]
       _ -> []
 unifiers ct u v@(S [P [C _]])
   = case classifyPredType $ ctEvPred $ ctEvidence ct of
       EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2 -> [UnifyItem u v]
+        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+        -> [UnifyItem u v]
       _ -> []
 unifiers ct u v             = unifiers' ct u v
 
 unifiers' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+unifiers' _ct (S [])        (S [])        = []
+
 unifiers' _ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]])]
 unifiers' _ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]])]
 
 unifiers' _ct (S [P [V x]]) s             = [SubstItem x s]
 unifiers' _ct s             (S [P [V x]]) = [SubstItem x s]
 
+unifiers' _ct (S [P [C {}]])   (S [P [C {}]])   = []
 unifiers' _ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2]
 unifiers' _ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2]
 
@@ -511,45 +514,41 @@ unifiers' ct (S [P p2]) (S [P [E (S [P s1]) p1]])
 -- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
 -- and `ceiling (logBase i j) == floor (logBase i j)`
 unifiers' ct (S [P [E (S [P [I i]]) p]]) (S [P [I j]])
-  = case integerLogBase i j of
-      Just k  -> unifiers' ct (S [p]) (S [P [I k]])
-      Nothing -> []
+  | Just k <- integerLogBase i j
+  = unifiers' ct (S [p]) (S [P [I k]])
 
 unifiers' ct (S [P [I j]]) (S [P [E (S [P [I i]]) p]])
-  = case integerLogBase i j of
-      Just k  -> unifiers' ct (S [p]) (S [P [I k]])
-      Nothing -> []
+  | Just k <- integerLogBase i j
+  = unifiers' ct (S [p]) (S [P [I k]])
 
 -- a^d * a^e ~ a^c ==> [c := d + e]
-unifiers' ct (S [P [E s1 p1]]) (S [p2]) = case collectBases p2 of
-  Just (b:bs,ps) | all (== s1) (b:bs) ->
-    unifiers' ct (S [p1]) (S ps)
-  _ -> []
+unifiers' ct (S [P [E s1 p1]]) (S [p2])
+  | Just (b:bs,ps) <- collectBases p2
+  , all (== s1) (b:bs)
+  = unifiers' ct (S [p1]) (S ps)
 
-unifiers' ct (S [p2]) (S [P [E s1 p1]]) = case collectBases p2 of
-  Just (b:bs,ps) | all (== s1) (b:bs) ->
-    unifiers' ct (S ps) (S [p1])
-  _ -> []
+unifiers' ct (S [p2]) (S [P [E s1 p1]])
+  | Just (b:bs,ps) <- collectBases p2
+  , all (== s1) (b:bs)
+  = unifiers' ct (S ps) (S [p1])
 
 -- (i * a) ~ j ==> [a := div j i]
 -- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
-unifiers' ct (S [P ((I i):ps)]) (S [P [I j]]) =
-  case safeDiv j i of
-    Just k -> unifiers' ct (S [P ps]) (S [P [I k]])
-    _      -> []
+unifiers' ct (S [P ((I i):ps)]) (S [P [I j]])
+  | Just k <- safeDiv j i
+  = unifiers' ct (S [P ps]) (S [P [I k]])
 
-unifiers' ct (S [P [I j]]) (S [P ((I i):ps)]) =
-  case safeDiv j i of
-    Just k -> unifiers' ct (S [P ps]) (S [P [I k]])
-    _      -> []
+unifiers' ct (S [P [I j]]) (S [P ((I i):ps)])
+  | Just k <- safeDiv j i
+  = unifiers' ct (S [P ps]) (S [P [I k]])
 
 -- (2*a) ~ (2*b) ==> [a := b]
 -- unifiers' ct (S [P (p:ps1)]) (S [P (p':ps2)])
 --     | p == p'   = unifiers' ct (S [P ps1]) (S [P ps2])
 --     | otherwise = []
 unifiers' ct (S [P ps1]) (S [P ps2])
-    | null psx  = []
-    | otherwise = unifiers' ct (S [P ps1'']) (S [P ps2''])
+  | not $ null psx
+  = unifiers' ct (S [P ps1'']) (S [P ps2''])
   where
     ps1'  = ps1 \\ psx
     ps2'  = ps2 \\ psx
@@ -561,28 +560,32 @@ unifiers' ct (S [P ps1]) (S [P ps2])
 
 -- (2 + a) ~ 5 ==> [a := 3]
 unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
-    | i < j     = unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
-    | i > j     = unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
+  = case compare i j of
+       EQ -> unifiers' ct (S ps1) (S ps2)
+       LT -> unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
+       GT -> unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
 
 -- (a + c) ~ (b + c) ==> [a := b]
-unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
-  Just (s1',s2',_)
-    | s1' /= s1 || s2' /= s1
-    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
-    , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
-    -> unifiers' ct s1' s2'
-  _ | null psx
-    , length ps1 == length ps2
-    -> case nub (concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)) of
-        []                             -> unifiers'' ct (S ps1) (S ps2)
-        [k] | length ps1 == length ps2 -> [k]
-        _                              -> []
-    | null psx
-    , isGiven (ctEvidence ct)
-    -> unifiers'' ct (S ps1) (S ps2)
-    | null psx
-    -> []
-  _ -> unifiers' ct (S ps1'') (S ps2'')
+unifiers' ct s1@(S ps1) s2@(S ps2)
+  | Just (s1',s2',_) <- sopToIneq k1
+  , s1' /= s1 || s2' /= s2
+  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
+  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
+  = unifiers' ct s1' s2'
+  | null psx
+  , length ps1 == length ps2
+  , length ps1 > 1
+  , let unifs = nub $ concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)
+  , length unifs <= 1
+  = case unifs of
+        []  -> unifiers'' ct (S ps1) (S ps2)
+        [k] -> [k]
+        _   -> error "impossible"
+  | null psx
+  , isGiven (ctEvidence ct)
+  = unifiers'' ct (S ps1) (S ps2)
+  | not $ null psx
+  = unifiers' ct (S ps1'') (S ps2'')
   where
     k1 = subtractIneq (s1,s2,True)
     ps1'  = ps1 \\ psx
@@ -592,6 +595,8 @@ unifiers' ct s1@(S ps1) s2@(S ps2) = case sopToIneq k1 of
     ps2'' | null ps2' = [P [I 0]]
           | otherwise = ps2'
     psx = intersect ps1 ps2
+
+unifiers' _ s1 s2 = [UnifyItem s1 s2]
 
 unifiers'' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
 unifiers'' ct (S [P [I i],P [V v]]) s2

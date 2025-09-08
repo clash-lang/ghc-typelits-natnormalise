@@ -20,13 +20,16 @@ module ErrorTests where
 
 import Data.Proxy
 import GHC.TypeLits
-#if __GLASGOW_HASKELL__ >= 904
+#if __GLASGOW_HASKELL__ >= 903
 import GHC.Types
 #endif
 
 import GHC.IO.Encoding            (getLocaleEncoding, textEncodingName, utf8)
 import Language.Haskell.TH        (litE, stringL)
 import Language.Haskell.TH.Syntax (runIO)
+#if __GLASGOW_HASKELL__ >= 901
+import qualified Data.Type.Ord
+#endif
 
 #if __GLASGOW_HASKELL__ >= 901
 import qualified Data.Type.Ord
@@ -90,11 +93,11 @@ testProxy4 = proxyFun4
 testProxy4Errors =
 #if __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 2 -> ()"
-  ,"  Actual: Proxy ((2 * y0) + 4) -> ()"
+  ,"  Actual: Proxy ((2 * 0) + 4) -> ()"
   ]
 #else
   ["Expected type: Proxy 2 -> ()"
-  ,"Actual type: Proxy ((2 * y0) + 4) -> ()"
+  ,"Actual type: Proxy ((2 * 0) + 4) -> ()"
   ]
 #endif
 
@@ -104,11 +107,11 @@ testProxy5 = proxyFun4
 testProxy5Errors =
 #if __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 7 -> ()"
-  ,"  Actual: Proxy ((2 * y1) + 4) -> ()"
+  ,"  Actual: Proxy ((2 * y0) + 4) -> ()"
   ]
 #else
   ["Expected type: Proxy 7 -> ()"
-  ,"Actual type: Proxy ((2 * y1) + 4) -> ()"
+  ,"Actual type: Proxy ((2 * y0) + 4) -> ()"
   ]
 #endif
 

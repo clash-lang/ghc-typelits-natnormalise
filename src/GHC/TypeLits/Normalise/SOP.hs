@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-|
 Copyright  :  (C) 2015-2016, University of Twente,
                   2017     , QBayLogic B.V.
@@ -74,8 +75,6 @@ x^(y*z)
 @
 -}
 
-{-# LANGUAGE CPP #-}
-
 module GHC.TypeLits.Normalise.SOP
   ( -- * SOP types
     Symbol (..)
@@ -92,16 +91,17 @@ module GHC.TypeLits.Normalise.SOP
   )
 where
 
--- External
-import Data.Either (partitionEithers)
-import Data.List   (sort)
+-- base
+import Data.Either
+  ( partitionEithers )
+import Data.List
+  ( sort )
 
--- GHC API
-#if MIN_VERSION_ghc(9,0,0)
-import GHC.Utils.Outputable (Outputable (..), (<+>), text, hcat, integer, punctuate)
-#else
-import Outputable (Outputable (..), (<+>), text, hcat, integer, punctuate)
-#endif
+-- ghc-tcplugin-api
+import GHC.Utils.Outputable
+  ( Outputable (..), (<+>), text, hcat, integer, punctuate )
+
+--------------------------------------------------------------------------------
 
 data Symbol v c
   = I Integer                 -- ^ Integer constant
@@ -160,7 +160,7 @@ mergeWith op (f:fs) = case partitionEithers $ map (`op` f) fs of
 -- 2^3          ==>  8
 -- (k ^ i) ^ j  ==>  k ^ (i * j)
 -- @
-reduceExp :: (Ord v, Ord c) => Symbol v c -> Symbol v c
+reduceExp :: (Outputable v, Outputable c, Ord v, Ord c) => Symbol v c -> Symbol v c
 reduceExp (E _                 (P [(I 0)])) = I 1        -- x^0 ==> 1
 reduceExp (E (S [P [I 0]])     _          ) = I 0        -- 0^x ==> 0
 reduceExp (E (S [P [(I i)]])   (P [(I j)]))
@@ -189,7 +189,7 @@ reduceExp s = s
 -- x^4 * x  ==>  x^5
 -- y*y      ==>  y^2
 -- @
-mergeS :: (Ord v, Ord c) => Symbol v c -> Symbol v c
+mergeS :: (Outputable v, Outputable c, Ord v, Ord c) => Symbol v c -> Symbol v c
        -> Either (Symbol v c) (Symbol v c)
 mergeS (I i) (I j) = Left (I (i * j)) -- 8 * 7 ==> 56
 mergeS (I 1) r     = Left r           -- 1 * x ==> x
@@ -245,7 +245,8 @@ mergeS l _ = Right l
 -- xy + 2xy   ==>  3xy
 -- xy + xy    ==>  2xy
 -- @
-mergeP :: (Eq v, Eq c) => Product v c -> Product v c
+mergeP :: (Eq v, Eq c, Outputable v, Outputable c)
+       => Product v c -> Product v c
        -> Either (Product v c) (Product v c)
 -- 2xy + 3xy ==> 5xy
 mergeP (P ((I i):is)) (P ((I j):js))
@@ -272,7 +273,7 @@ mergeP (P is) (P js)
 -- (x + 2)^(2x)     ==>  (x^2 + 4xy + 4)^x
 -- (x + 2)^(y + 2)  ==>  4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
 -- @
-normaliseExp :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
+normaliseExp :: (Outputable v, Outputable c, Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 -- b^1 ==> b
 normaliseExp b (S [P [I 1]]) = b
 
@@ -296,7 +297,7 @@ normaliseExp b (S [P (e@(I i):es)]) | i >= 0 =
 normaliseExp b (S [e]) = S [P [reduceExp (E b e)]]
 
 -- (x + 2)^(y + 2) ==> 4x(2 + x)^y + 4(2 + x)^y + (2 + x)^yx^2
-normaliseExp b (S e) = foldr1 mergeSOPMul (map (normaliseExp b . S . (:[])) e)
+normaliseExp b (S es) = foldr1 mergeSOPMul (map (normaliseExp b . S . (:[])) es)
 
 zeroP :: Product v c -> Bool
 zeroP (P ((I 0):_)) = True
@@ -311,7 +312,7 @@ mkNonEmpty s      = s
 -- * 'mergeS'
 -- * 'mergeP'
 -- * 'reduceExp'
-simplifySOP :: (Ord v, Ord c) => SOP v c -> SOP v c
+simplifySOP :: (Outputable v, Outputable c, Ord v, Ord c) => SOP v c -> SOP v c
 simplifySOP = repeatF go
   where
     go = mkNonEmpty
@@ -329,12 +330,12 @@ simplifySOP = repeatF go
 {-# INLINEABLE simplifySOP #-}
 
 -- | Merge two SOP terms by additions
-mergeSOPAdd :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
+mergeSOPAdd :: (Outputable v, Outputable c, Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 mergeSOPAdd (S sop1) (S sop2) = simplifySOP $ S (sop1 ++ sop2)
 {-# INLINEABLE mergeSOPAdd #-}
 
 -- | Merge two SOP terms by multiplication
-mergeSOPMul :: (Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
+mergeSOPMul :: (Outputable v, Outputable c, Ord v, Ord c) => SOP v c -> SOP v c -> SOP v c
 mergeSOPMul (S sop1) (S sop2)
   = simplifySOP
   . S
