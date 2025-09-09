@@ -363,7 +363,7 @@ proxyEq3
    . ((x + 1) ~ (2 * y), 1 <= y)
   => Proxy x
   -> Proxy y
-  -> Proxy (((2 * (y - 1)) + 1))
+  -> Proxy ((2 * (y - 1)) + 1)
   -> Proxy x
 proxyEq3 _ _ x = x
 

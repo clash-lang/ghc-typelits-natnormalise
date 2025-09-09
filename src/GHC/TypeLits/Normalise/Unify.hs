@@ -13,6 +13,7 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
 
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
+{-# LANGUAGE BangPatterns #-}
 
 module GHC.TypeLits.Normalise.Unify
   ( -- * 'Nat' expressions \<-\> 'SOP' terms
@@ -49,6 +50,8 @@ import Control.Arrow
   ( first, second )
 import Control.Monad.Trans.Writer.Strict
   ( Writer, WriterT(..), runWriter, tell )
+import Data.Either
+  ( partitionEithers )
 import Data.Foldable
   ( asum )
 import Data.Function
@@ -291,14 +294,45 @@ reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
                                          ,reifySOP (S s2)
                                          ]
 
+-- | Simplify an inequality by first calling 'subtractIneq', producing a SOP
+-- term, and then creating a new inequality by moving all the terms with
+-- negative coefficients to one side.
+--
+-- Returns 'Nothing' if it is not able to simplify the original inequality.
+simplifyIneq :: Ineq -> Maybe Ineq
+simplifyIneq ineq@(x, y, isLE)
+  = if x' == x && y' == y
+    then Nothing
+    else Just (x', y', isLE)
+  where
+    S ps = subtractIneq ineq
+    (neg, pos) = partitionEithers $ map classify ps
+    (x', y') =
+      if isLE
+      then ( S neg, S pos )
+      else ( S pos, S neg )
+    classify :: CoreProduct -> Either CoreProduct CoreProduct
+    classify (P (I i : r))
+      | i < 0
+      = Left $
+          -- preserve normal form
+          if i == (-1)
+          then
+            if null r
+            then P [I 1]
+            else P r
+          else P $ I (negate i) : r
+    classify prod
+      = Right prod
+
 -- | Subtract an inequality, in order to either:
 --
 -- * See if the smallest solution is a natural number
 -- * Cancel sums, i.e. monotonicity of addition
 --
 -- @
--- subtractIneq (2*y <=? 3*x ~ True)  = (-2*y + 3*x)
--- subtractIneq (2*y <=? 3*x ~ False) = (-3*x + (-1) + 2*y)
+-- subtractIneq (2*y <=? 3*x ~ True)  = 3*x + (-2)*y
+-- subtractIneq (2*y <=? 3*x ~ False) = -3*x + (-2)*y
 -- @
 subtractIneq
   :: (CoreSOP, CoreSOP, Bool)
@@ -308,25 +342,6 @@ subtractIneq (x,y,isLE)
   = mergeSOPAdd y (mergeSOPMul (S [P [I (-1)]]) x)
   | otherwise
   = mergeSOPAdd x (mergeSOPMul (S [P [I (-1)]]) (mergeSOPAdd y (S [P [I 1]])))
-
--- | Try to reverse the process of 'subtractIneq'
---
--- E.g.
---
--- @
--- subtractIneq (2*y <=? 3*x ~ True) = (-2*y + 3*x)
--- sopToIneq (-2*y+3*x) = Just (2*x <=? 3*x ~ True)
--- @
-sopToIneq
-  :: CoreSOP
-  -> Maybe Ineq
-sopToIneq (S [P ((I i):l),r])
-  | i < 0
-  = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
-sopToIneq (S [r,P ((I i:l))])
-  | i < 0
-  = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
-sopToIneq _ = Nothing
 
 -- | Give the smallest solution for an inequality
 ineqToSubst
@@ -567,8 +582,7 @@ unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
 
 -- (a + c) ~ (b + c) ==> [a := b]
 unifiers' ct s1@(S ps1) s2@(S ps2)
-  | Just (s1',s2',_) <- sopToIneq k1
-  , s1' /= s1 || s2' /= s2
+  | Just (s1',s2',_) <- simplifyIneq (s1, s2, True)
   , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
   , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
   = unifiers' ct s1' s2'
@@ -587,7 +601,6 @@ unifiers' ct s1@(S ps1) s2@(S ps2)
   | not $ null psx
   = unifiers' ct (S ps1'') (S ps2'')
   where
-    k1 = subtractIneq (s1,s2,True)
     ps1'  = ps1 \\ psx
     ps2'  = ps2 \\ psx
     ps1'' | null ps1' = [P [I 0]]
@@ -802,14 +815,12 @@ leTrans _ _ = noRewrite
 -- * SOP version: -2 + x
 -- * Convert back to inequality: 2 <= x
 plusMonotone :: IneqRule
-plusMonotone want have
-  | Just want' <- sopToIneq (subtractIneq want)
-  , want' /= want
-  = pure [(want',have)]
-  | Just have' <- sopToIneq (subtractIneq have)
-  , have' /= have
-  = pure [(want,have')]
-plusMonotone _ _ = noRewrite
+plusMonotone want have =
+  case (simplifyIneq want, simplifyIneq have) of
+    (Just want', Just have') -> pure [(want', have')]
+    (Just want', _         ) -> pure [(want', have )]
+    (_         , Just have') -> pure [(want , have')]
+    _ -> noRewrite
 
 -- | Make the `a` of a given `a <= b` smaller
 haveSmaller :: IneqRule
