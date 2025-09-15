@@ -143,6 +143,7 @@ xs :: OptVector t (n-l)
 where /n-l/ is a negative number.
 -}
 
+{-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE ExplicitNamespaces    #-}
 {-# LANGUAGE FlexibleContexts      #-}
@@ -169,9 +170,9 @@ import Control.Monad.Trans.Writer.Strict
   ( WriterT(runWriterT), runWriter )
 import Data.Either
   ( rights, partitionEithers )
+import Data.Foldable
 import Data.List
-  ( stripPrefix, find, partition )
-import qualified Data.List.NonEmpty as NE
+  ( stripPrefix, partition )
 import Data.Maybe
   ( mapMaybe, catMaybes, fromMaybe )
 import Data.Traversable
@@ -184,6 +185,10 @@ import Data.Set
   ( Set )
 import qualified Data.Set as Set
   ( elems, empty )
+import Data.Map.Strict
+  ( Map )
+import qualified Data.Map.Strict as Map
+  ( empty, insertWith, traverseWithKey )
 
 -- ghc
 import GHC.Builtin.Names
@@ -194,11 +199,10 @@ import GHC.Builtin.Types.Literals
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
 import GHC.TcPlugin.API.TyConSubst
-  ( TyConSubst, mkTyConSubst, splitTyConApp_upTo )
+  ( TyConSubst, mkTyConSubst )
 import GHC.Plugins
   ( Plugin(..), defaultPlugin, purePlugin )
 import GHC.Utils.Outputable
-  ( (<+>), text, vcat )
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.Compat
@@ -273,21 +277,17 @@ decideEqualSOP
 -- @Unbox (1 + n)@!
 decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
    do
-    let givensTyConSubst = mkTyConSubst givens
-        reds =
-          filter
-            (\(_,(_,_,v)) -> null v || negNumbers opts) $
-              reduceGivens opts tcs (mkTyConSubst givens) givens
+    let
+      givensTyConSubst = mkTyConSubst givens
+    (redGivens, _) <- reduceGivens False opts tcs givensTyConSubst givens
 
     tcPluginTrace "decideEqualSOP Givens {" $
       vcat [ text "givens:" <+> ppr givens ]
 
-    newGivens <- for reds $ \(origCt, (pred', evTerm, _)) ->
-      mkNonCanonical <$> newGiven (ctLoc origCt) pred' evTerm
     -- Try to find contradictory Givens, to improve pattern match warnings.
     SimplifyResult _simpls contras <-
       simplifyNats opts tcs [] $
-        concatMap (toNatEquality tcs givensTyConSubst) (givens ++ newGivens)
+        concatMap (toNatEquality tcs givensTyConSubst) redGivens
     tcPluginTrace "decideEqualSOP Givens }" $
       vcat [ text "givens:" <+> ppr givens
            , text "simpls:" <+> ppr _simpls
@@ -313,18 +313,16 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
                         . ctEvPred
                         . ctEvidence )
                  wanteds
-    let newRedGs = reduceGivens opts tcs givensTyConSubst givens
-    redGivens <- for newRedGs $ \(origCt, (pred', evExpr, _)) ->
-      mkNonCanonical <$> newGiven (ctLoc origCt) pred' evExpr
+
+    (redGivens, negWanteds) <- reduceGivens True opts tcs givensTyConSubst givens
     reducible_wanteds
       <- catMaybes <$> mapM (\ct -> fmap (ct,) <$>
-                                    reduceNatConstr givensTyConSubst (givens ++ redGivens) ct)
+                                    reduceNatConstr givensTyConSubst redGivens ct)
                             nonEqs
 
     tcPluginTrace "decideEqualSOP Wanteds {" $
        vcat [ text "givens:" <+> ppr givens
             , text "new reduced givens:" <+> ppr redGivens
-            , text "newRedGs:" <+> ppr newRedGs
             , text $ replicate 80 '-'
             , text "wanteds:" <+> ppr wanteds
             , text "unit_wanteds:" <+> ppr unit_wanteds0
@@ -337,9 +335,9 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
         -- subterms, we have to make sure appropriate inequalities to hold.
         -- Here, we generate such additional inequalities for reduction
         -- that is to be added to new [W]anteds.
-        ineqForRedWants <- fmap concat $ for newRedGs $ \(ct, (_,_, ws)) -> for ws $
-          fmap mkNonCanonical . newWanted (ctLoc ct)
-        let unit_givens = concatMap (toNatEquality tcs givensTyConSubst) givens
+        let mkNegWanted ( CType wtdPred ) loc = mkNonCanonical <$> newWanted loc wtdPred
+        ineqForRedWants <- Map.traverseWithKey mkNegWanted negWanteds
+        let unit_givens = concatMap (toNatEquality tcs givensTyConSubst) redGivens
             unit_wanteds = unit_wanteds0 ++ concatMap (toNatEquality tcs givensTyConSubst) ineqForRedWants
         sr@(SimplifyResult evs contras) <- simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
@@ -357,11 +355,9 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
            vcat [ text "givens:" <+> ppr givens
                 , text "new reduced givens:" <+> ppr redGivens
                 , text "unit givens:" <+> ppr unit_givens
-                , text "newRedGs:" <+> ppr newRedGs
                 , text $ replicate 80 '-'
                 , text "wanteds:" <+> ppr wanteds
                 , text "ineqForRedWants:" <+> ppr ineqForRedWants
-                , text "unit_wanteds0:" <+> ppr (map (toNatEquality tcs givensTyConSubst) wanteds)
                 , text "unit_wanteds:" <+> ppr unit_wanteds
                 , text "reducible_wanteds:" <+> ppr reducible_wanteds
                 , text $ replicate 80 '='
@@ -377,21 +373,28 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
 
-reduceGivens :: Opts -> LookedUpTyCons
-             -> TyConSubst
-             -> [Ct] -> [(Ct, (Type, EvTerm, [PredType]))]
-reduceGivens opts tcs givensTyConSubst givens =
-  let nonEqs =
-        [ ct
-        | ct <- givens
-        , let ev = ctEvidence ct
-              prd = ctEvPred ev
-        , isGiven ev
-        , not $ (\p -> isEqPred p || isEqClassPred p ) prd
-        ]
-  in mapMaybe
-      (\ct -> (ct,) <$> tryReduceGiven opts tcs givensTyConSubst givens ct)
-      nonEqs
+reduceGivens :: Bool -- ^ allow generating new "non-negative" Wanteds
+             -> Opts -> LookedUpTyCons -> TyConSubst
+             -> [Ct]
+             -> TcPluginM Solve ([Ct], Map CType CtLoc)
+reduceGivens gen_wanteds opts tcs givensTyConSubst origGivens = go [] Map.empty origGivens
+  where
+    go rev_acc_gs acc_ws [] = return ( reverse rev_acc_gs, acc_ws )
+    go rev_acc_gs acc_ws (g:gs) =
+      case tryReduceGiven opts tcs givensTyConSubst origGivens g of
+        Just ( pred', evExpr, ws )
+          | gen_wanteds || null ws || negNumbers opts
+          -> do
+            let loc = ctLoc g
+            g' <- mkNonCanonical <$> newGiven loc pred' evExpr
+            let !acc' = foldl' (insertWanted loc) acc_ws ws
+            go ( g' : rev_acc_gs ) acc' gs
+        _ ->
+          go ( g : rev_acc_gs ) acc_ws gs
+
+    insertWanted :: CtLoc -> Map CType CtLoc -> Type -> Map CType CtLoc
+    insertWanted loc acc w =
+      Map.insertWith (\ _new old -> old) (CType w) loc acc
 
 tryReduceGiven
   :: Opts -> LookedUpTyCons
@@ -404,11 +407,15 @@ tryReduceGiven opts tcs givensTyConSubst simplGivens ct = do
           ctEvPred $ ctEvidence ct
         ws' = [ p
               | p <- subToPred opts tcs ws
-              , all (not . (`eqType` p). ctEvPred . ctEvidence) simplGivens
+              , all (not . (`eqType` p) . ctEvPred . ctEvidence) simplGivens
               ]
         -- deps = unitDVarSet (ctEvId ct)
     (pred', deps) <- mans
-    return (pred', toReducedDict (ctEvidence ct) pred' deps, ws')
+    case classifyPredType pred' of
+      EqPred _ l r
+        | l `eqType` r
+        -> Nothing
+      _ -> return (pred', toReducedDict (ctEvidence ct) pred' deps, ws')
 
 fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
@@ -684,16 +691,12 @@ toNatEquality tcs givensTyConSubst ct0
     goNomEq lhs rhs
       -- Recur into a TyCon application for TyCons that we **do not** rewrite,
       -- e.g. peek inside the Maybe in 'Maybe (x + y) ~ Maybe (y + x)'.
-      | Just tcApps1 <- splitTyConApp_upTo givensTyConSubst lhs
-      , Just tcApps2 <- splitTyConApp_upTo givensTyConSubst rhs
-      , let tcAppsMap1 = listToUniqMap $ map (\ (tc, tys, deps) -> (tc, (tys, deps))) $ NE.toList tcApps1
-            tcAppsMap2 = listToUniqMap $ map (\ (tc, tys, deps) -> (tc, (tys, deps))) $ NE.toList tcApps2
-            tcAppPairs = intersectUniqMap_C (,) tcAppsMap1 tcAppsMap2
-      , (tc, ((xs, cos1), (ys, cos2))):_ <- nonDetUniqMapToList tcAppPairs
+      | Just (tc , xs) <- splitTyConApp_maybe lhs
+      , Just (tc', ys) <- splitTyConApp_maybe rhs
+      , tc == tc'
       , not $ tc `elem` [typeNatAddTyCon, typeNatSubTyCon, typeNatMulTyCon, typeNatExpTyCon]
       , let subs = filter (not . uncurry eqType) (zip xs ys)
-      = (\ (eq, ws, deps) -> (eq, ws, cos1 ++ cos2 ++ deps)) <$>
-          concatMap (uncurry rewrite) subs
+      = concatMap (uncurry rewrite) subs
       | otherwise
       = rewrite lhs rhs
 

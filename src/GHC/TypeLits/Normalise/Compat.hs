@@ -244,6 +244,9 @@ isNatRel :: LookedUpTyCons -> TyConSubst -> PredType -> Maybe (Relation, [Coerci
 isNatRel tcs givensTyConSubst ty0
   | EqPred NomEq x y <- classifyPredType ty0
   = if
+      -- (expr1 :: Nat) ~ (expr2 :: Nat)
+      | all ( ( `eqType` natKind ) . typeKind ) [ x, y ]
+      -> Just $ ( ( ( x, y ), Nothing ), [] )
       -- (b :: Bool) ~ y
       | Just ( b, cos1 ) <- boolean_maybe givensTyConSubst x
       -> second ( ++ cos1 ) <$> booleanRel b y
@@ -399,3 +402,5 @@ mkTcPluginSolveResult contras solved new =
   then TcPluginContradiction contras
   else TcPluginOk solved new
 #endif
+
+--------------------------------------------------------------------------------

@@ -51,15 +51,10 @@ import Control.Monad
   ( guard, zipWithM )
 import Data.Either
   ( partitionEithers )
-import Data.Foldable
-  ( asum )
 import Data.List
   ( (\\), intersect, nub )
-import qualified Data.List.NonEmpty as NE
 import Data.Maybe
   ( fromMaybe, mapMaybe, isJust )
-import Data.Traversable
-  ( for )
 import GHC.Base
   ( (==#), isTrue# )
 import GHC.Integer
@@ -81,12 +76,13 @@ import GHC.Types.Unique.Set
   , emptyUniqSet, unionManyUniqSets, unionUniqSets, unitUniqSet
   , nonDetEltsUniqSet, elementOfUniqSet
   )
-import GHC.Utils.Outputable
-  ( ($$), (<+>), text )
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
-import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
+import GHC.TcPlugin.API.TyConSubst
+  ( TyConSubst )
+import GHC.Utils.Outputable
+
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
@@ -119,9 +115,8 @@ type CoreSymbol  = Symbol TyVar CType
 -- * Applications of the arithmetic operators @(+,-,*,^)@
 normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
 normaliseNat givensTyConSubst ty
-  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty
-  , (tc, xs, cos0) : _ <- NE.filter (( \ ( tc, _, _) -> tc `elem` knownTyCons)) tc_apps
-  = second ( ++ cos0 ) <$> goTyConApp tc xs
+  | Just (tc, xs) <- splitTyConApp_maybe ty
+  = goTyConApp tc xs
   | Just i <- isNumLitTy ty
   = return (S [P [I i]], [])
   | Just v <- getTyVar_maybe ty
@@ -148,8 +143,8 @@ normaliseNat givensTyConSubst ty
           do (x', cos1) <- normaliseNat givensTyConSubst x
              (y', cos2) <- normaliseNat givensTyConSubst y
              return (normaliseExp x' y', cos1 ++ cos2)
-      goTyConApp tc xs =
-        return (S [P [C (CType $ mkTyConApp tc xs)]], [])
+      goTyConApp tc xs
+        = return (S [P [C (CType $ mkTyConApp tc xs)]], [])
 
 knownTyCons :: [TyCon]
 knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
@@ -171,20 +166,24 @@ maybeRunWriter w =
 -- the same as input, returns @'Nothing'@.
 normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
 normaliseNatEverywhere givensTyConSubst ty0
-  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty0
-  = fmap asum $ for tc_apps $ \ (tc, fields, cos1) ->
-      if tc `elem` knownTyCons
+  | Just (tc, fields) <- splitTyConApp_maybe ty0
+  =   if tc `elem` knownTyCons
       then do
         -- Normalize under current type constructor application. 'go' skips all
         -- known type constructors.
         ty1M <- maybeRunWriter (go tc fields)
-        let (ty1, cos2) = fromMaybe (ty0, []) ty1M
+        let (ty1, cos1) = fromMaybe (ty0, []) ty1M
         -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-        (ty2, cos3) <- normaliseSimplifyNat givensTyConSubst ty1
+        (ty2, cos2) <- normaliseSimplifyNat givensTyConSubst ty1
         -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
         -- TODO: probably cheaper than checking for equality here.
-        pure (if ty2 `eqType` ty1 then second ((cos1 ++ cos2) ++) <$> ty1M else Just (ty2, cos1 ++ cos2 ++ cos3))
-      else go tc fields
+        pure $
+          if ty2 `eqType` ty1
+          then second (cos1 ++) <$> ty1M
+          else Just (ty2, cos1 ++ cos2)
+      else
+        go tc fields
+
   | otherwise
   = pure Nothing
  where
@@ -193,17 +192,18 @@ normaliseNatEverywhere givensTyConSubst ty0
   go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
   go tc_ fields0_ = do
     fields1_ <- mapM (maybeRunWriter . cont) fields0_
-    if any isJust fields1_ then
+    if any isJust fields1_
+    then do
       let cos' = concat $ mapMaybe (fmap snd) fields1_
-      in
-         pure (Just (mkTyConApp tc_ (zipWith (\ f0 f1 -> maybe f0 fst f1) fields0_ fields1_), cos'))
+          ty' = mkTyConApp tc_ (zipWith (\ f0 f1 -> maybe f0 fst f1) fields0_ fields1_)
+      pure (Just (ty', cos'))
     else
       pure Nothing
    where
     cont ty'
       | tc_ `elem` knownTyCons
-      , Just tc_apps' <- splitTyConApp_upTo givensTyConSubst ty'
-      = asum <$> traverse ( \ (tc', flds', cos') -> fmap (second (cos' ++)) <$> go tc' flds') tc_apps'
+      , Just (tc', flds') <- splitTyConApp_maybe ty'
+      = go tc' flds'
       | otherwise
       = normaliseNatEverywhere givensTyConSubst ty'
 
@@ -383,7 +383,7 @@ substsSOP ((SubstItem {..}):s) u = substsSOP s (substSOP siVar siSOP u)
 substsSOP ((UnifyItem {}):s)   u = substsSOP s u
 
 substSOP :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
-substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
+substSOP tv e = foldr mergeSOPAdd (S []) . map (substProduct tv e) . unS
 
 substProduct :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
 substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
@@ -431,7 +431,9 @@ unifyNats' ct u v
   | u == v
   = Win
   | Just unifs <- unifiers ct u v
-  , let newUnifs = filter diffFromConstraint unifs
+  , let newUnifs = if isGiven (ctEvidence ct)
+                   then unifs
+                   else filter diffFromConstraint unifs
   = Draw newUnifs
   | otherwise
   = Lose
