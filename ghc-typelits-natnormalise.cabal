@@ -83,6 +83,7 @@ library
         , TyCon      as GHC.Core.TyCon
         , TysWiredIn as GHC.Builtin.Types
         , Unique     as GHC.Types.Unique
+        , Util       as GHC.Utils.Misc
         )
 
   hs-source-dirs:      src

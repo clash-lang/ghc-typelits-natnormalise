@@ -195,6 +195,10 @@ import GHC.Builtin.Names
   ( knownNatClassName )
 import GHC.Builtin.Types.Literals
   ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon )
+import GHC.Core.TyCon
+  ( Injectivity (..), tyConInjectivityInfo, tyConArity )
+import GHC.Utils.Misc
+  ( filterByList )
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
@@ -695,7 +699,15 @@ toNatEquality tcs givensTyConSubst ct0
       , Just (tc', ys) <- splitTyConApp_maybe rhs
       , tc == tc'
       , not $ tc `elem` [typeNatAddTyCon, typeNatSubTyCon, typeNatMulTyCon, typeNatExpTyCon]
-      , let subs = filter (not . uncurry eqType) (zip xs ys)
+      , let xys = zip xs ys
+      -- Make sure not to recur into non-injective positions of type families,
+      -- e.g. if we know 'F n ~ F m' that doesn't mean 'n ~ m'.
+            subs  =
+              filter (not . uncurry eqType) $
+                case tyConInjectivityInfo tc of
+                  Injective inj ->
+                    filterByList (inj ++ repeat True) xys
+                  _ -> drop (tyConArity tc) xys
       = concatMap (uncurry rewrite) subs
       | otherwise
       = rewrite lhs rhs

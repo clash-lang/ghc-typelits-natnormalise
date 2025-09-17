@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE UndecidableInstances#-}
 
 #if __GLASGOW_HASKELL__ >= 805
 {-# LANGUAGE NoStarIsType        #-}
@@ -523,4 +524,43 @@ testProxy20Errors =
           then litE $ stringL "Couldn't match type ‘1 <=? (m ^ 2)’ with ‘'True’"
           else litE $ stringL "Couldn't match type `1 <=? (m ^ 2)' with 'True"
     )]
+#endif
+
+type family Drop (n :: Nat) (xs :: [Nat]) :: [Nat] where
+    Drop 0 xs = xs
+    Drop n (x ': xs) = Drop (n-1) xs
+    Drop n '[] = '[]
+
+t99 :: Proxy ns -> Proxy ( Drop 1 ns ) -> Proxy ( Drop 2 ns )
+t99 _ px = px
+
+-- Don't want an error of the form 'Couldn't match 1 with 0'
+-- because that means the plugin turned [W] Drop 1 ns ~ Drop 2 ns
+-- into 1 ~ 2, which is not valid as Drop is not injective.
+t99_errors =
+#if __GLASGOW_HASKELL__ >= 811
+  [ "Couldn't match type: Drop 1 ns"
+  , "               with: Drop 2 ns"
+  , "Expected: Proxy (Drop 2 ns)"
+  , "  Actual: Proxy (Drop 1 ns)"
+  , $(do localeEncoding <- runIO (getLocaleEncoding)
+         if textEncodingName localeEncoding == textEncodingName utf8
+           then litE $ stringL "‘Drop’ is a non-injective type family"
+           else litE $ stringL "`Drop' is a non-injective type family"
+     )
+  ]
+#else
+  [ $(do localeEncoding <- runIO (getLocaleEncoding)
+         if textEncodingName localeEncoding == textEncodingName utf8
+           then litE $ stringL "Couldn't match type ‘Drop 1 ns’ with ‘Drop 2 ns’"
+           else litE $ stringL "Couldn't match type `Drop 1 ns' with `Drop 2 ns'"
+    )
+  , "Expected type: Proxy (Drop 2 ns)"
+  , "  Actual type: Proxy (Drop 1 ns)"
+  , $(do localeEncoding <- runIO (getLocaleEncoding)
+         if textEncodingName localeEncoding == textEncodingName utf8
+           then litE $ stringL "‘Drop’ is a non-injective type family"
+           else litE $ stringL "`Drop' is a non-injective type family"
+     )
+  ]
 #endif
