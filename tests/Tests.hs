@@ -737,6 +737,14 @@ t94 _ _ = t94_aux
 t94_aux :: (1 <= n) => Proxy n -> Proxy n
 t94_aux px = px
 
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/96
+t96
+  :: ( 2 <= x, 2 <= y
+     , ( 4 * x + 2 * 2^y ) ~ ( 4 * y + 2 * 2^x )
+     )
+  => Proxy x -> Proxy y
+t96 x = x
+
 type family TF (a :: Nat) (b :: Nat) :: Nat
 
 proxyEq5
@@ -754,3 +762,22 @@ proxyEq5 = theProxy
     -> Proxy b
     -> Proxy (3 * TF (3 * a) b)
   theProxy _ _ = Proxy
+
+type family Rank sh where
+  Rank '[] = 0
+  Rank (_ : sh) = Rank sh + 1
+foo :: ( ( 1 + Rank sh ) ~ ( 1 + n ) )
+    => Proxy sh -> Proxy n -> Proxy (Rank sh) -> Proxy n
+foo _ _ px = px
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/97
+t97 :: ( (1 + n) ~ m, ( m - 1 ) ~ n ) => Proxy m -> Proxy n -> ()
+t97  _ _ = ()
+
+t97b
+  :: ( n ~ (m - 2)
+     , (n + 1) ~ (m - 1)
+     , m ~ (n + 2)
+     )
+  => Proxy n -> Proxy m -> ()
+t97b _ _ = ()

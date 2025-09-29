@@ -11,9 +11,7 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TupleSections              #-}
 
-
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
-{-# LANGUAGE BangPatterns #-}
 
 module GHC.TypeLits.Normalise.Unify
   ( -- * 'Nat' expressions \<-\> 'SOP' terms
@@ -40,6 +38,7 @@ module GHC.TypeLits.Normalise.Unify
   , ineqToSubst
   , instantSolveIneq
   , solvedInEqSmallestConstraint
+  , negateProd
     -- * Properties
   , isNatural
   )
@@ -48,14 +47,12 @@ where
 -- base
 import Control.Arrow
   ( first, second )
-import Control.Monad.Trans.Writer.Strict
-  ( Writer, WriterT(..), runWriter, tell )
+import Control.Monad
+  ( guard, zipWithM )
 import Data.Either
   ( partitionEithers )
 import Data.Foldable
   ( asum )
-import Data.Function
-  ( on )
 import Data.List
   ( (\\), intersect, nub )
 import qualified Data.List.NonEmpty as NE
@@ -82,6 +79,7 @@ import GHC.Builtin.Types.Literals
 import GHC.Types.Unique.Set
   ( UniqSet
   , emptyUniqSet, unionManyUniqSets, unionUniqSets, unitUniqSet
+  , nonDetEltsUniqSet, elementOfUniqSet
   )
 import GHC.Utils.Outputable
   ( ($$), (<+>), text )
@@ -92,6 +90,10 @@ import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
+
+-- transformers
+import Control.Monad.Trans.Writer.Strict
+  ( Writer, WriterT(..), runWriter, tell )
 
 --------------------------------------------------------------------------------
 
@@ -312,18 +314,22 @@ simplifyIneq ineq@(x, y, isLE)
       then ( S neg, S pos )
       else ( S pos, S neg )
     classify :: CoreProduct -> Either CoreProduct CoreProduct
-    classify (P (I i : r))
+    classify p@(P (I i : _))
       | i < 0
-      = Left $
-          -- preserve normal form
-          if i == (-1)
-          then
-            if null r
-            then P [I 1]
-            else P r
-          else P $ I (negate i) : r
+      = Left $ negateProd p
     classify prod
       = Right prod
+
+negateProd :: CoreProduct -> CoreProduct
+negateProd (P (I i : r)) =
+  -- preserve normal form
+  if i == (-1)
+  then
+    if null r
+    then P [I 1]
+    else P r
+  else P $ I (negate i) : r
+negateProd (P r) = P $ I (-1) : r
 
 -- | Subtract an inequality, in order to either:
 --
@@ -339,7 +345,8 @@ subtractIneq
   -> CoreSOP
 subtractIneq (x,y,isLE)
   | isLE
-  = mergeSOPAdd y (mergeSOPMul (S [P [I (-1)]]) x)
+  -- NB: keep orientations
+  = mergeSOPAdd (mergeSOPMul (S [P [I (-1)]]) x) y
   | otherwise
   = mergeSOPAdd x (mergeSOPMul (S [P [I (-1)]]) (mergeSOPAdd y (S [P [I 1]])))
 
@@ -421,19 +428,22 @@ unifyNats ct u v = do
 
 unifyNats' :: Ct -> CoreSOP -> CoreSOP -> UnifyResult
 unifyNats' ct u v
-  = if eqFV u v
-       then if containsConstants u || containsConstants v
-               then if u == v
-                       then Win
-                       else Draw (filter diffFromConstraint (unifiers ct u v))
-               else if u == v
-                       then Win
-                       else Lose
-       else Draw (filter diffFromConstraint (unifiers ct u v))
+  | u == v
+  = Win
+  | Just unifs <- unifiers ct u v
+  , let newUnifs = filter diffFromConstraint unifs
+  = Draw newUnifs
+  | otherwise
+  = Lose
   where
-    -- A unifier is only a unifier if differs from the original constraint
+
+    -- A unifier is only a unifier if it differs from the original constraint
     diffFromConstraint (UnifyItem x y) = not (x == u && y == v)
-    diffFromConstraint (SubstItem x y) = not (S [P [V x]] == u && y == v)
+
+    -- SubstItems can be in different orders
+    diffFromConstraint (SubstItem x y) =
+      not $ (S [P [V x]] == u && y == v)
+         || (S [P [V x]] == v && y == u)
 
 -- | Find unifiers for two SOP terms
 --
@@ -468,46 +478,40 @@ unifyNats' ct u v
 -- @
 -- [a := b]
 -- @
-unifiers :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+unifiers :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
 unifiers ct u@(S [P [V x]]) v
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq t1 _
-        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct)
-        -> [SubstItem x v]
-      _ -> []
+  | EqPred NomEq t1 _ <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct)
+  = return [SubstItem x v]
 unifiers ct u v@(S [P [V x]])
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq _ t2
-        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct)
-        -> [SubstItem x u]
-      _ -> []
+  | EqPred NomEq _ t2 <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct)
+  = return [SubstItem x u]
 unifiers ct u@(S [P [C _]]) v
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
-        -> [UnifyItem u v]
-      _ -> []
+  | EqPred NomEq t1 t2 <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+  = return [UnifyItem u v]
 unifiers ct u v@(S [P [C _]])
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
-        -> [UnifyItem u v]
-      _ -> []
+  | EqPred NomEq t1 t2 <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+  = return [UnifyItem u v]
 unifiers ct u v             = unifiers' ct u v
 
-unifiers' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
-unifiers' _ct (S [])        (S [])        = []
+unifiers' :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
+unifiers' _ct (S [])        (S [])        = return []
 
-unifiers' _ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]])]
-unifiers' _ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]])]
+unifiers' _ct (S [P [V x]]) (S [])        = return [SubstItem x (S [P [I 0]])]
+unifiers' _ct (S [])        (S [P [V x]]) = return [SubstItem x (S [P [I 0]])]
 
-unifiers' _ct (S [P [V x]]) s             = [SubstItem x s]
-unifiers' _ct s             (S [P [V x]]) = [SubstItem x s]
-
-unifiers' _ct (S [P [C {}]])   (S [P [C {}]])   = []
-unifiers' _ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2]
-unifiers' _ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2]
-
+unifiers' _ct (S [P [V x]]) s = do
+  guard (not $ isDefinitelyNegative s)
+  return [SubstItem x s]
+unifiers' _ct s (S [P [V x]]) = do
+  guard (not $ isDefinitelyNegative s)
+  return [SubstItem x s]
+unifiers' _ct s1@(S [P [C {}]]) s2@(S [P [C {}]])
+  | s1 == s2
+  = return []
 
 -- (z ^ a) ~ (z ^ b) ==> [a := b]
 unifiers' ct (S [P [E s1 p1]]) (S [P [E s2 p2]])
@@ -518,13 +522,13 @@ unifiers' ct (S [P [E (S [P s1]) p1]]) (S [P p2])
   | all (`elem` p2) s1
   = let base = intersect s1 p2
         diff = p2 \\ s1
-    in  unifiers ct (S [P diff]) (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]])
+    in  unifiers' ct (S [P diff]) (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]])
 
 unifiers' ct (S [P p2]) (S [P [E (S [P s1]) p1]])
   | all (`elem` p2) s1
   = let base = intersect s1 p2
         diff = p2 \\ s1
-    in  unifiers ct (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]]) (S [P diff])
+    in  unifiers' ct (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]]) (S [P diff])
 
 -- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
 -- and `ceiling (logBase i j) == floor (logBase i j)`
@@ -573,28 +577,19 @@ unifiers' ct (S [P ps1]) (S [P ps2])
           | otherwise = ps2'
     psx  = intersect ps1 ps2
 
--- (2 + a) ~ 5 ==> [a := 3]
-unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
-  = case compare i j of
-       EQ -> unifiers' ct (S ps1) (S ps2)
-       LT -> unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
-       GT -> unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
-
 -- (a + c) ~ (b + c) ==> [a := b]
+--
+-- NB: this also handles situations such as (2 + x) ~ 5 ==> [x := 3].
 unifiers' ct s1@(S ps1) s2@(S ps2)
   | Just (s1',s2',_) <- simplifyIneq (s1, s2, True)
-  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
-  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
   = unifiers' ct s1' s2'
-  | null psx
-  , length ps1 == length ps2
-  , length ps1 > 1
-  , let unifs = nub $ concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)
-  , length unifs <= 1
-  = case unifs of
-        []  -> unifiers'' ct (S ps1) (S ps2)
-        [k] -> [k]
-        _   -> error "impossible"
+  | Just term_unifs <- termByTerm ct ps1 ps2
+  = Just term_unifs
+  -- If there are only two variables, try to collect them on either side.
+  -- This makes 'termByTerm' more likely to succeed.
+  | Just (S coll1, S coll2) <- partitionTerms ps1 ps2
+  , Just term_unifs <- termByTerm ct coll1 coll2
+  = Just term_unifs
   | null psx
   , isGiven (ctEvidence ct)
   = unifiers'' ct (S ps1) (S ps2)
@@ -609,14 +604,82 @@ unifiers' ct s1@(S ps1) s2@(S ps2)
           | otherwise = ps2'
     psx = intersect ps1 ps2
 
-unifiers' _ s1 s2 = [UnifyItem s1 s2]
+unifiers' _ s1 s2 = return [UnifyItem s1 s2]
 
-unifiers'' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+-- | Try to match the two expressions term-by-term.
+-- If this produces a **single unifier**, then we succeed.
+--
+-- Example: x + 3^(x+2) ~ 2*y - 3^(2*(y+1))
+--
+-- We recur on each pair, (x, 2*y), (3^(x+2),3^(2*(y+1))).
+-- This produces a single unifier "x ~ 2*y", so we proceed.
+--
+-- NB: this is somewhat fragile: if one moves the terms with negative
+-- coefficients to the other side, due to the variable ordering x < y,
+-- we would get:
+--
+--   x + 3^(2*(y+1)) ~ 3^(x+2) + 2*y
+--
+-- for which the same approach fails. So we use 'partitionTerms' as a heuristic
+-- in the case there are only two free variables.
+-- See https://github.com/clash-lang/ghc-typelits-natnormalise/issues/96.
+termByTerm :: Ct -> [CoreProduct] -> [CoreProduct] -> Maybe [CoreUnify]
+termByTerm ct ps1 ps2
+  | length ps1 == length ps2
+  , length ps1 > 1
+  , Just u@[_] <- unifs
+  = Just u
+  | otherwise
+  = Nothing
+  where
+    unifs = fmap (nub . concat) (zipWithM (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)
+
+-- | If an equality only contains two free variables, try to collect
+-- terms with either FV on either side of the equality.
+--
+-- This makes 'termByTerm' more likely to succeed.
+partitionTerms :: [CoreProduct] -> [CoreProduct] -> Maybe (CoreSOP, CoreSOP)
+partitionTerms lhs rhs
+  | [fv1, fv2] <- fvs
+  , Just (lhs1, lhs2) <- mbPairs fv1 fv2 lhs
+  , Just (rhs1, rhs2) <- mbPairs fv1 fv2 rhs
+  = Just $
+      let (lhs', rhs') =
+            if length rhs1 + length lhs2 <= length lhs1 + length rhs2
+            then (lhs1 ++ map negateProd rhs1, map negateProd lhs2 ++ rhs2)
+            else (map negateProd lhs1 ++ rhs1, lhs2 ++ map negateProd rhs2)
+      in (simplifySOP (S lhs'), simplifySOP (S rhs'))
+  | otherwise
+  = Nothing
+  where
+    fvs :: [TyVar]
+    fvs = nonDetEltsUniqSet $ fvSOP (S $ lhs ++ rhs)
+
+    mbPairs :: TyVar -> TyVar -> [CoreProduct] -> Maybe ([CoreProduct], [CoreProduct])
+    mbPairs fv1 fv2 x = partitionEithers <$> traverse ( collect fv1 fv2 ) x
+
+    collect :: TyVar -> TyVar -> CoreProduct -> Maybe (Either CoreProduct CoreProduct)
+    collect fv1 fv2 tm =
+      let tmFvs = fvProduct tm
+      in case (fv1 `elementOfUniqSet` tmFvs, fv2 `elementOfUniqSet` tmFvs) of
+           (True, False) -> Just $ Left  tm
+           (False, True) -> Just $ Right tm
+           _             -> Nothing
+
+unifiers'' :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
 unifiers'' ct (S [P [I i],P [V v]]) s2
-  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]]))]
+  | isGiven (ctEvidence ct)
+  , let s' = mergeSOPAdd s2 (S [P [I (negate i)]])
+  = if isDefinitelyNegative s'
+    then Nothing
+    else Just [SubstItem v s']
 unifiers'' ct s1 (S [P [I i],P [V v]])
-  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]]))]
-unifiers'' _ _ _ = []
+  | isGiven (ctEvidence ct)
+  , let s' = mergeSOPAdd s1 (S [P [I (negate i)]])
+  = if isDefinitelyNegative s'
+    then Nothing
+    else Just [SubstItem v s']
+unifiers'' _ _ _ = Just []
 
 collectBases :: CoreProduct -> Maybe ([CoreSOP],[CoreProduct])
 collectBases = fmap unzip . traverse go . unP
@@ -637,18 +700,6 @@ fvSymbol (C _)   = emptyUniqSet
 fvSymbol (V v)   = unitUniqSet v
 fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
 
-eqFV :: CoreSOP -> CoreSOP -> Bool
-eqFV = (==) `on` fvSOP
-
-containsConstants :: CoreSOP -> Bool
-containsConstants =
-  any (any symbolContainsConstant . unP) . unS
-  where
-    symbolContainsConstant c = case c of
-      C {} -> True
-      E s p -> containsConstants s || containsConstants (S [p])
-      _ -> False
-
 safeDiv :: Integer -> Integer -> Maybe Integer
 safeDiv i j
   | j == 0    = Just 0
@@ -667,6 +718,10 @@ integerLogBase x y | x > 1 && y > 0 =
          then Nothing
          else Just (smallInteger z1)
 integerLogBase _ _ = Nothing
+
+isDefinitelyNegative :: CoreSOP -> Bool
+isDefinitelyNegative s =
+  not $ maybe True fst (runWriterT (isNatural s))
 
 isNatural :: CoreSOP -> WriterT (Set CType) Maybe Bool
 isNatural (S [])           = return True

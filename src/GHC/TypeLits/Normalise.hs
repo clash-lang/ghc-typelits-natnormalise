@@ -198,7 +198,7 @@ import GHC.TcPlugin.API.TyConSubst
 import GHC.Plugins
   ( Plugin(..), defaultPlugin, purePlugin )
 import GHC.Utils.Outputable
-  ( ($$), (<+>), text, vcat )
+  ( (<+>), text, vcat )
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.Compat
@@ -285,18 +285,18 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
     newGivens <- for reds $ \(origCt, (pred', evTerm, _)) ->
       mkNonCanonical <$> newGiven (ctLoc origCt) pred' evTerm
     -- Try to find contradictory Givens, to improve pattern match warnings.
-    sr <- simplifyNats opts tcs [] $ concatMap (toNatEquality tcs givensTyConSubst) (givens ++ newGivens)
-    case sr of
-      Impossible eq -> do
-        let contra = fromNatEquality eq
-        tcPluginTrace "decideEqualSOP Givens (FAIL) }" $
-          vcat [ text "givens:" <+> ppr givens
-               , text "contra:" <+> ppr contra  ]
-        return $ TcPluginContradiction [contra]
-      Simplified {} -> do
-        tcPluginTrace "decideEqualSOP Givens (OK) }" $
-          vcat [ text "givens:" <+> ppr givens ]
-        return $ TcPluginOk [] []
+    SimplifyResult _simpls contras <-
+      simplifyNats opts tcs [] $
+        concatMap (toNatEquality tcs givensTyConSubst) (givens ++ newGivens)
+    tcPluginTrace "decideEqualSOP Givens }" $
+      vcat [ text "givens:" <+> ppr givens
+           , text "simpls:" <+> ppr _simpls
+           , text "contra:" <+> ppr contras ]
+    return $
+      mkTcPluginSolveResult
+        ( map fromNatEquality contras )
+        [] -- no solved Givens
+        [] -- no new Givens
 
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
@@ -341,37 +341,38 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
           fmap mkNonCanonical . newWanted (ctLoc ct)
         let unit_givens = concatMap (toNatEquality tcs givensTyConSubst) givens
             unit_wanteds = unit_wanteds0 ++ concatMap (toNatEquality tcs givensTyConSubst) ineqForRedWants
-        sr <- simplifyNats opts tcs unit_givens unit_wanteds
+        sr@(SimplifyResult evs contras) <- simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- for reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
           wants <- evSubtPreds (ctLoc origCt) $ subToPred opts tcs ws
           return ((term, origCt), wDicts ++ wants)
-        case sr of
-          Simplified evs -> do
-            let simpld = filter (not . isGiven . ctEvidence . (\((_,x),_) -> x)) evs
-                -- Only solve a Derived when there are Wanteds in play
-                simpld1 = case filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs ++ reds of
-                            [] -> []
-                            _  -> simpld
-                (solved,newWanteds) = second concat (unzip $ simpld1 ++ reds)
+        let simpld = filter (not . isGiven . ctEvidence . (\((_,x),_) -> x)) evs
+            -- Only solve a Derived when there are Wanteds in play
+            simpld1 = case filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs ++ reds of
+                        [] -> []
+                        _  -> simpld
+            (solved,newWanteds) = second concat (unzip $ simpld1 ++ reds)
 
-            tcPluginTrace "decideEqualSOP Wanteds }" $
-               vcat [ text "givens:" <+> ppr givens
-                    , text "new reduced givens:" <+> ppr redGivens
-                    , text "newRedGs:" <+> ppr newRedGs
-                    , text $ replicate 80 '-'
-                    , text "wanteds:" <+> ppr wanteds
-                    , text "ineqForRedWants:" <+> ppr ineqForRedWants
-                    , text "unit_wanteds0:" <+> ppr (map (toNatEquality tcs givensTyConSubst) wanteds)
-                    , text "unit_wanteds:" <+> ppr unit_wanteds
-                    , text "reducible_wanteds:" <+> ppr reducible_wanteds
-                    , text $ replicate 80 '='
-                    , text "solved:" <+> ppr solved
-                    , text "newWanteds:" <+> ppr newWanteds
-                    ]
-
-            return (TcPluginOk solved $ newWanteds)
-          Impossible eq -> return (TcPluginContradiction [fromNatEquality eq])
+        tcPluginTrace "decideEqualSOP Wanteds }" $
+           vcat [ text "givens:" <+> ppr givens
+                , text "new reduced givens:" <+> ppr redGivens
+                , text "unit givens:" <+> ppr unit_givens
+                , text "newRedGs:" <+> ppr newRedGs
+                , text $ replicate 80 '-'
+                , text "wanteds:" <+> ppr wanteds
+                , text "ineqForRedWants:" <+> ppr ineqForRedWants
+                , text "unit_wanteds0:" <+> ppr (map (toNatEquality tcs givensTyConSubst) wanteds)
+                , text "unit_wanteds:" <+> ppr unit_wanteds
+                , text "reducible_wanteds:" <+> ppr reducible_wanteds
+                , text $ replicate 80 '='
+                , text "solved:" <+> ppr solved
+                , text "newWanteds:" <+> ppr newWanteds
+                ]
+        return $
+          mkTcPluginSolveResult
+            (map fromNatEquality contras)
+            solved
+            newWanteds
 
 type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
@@ -458,12 +459,15 @@ toReducedDict ct pred' deps' =
   in EvExpr ev
 
 data SimplifyResult
-  = Simplified [((EvTerm,Ct),[Ct])]
-  | Impossible (Either NatEquality NatInEquality)
+  = SimplifyResult
+     { simplified :: [((EvTerm,Ct),[Ct])]
+     , impossible :: [Either NatEquality NatInEquality]
+     }
 
 instance Outputable SimplifyResult where
-  ppr (Simplified evs) = text "Simplified" $$ ppr evs
-  ppr (Impossible eq)  = text "Impossible" <+> ppr eq
+  ppr (SimplifyResult { simplified, impossible }) =
+    text "SimplifyResult { simplified =" <+> ppr simplified
+                <+> text ", impossible =" <+> ppr impossible <+> text "}"
 
 type NatCt = (Either NatEquality NatInEquality, [(Type,Type)], [Coercion])
 
@@ -494,7 +498,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
           tcPluginTrace "simplifyNats" (ppr eqs)
           simples [] [] [] [] [] eqs
 
-        pure (foldr findFirstSimpliedWanted (Simplified []) allSimplified)
+        pure (foldr findFirstSimpliedWanted (SimplifyResult [] []) allSimplified)
   where
     simples :: [Coercion]
             -> [CoreUnify]
@@ -503,7 +507,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
             -> [NatCt]
             -> [NatCt]
             -> TcPluginM Solve SimplifyResult
-    simples _ _subst evs _leqsG _xs [] = return (Simplified evs)
+    simples _ _subst evs _leqsG _xs [] = return (SimplifyResult evs [])
     simples deps subst evs leqsG xs (eq@(lr@(Left (ct,u,v)),k,deps2):eqs') = do
       let u' = substsSOP subst u
           v' = substsSOP subst v
@@ -512,10 +516,14 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
       case ur of
         Win -> do
           evs' <- maybe evs (:evs) <$> evMagic tcs ct (deps ++ deps2) Set.empty (subToPred opts tcs k)
+          tcPluginTrace "unifyNats Win" $
+            vcat [ text "evs:" <+> ppr evs
+                 , text "evs':" <+> ppr evs'
+                 , text "ct:" <+> ppr ct
+                 ]
           simples deps subst evs' leqsG [] (xs ++ eqs')
-        Lose -> if null evs && null eqs'
-                   then return (Impossible lr)
-                   else simples deps subst evs leqsG xs eqs'
+        Lose ->
+          addContra lr <$> simples deps subst evs leqsG xs eqs'
         Draw [] -> simples deps subst evs [] (eq:xs) eqs'
         Draw subst' -> do
           evM <- evMagic tcs ct deps Set.empty (map unifyItemToPredType subst' ++
@@ -552,7 +560,8 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
           evs' <- maybe evs (:evs) <$> evMagic tcs ct deps knW (subToPred opts tcs k)
           simples deps subst evs' leqsG' xs eqs'
 
-        Just (False,_) | null k -> return (Impossible lr)
+        Just (False,_) | null k ->
+          addContra lr <$> simples deps subst evs leqsG xs eqs'
         _ -> do
           let solvedIneq = mapMaybe runWriterT
                  -- it is an inequality that can be instantly solved, such as
@@ -621,12 +630,15 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
       (Left (ct,S [P [V v2]], S [P [V v1]]), ps, deps)
     swapVar _ = error "internal error"
 
-    findFirstSimpliedWanted (Impossible e)   _  = Impossible e
-    findFirstSimpliedWanted (Simplified evs) s2
-      | any (isWanted . ctEvidence . snd . fst) evs
-      = Simplified evs
+    findFirstSimpliedWanted s1@(SimplifyResult evs imposs) s2
+      |  not (null imposs)
+      || any (isWanted . ctEvidence . snd . fst) evs
+      = s1
       | otherwise
       = s2
+
+addContra :: Either NatEquality NatInEquality -> SimplifyResult -> SimplifyResult
+addContra contra sr = sr { impossible = contra : impossible sr }
 
 -- If we allow negated numbers we simply do not emit the inequalities
 -- derived from the subtractions that are converted to additions with a

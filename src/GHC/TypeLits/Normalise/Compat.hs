@@ -23,6 +23,8 @@ module GHC.TypeLits.Normalise.Compat
 
   , UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList
 
+  , mkTcPluginSolveResult
+
   ) where
 
 -- base
@@ -360,6 +362,7 @@ upToGivens givensTyConSubst f ty =
     maybe [] NE.toList $ splitTyConApp_upTo givensTyConSubst ty
 
 --------------------------------------------------------------------------------
+
 #if !MIN_VERSION_ghc(9,7,0)
 
 newtype UniqMap k a = UniqMap ( UniqFM k (k, a) )
@@ -378,4 +381,21 @@ nonDetUniqMapToList :: UniqMap k a -> [(k, a)]
 nonDetUniqMapToList (UniqMap m) = nonDetEltsUFM m
 {-# INLINE nonDetUniqMapToList #-}
 
+#endif
+
+--------------------------------------------------------------------------------
+
+mkTcPluginSolveResult :: [Ct] -> [(EvTerm, Ct)] -> [Ct]
+                      -> TcPluginSolveResult
+#if MIN_VERSION_ghc(9,3,0)
+mkTcPluginSolveResult = TcPluginSolveResult
+#else
+mkTcPluginSolveResult contras solved new =
+  -- On GHC 9.2 and below, it's not possible to return
+  -- both contradictions and solved/new constraints.
+  --
+  -- In general, we prefer returning solved constraints over contradictions.
+  if null solved && not (null contras)
+  then TcPluginContradiction contras
+  else TcPluginOk solved new
 #endif
