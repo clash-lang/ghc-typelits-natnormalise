@@ -1,5 +1,12 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.8.1 *October 1st 2025*
+* Fixes [#85](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/85) Deriving equalities from inequalities produces a misleading error message
+* Fixes [#94](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94) Normalization fails when adding an equality constraint with substraction
+* Fixes [#96](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/96) Unification fails when variables occur on both LHS and RHS
+* Fixes [#99](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/99) ghc-typelits-natnormalise erroneously unifies under type families
+* Fixes [100](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/100) stack space overflow with ghc-typelits-natnormalize 0.8
+
 ## 0.8 *September 8th 2025*
 * Uses https://hackage.haskell.org/package/ghc-tcplugin-api to make supporting new GHC versions easier
 * Support for GHC versions older than 8.8 is dropped
