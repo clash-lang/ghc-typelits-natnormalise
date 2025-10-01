@@ -771,6 +771,9 @@ foo :: ( ( 1 + Rank sh ) ~ ( 1 + n ) )
     => Proxy sh -> Proxy n -> Proxy (Rank sh) -> Proxy n
 foo _ _ px = px
 
+noContra :: ((Rank sh + 2) <= 2) => Proxy sh -> ()
+noContra _ = ()
+
 -- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/97
 t97 :: ( (1 + n) ~ m, ( m - 1 ) ~ n ) => Proxy m -> Proxy n -> ()
 t97  _ _ = ()

@@ -506,10 +506,10 @@ unifiers' _ct (S [P [V x]]) (S [])        = return [SubstItem x (S [P [I 0]])]
 unifiers' _ct (S [])        (S [P [V x]]) = return [SubstItem x (S [P [I 0]])]
 
 unifiers' _ct (S [P [V x]]) s = do
-  guard (not $ isDefinitelyNegative s)
+  guard $ canBeNatural s
   return [SubstItem x s]
 unifiers' _ct s (S [P [V x]]) = do
-  guard (not $ isDefinitelyNegative s)
+  guard $ canBeNatural s
   return [SubstItem x s]
 unifiers' _ct s1@(S [P [C {}]]) s2@(S [P [C {}]])
   | s1 == s2
@@ -672,15 +672,15 @@ unifiers'' :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
 unifiers'' ct (S [P [I i],P [V v]]) s2
   | isGiven (ctEvidence ct)
   , let s' = mergeSOPAdd s2 (S [P [I (negate i)]])
-  = if isDefinitelyNegative s'
-    then Nothing
-    else Just [SubstItem v s']
+  = if canBeNatural s'
+    then Just [SubstItem v s']
+    else Nothing
 unifiers'' ct s1 (S [P [I i],P [V v]])
   | isGiven (ctEvidence ct)
   , let s' = mergeSOPAdd s1 (S [P [I (negate i)]])
-  = if isDefinitelyNegative s'
-    then Nothing
-    else Just [SubstItem v s']
+  = if canBeNatural s'
+    then Just [SubstItem v s']
+    else Nothing
 unifiers'' _ _ _ = Just []
 
 collectBases :: CoreProduct -> Maybe ([CoreSOP],[CoreProduct])
@@ -721,16 +721,38 @@ integerLogBase x y | x > 1 && y > 0 =
          else Just (smallInteger z1)
 integerLogBase _ _ = Nothing
 
-isDefinitelyNegative :: CoreSOP -> Bool
-isDefinitelyNegative s =
-  not $ maybe True fst (runWriterT (isNatural s))
+-- | Might this be a natural number?
+--
+-- Equivalently: it is not the case that this is definitely not a natural number.
+--
+-- For example, @-1@ is definitely not a natural number, while @α@ or
+-- @-2 * β@ could both be natural numbers (where @α, β@ are metavariables).
+canBeNatural :: CoreSOP -> Bool
+canBeNatural = maybe True fst . runWriterT . isNatural
 
+-- | Is this a natural number?
+--
+--  - @Just True@ <=> definitely a natural number
+--  - @Just False@ <=> definitely not a natural number
+--  - @Nothing@ <=> not sure
+--
+-- The 'Set CType' writer accumulator returns inner types that must also be
+-- positive for the overall 'CoreSOP' to be positive.
 isNatural :: CoreSOP -> WriterT (Set CType) Maybe Bool
 isNatural (S [])           = return True
 isNatural (S [P []])       = return True
-isNatural (S [P (I i:ps)])
-  | i >= 0    = isNatural (S [P ps])
-  | otherwise = return False
+isNatural (S [P (I i:ps)]) =
+  case compare i 0 of
+    EQ -> return True
+    GT ->
+      -- NB: assumes the SOP term has been normalised, so no possibly of
+      -- a second negative constant factor to cancel out this one.
+      isNatural (S [P ps])
+    LT ->
+      -- '-1 * ty' can be a natural number if 'ty' ends up being zero
+      if any canBeZero ps
+      then WriterT Nothing
+      else return False
 isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
 isNatural (S [P (E s p:ps)]) = do
   sN <- isNatural s
@@ -752,6 +774,23 @@ isNatural (S (p:ps)) = do
     _             -> WriterT Nothing
     -- if one is natural and the other isn't, then their sum *might* be natural,
     -- but we simply cant be sure.
+
+-- | Can this 'CoreSymbol' be zero?
+--
+-- Examples:
+--
+--  - the literal '0',
+--  - a metavariable,
+--  - a type family application.
+canBeZero :: CoreSymbol -> Bool
+canBeZero (I i) = i == 0
+canBeZero (C {}) = True -- e.g. 'F 3' where 'F' is a type family
+canBeZero (E (S es) _)
+  | [P bs] <- es
+  = any canBeZero bs
+  | otherwise
+  = True
+canBeZero (V {}) = True -- e.g. 'tau' where 'tau' is an unfilled metavariable
 
 -- | Try to solve inequalities
 solveIneq
