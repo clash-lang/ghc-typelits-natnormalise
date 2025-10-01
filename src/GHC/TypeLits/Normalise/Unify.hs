@@ -11,7 +11,6 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TupleSections              #-}
 
-
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module GHC.TypeLits.Normalise.Unify
@@ -39,6 +38,7 @@ module GHC.TypeLits.Normalise.Unify
   , ineqToSubst
   , instantSolveIneq
   , solvedInEqSmallestConstraint
+  , negateProd
     -- * Properties
   , isNatural
   )
@@ -47,19 +47,14 @@ where
 -- base
 import Control.Arrow
   ( first, second )
-import Control.Monad.Trans.Writer.Strict
-  ( Writer, WriterT(..), runWriter, tell )
-import Data.Foldable
-  ( asum )
-import Data.Function
-  ( on )
+import Control.Monad
+  ( guard, zipWithM )
+import Data.Either
+  ( partitionEithers )
 import Data.List
   ( (\\), intersect, nub )
-import qualified Data.List.NonEmpty as NE
 import Data.Maybe
   ( fromMaybe, mapMaybe, isJust )
-import Data.Traversable
-  ( for )
 import GHC.Base
   ( (==#), isTrue# )
 import GHC.Integer
@@ -79,16 +74,22 @@ import GHC.Builtin.Types.Literals
 import GHC.Types.Unique.Set
   ( UniqSet
   , emptyUniqSet, unionManyUniqSets, unionUniqSets, unitUniqSet
+  , nonDetEltsUniqSet, elementOfUniqSet
   )
-import GHC.Utils.Outputable
-  ( ($$), (<+>), text )
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
-import GHC.TcPlugin.API.TyConSubst (TyConSubst, splitTyConApp_upTo)
+import GHC.TcPlugin.API.TyConSubst
+  ( TyConSubst )
+import GHC.Utils.Outputable
+
 
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.SOP
+
+-- transformers
+import Control.Monad.Trans.Writer.Strict
+  ( Writer, WriterT(..), runWriter, tell )
 
 --------------------------------------------------------------------------------
 
@@ -114,9 +115,8 @@ type CoreSymbol  = Symbol TyVar CType
 -- * Applications of the arithmetic operators @(+,-,*,^)@
 normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
 normaliseNat givensTyConSubst ty
-  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty
-  , (tc, xs, cos0) : _ <- NE.filter (( \ ( tc, _, _) -> tc `elem` knownTyCons)) tc_apps
-  = second ( ++ cos0 ) <$> goTyConApp tc xs
+  | Just (tc, xs) <- splitTyConApp_maybe ty
+  = goTyConApp tc xs
   | Just i <- isNumLitTy ty
   = return (S [P [I i]], [])
   | Just v <- getTyVar_maybe ty
@@ -143,8 +143,8 @@ normaliseNat givensTyConSubst ty
           do (x', cos1) <- normaliseNat givensTyConSubst x
              (y', cos2) <- normaliseNat givensTyConSubst y
              return (normaliseExp x' y', cos1 ++ cos2)
-      goTyConApp tc xs =
-        return (S [P [C (CType $ mkTyConApp tc xs)]], [])
+      goTyConApp tc xs
+        = return (S [P [C (CType $ mkTyConApp tc xs)]], [])
 
 knownTyCons :: [TyCon]
 knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
@@ -166,20 +166,24 @@ maybeRunWriter w =
 -- the same as input, returns @'Nothing'@.
 normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
 normaliseNatEverywhere givensTyConSubst ty0
-  | Just tc_apps <- splitTyConApp_upTo givensTyConSubst ty0
-  = fmap asum $ for tc_apps $ \ (tc, fields, cos1) ->
-      if tc `elem` knownTyCons
+  | Just (tc, fields) <- splitTyConApp_maybe ty0
+  =   if tc `elem` knownTyCons
       then do
         -- Normalize under current type constructor application. 'go' skips all
         -- known type constructors.
         ty1M <- maybeRunWriter (go tc fields)
-        let (ty1, cos2) = fromMaybe (ty0, []) ty1M
+        let (ty1, cos1) = fromMaybe (ty0, []) ty1M
         -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-        (ty2, cos3) <- normaliseSimplifyNat givensTyConSubst ty1
+        (ty2, cos2) <- normaliseSimplifyNat givensTyConSubst ty1
         -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
         -- TODO: probably cheaper than checking for equality here.
-        pure (if ty2 `eqType` ty1 then second ((cos1 ++ cos2) ++) <$> ty1M else Just (ty2, cos1 ++ cos2 ++ cos3))
-      else go tc fields
+        pure $
+          if ty2 `eqType` ty1
+          then second (cos1 ++) <$> ty1M
+          else Just (ty2, cos1 ++ cos2)
+      else
+        go tc fields
+
   | otherwise
   = pure Nothing
  where
@@ -188,17 +192,18 @@ normaliseNatEverywhere givensTyConSubst ty0
   go :: TyCon -> [Type] -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
   go tc_ fields0_ = do
     fields1_ <- mapM (maybeRunWriter . cont) fields0_
-    if any isJust fields1_ then
+    if any isJust fields1_
+    then do
       let cos' = concat $ mapMaybe (fmap snd) fields1_
-      in
-         pure (Just (mkTyConApp tc_ (zipWith (\ f0 f1 -> maybe f0 fst f1) fields0_ fields1_), cos'))
+          ty' = mkTyConApp tc_ (zipWith (\ f0 f1 -> maybe f0 fst f1) fields0_ fields1_)
+      pure (Just (ty', cos'))
     else
       pure Nothing
    where
     cont ty'
       | tc_ `elem` knownTyCons
-      , Just tc_apps' <- splitTyConApp_upTo givensTyConSubst ty'
-      = asum <$> traverse ( \ (tc', flds', cos') -> fmap (second (cos' ++)) <$> go tc' flds') tc_apps'
+      , Just (tc', flds') <- splitTyConApp_maybe ty'
+      = go tc' flds'
       | otherwise
       = normaliseNatEverywhere givensTyConSubst ty'
 
@@ -291,42 +296,59 @@ reifySymbol (Right (s1,s2)) = mkTyConApp typeNatExpTyCon
                                          ,reifySOP (S s2)
                                          ]
 
+-- | Simplify an inequality by first calling 'subtractIneq', producing a SOP
+-- term, and then creating a new inequality by moving all the terms with
+-- negative coefficients to one side.
+--
+-- Returns 'Nothing' if it is not able to simplify the original inequality.
+simplifyIneq :: Ineq -> Maybe Ineq
+simplifyIneq ineq@(x, y, isLE)
+  = if x' == x && y' == y
+    then Nothing
+    else Just (x', y', isLE)
+  where
+    S ps = subtractIneq ineq
+    (neg, pos) = partitionEithers $ map classify ps
+    (x', y') =
+      if isLE
+      then ( S neg, S pos )
+      else ( S pos, S neg )
+    classify :: CoreProduct -> Either CoreProduct CoreProduct
+    classify p@(P (I i : _))
+      | i < 0
+      = Left $ negateProd p
+    classify prod
+      = Right prod
+
+negateProd :: CoreProduct -> CoreProduct
+negateProd (P (I i : r)) =
+  -- preserve normal form
+  if i == (-1)
+  then
+    if null r
+    then P [I 1]
+    else P r
+  else P $ I (negate i) : r
+negateProd (P r) = P $ I (-1) : r
+
 -- | Subtract an inequality, in order to either:
 --
 -- * See if the smallest solution is a natural number
 -- * Cancel sums, i.e. monotonicity of addition
 --
 -- @
--- subtractIneq (2*y <=? 3*x ~ True)  = (-2*y + 3*x)
--- subtractIneq (2*y <=? 3*x ~ False) = (-3*x + (-1) + 2*y)
+-- subtractIneq (2*y <=? 3*x ~ True)  = 3*x + (-2)*y
+-- subtractIneq (2*y <=? 3*x ~ False) = -3*x + (-2)*y
 -- @
 subtractIneq
   :: (CoreSOP, CoreSOP, Bool)
   -> CoreSOP
 subtractIneq (x,y,isLE)
   | isLE
-  = mergeSOPAdd y (mergeSOPMul (S [P [I (-1)]]) x)
+  -- NB: keep orientations
+  = mergeSOPAdd (mergeSOPMul (S [P [I (-1)]]) x) y
   | otherwise
   = mergeSOPAdd x (mergeSOPMul (S [P [I (-1)]]) (mergeSOPAdd y (S [P [I 1]])))
-
--- | Try to reverse the process of 'subtractIneq'
---
--- E.g.
---
--- @
--- subtractIneq (2*y <=? 3*x ~ True) = (-2*y + 3*x)
--- sopToIneq (-2*y+3*x) = Just (2*x <=? 3*x ~ True)
--- @
-sopToIneq
-  :: CoreSOP
-  -> Maybe Ineq
-sopToIneq (S [P ((I i):l),r])
-  | i < 0
-  = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
-sopToIneq (S [r,P ((I i:l))])
-  | i < 0
-  = Just (mergeSOPMul (S [P [I (negate i)]]) (S [P l]),S [r],True)
-sopToIneq _ = Nothing
 
 -- | Give the smallest solution for an inequality
 ineqToSubst
@@ -361,7 +383,7 @@ substsSOP ((SubstItem {..}):s) u = substsSOP s (substSOP siVar siSOP u)
 substsSOP ((UnifyItem {}):s)   u = substsSOP s u
 
 substSOP :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> SOP v c -> SOP v c
-substSOP tv e = foldr1 mergeSOPAdd . map (substProduct tv e) . unS
+substSOP tv e = foldr mergeSOPAdd (S []) . map (substProduct tv e) . unS
 
 substProduct :: (Outputable v, Outputable c, Ord v, Ord c) => v -> SOP v c -> Product v c -> SOP v c
 substProduct tv e = foldr1 mergeSOPMul . map (substSymbol tv e) . unP
@@ -406,19 +428,24 @@ unifyNats ct u v = do
 
 unifyNats' :: Ct -> CoreSOP -> CoreSOP -> UnifyResult
 unifyNats' ct u v
-  = if eqFV u v
-       then if containsConstants u || containsConstants v
-               then if u == v
-                       then Win
-                       else Draw (filter diffFromConstraint (unifiers ct u v))
-               else if u == v
-                       then Win
-                       else Lose
-       else Draw (filter diffFromConstraint (unifiers ct u v))
+  | u == v
+  = Win
+  | Just unifs <- unifiers ct u v
+  , let newUnifs = if isGiven (ctEvidence ct)
+                   then unifs
+                   else filter diffFromConstraint unifs
+  = Draw newUnifs
+  | otherwise
+  = Lose
   where
-    -- A unifier is only a unifier if differs from the original constraint
+
+    -- A unifier is only a unifier if it differs from the original constraint
     diffFromConstraint (UnifyItem x y) = not (x == u && y == v)
-    diffFromConstraint (SubstItem x y) = not (S [P [V x]] == u && y == v)
+
+    -- SubstItems can be in different orders
+    diffFromConstraint (SubstItem x y) =
+      not $ (S [P [V x]] == u && y == v)
+         || (S [P [V x]] == v && y == u)
 
 -- | Find unifiers for two SOP terms
 --
@@ -453,46 +480,40 @@ unifyNats' ct u v
 -- @
 -- [a := b]
 -- @
-unifiers :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+unifiers :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
 unifiers ct u@(S [P [V x]]) v
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq t1 _
-        | CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct)
-        -> [SubstItem x v]
-      _ -> []
+  | EqPred NomEq t1 _ <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP u) /= CType t1 || isGiven (ctEvidence ct)
+  = return [SubstItem x v]
 unifiers ct u v@(S [P [V x]])
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq _ t2
-        | CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct)
-        -> [SubstItem x u]
-      _ -> []
+  | EqPred NomEq _ t2 <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP v) /= CType t2 || isGiven (ctEvidence ct)
+  = return [SubstItem x u]
 unifiers ct u@(S [P [C _]]) v
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
-        -> [UnifyItem u v]
-      _ -> []
+  | EqPred NomEq t1 t2 <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+  = return [UnifyItem u v]
 unifiers ct u v@(S [P [C _]])
-  = case classifyPredType $ ctEvPred $ ctEvidence ct of
-      EqPred NomEq t1 t2
-        | CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
-        -> [UnifyItem u v]
-      _ -> []
+  | EqPred NomEq t1 t2 <- classifyPredType $ ctEvPred $ ctEvidence ct
+  , CType (reifySOP u) /= CType t1 || CType (reifySOP v) /= CType t2
+  = return [UnifyItem u v]
 unifiers ct u v             = unifiers' ct u v
 
-unifiers' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
-unifiers' _ct (S [])        (S [])        = []
+unifiers' :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
+unifiers' _ct (S [])        (S [])        = return []
 
-unifiers' _ct (S [P [V x]]) (S [])        = [SubstItem x (S [P [I 0]])]
-unifiers' _ct (S [])        (S [P [V x]]) = [SubstItem x (S [P [I 0]])]
+unifiers' _ct (S [P [V x]]) (S [])        = return [SubstItem x (S [P [I 0]])]
+unifiers' _ct (S [])        (S [P [V x]]) = return [SubstItem x (S [P [I 0]])]
 
-unifiers' _ct (S [P [V x]]) s             = [SubstItem x s]
-unifiers' _ct s             (S [P [V x]]) = [SubstItem x s]
-
-unifiers' _ct (S [P [C {}]])   (S [P [C {}]])   = []
-unifiers' _ct s1@(S [P [C _]]) s2               = [UnifyItem s1 s2]
-unifiers' _ct s1               s2@(S [P [C _]]) = [UnifyItem s1 s2]
-
+unifiers' _ct (S [P [V x]]) s = do
+  guard $ canBeNatural s
+  return [SubstItem x s]
+unifiers' _ct s (S [P [V x]]) = do
+  guard $ canBeNatural s
+  return [SubstItem x s]
+unifiers' _ct s1@(S [P [C {}]]) s2@(S [P [C {}]])
+  | s1 == s2
+  = return []
 
 -- (z ^ a) ~ (z ^ b) ==> [a := b]
 unifiers' ct (S [P [E s1 p1]]) (S [P [E s2 p2]])
@@ -503,13 +524,13 @@ unifiers' ct (S [P [E (S [P s1]) p1]]) (S [P p2])
   | all (`elem` p2) s1
   = let base = intersect s1 p2
         diff = p2 \\ s1
-    in  unifiers ct (S [P diff]) (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]])
+    in  unifiers' ct (S [P diff]) (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]])
 
 unifiers' ct (S [P p2]) (S [P [E (S [P s1]) p1]])
   | all (`elem` p2) s1
   = let base = intersect s1 p2
         diff = p2 \\ s1
-    in  unifiers ct (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]]) (S [P diff])
+    in  unifiers' ct (S [P [E (S [P base]) (P [I (-1)]),E (S [P base]) p1]]) (S [P diff])
 
 -- (i ^ a) ~ j ==> [a := round (logBase i j)], when `i` and `j` are integers,
 -- and `ceiling (logBase i j) == floor (logBase i j)`
@@ -558,36 +579,25 @@ unifiers' ct (S [P ps1]) (S [P ps2])
           | otherwise = ps2'
     psx  = intersect ps1 ps2
 
--- (2 + a) ~ 5 ==> [a := 3]
-unifiers' ct (S ((P [I i]):ps1)) (S ((P [I j]):ps2))
-  = case compare i j of
-       EQ -> unifiers' ct (S ps1) (S ps2)
-       LT -> unifiers' ct (S ps1) (S ((P [I (j-i)]):ps2))
-       GT -> unifiers' ct (S ((P [I (i-j)]):ps1)) (S ps2)
-
 -- (a + c) ~ (b + c) ==> [a := b]
+--
+-- NB: this also handles situations such as (2 + x) ~ 5 ==> [x := 3].
 unifiers' ct s1@(S ps1) s2@(S ps2)
-  | Just (s1',s2',_) <- sopToIneq k1
-  , s1' /= s1 || s2' /= s2
-  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s1'))
-  , maybe True (uncurry (&&) . second Set.null) (runWriterT (isNatural s2'))
+  | Just (s1',s2',_) <- simplifyIneq (s1, s2, True)
   = unifiers' ct s1' s2'
-  | null psx
-  , length ps1 == length ps2
-  , length ps1 > 1
-  , let unifs = nub $ concat (zipWith (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)
-  , length unifs <= 1
-  = case unifs of
-        []  -> unifiers'' ct (S ps1) (S ps2)
-        [k] -> [k]
-        _   -> error "impossible"
+  | Just term_unifs <- termByTerm ct ps1 ps2
+  = Just term_unifs
+  -- If there are only two variables, try to collect them on either side.
+  -- This makes 'termByTerm' more likely to succeed.
+  | Just (S coll1, S coll2) <- partitionTerms ps1 ps2
+  , Just term_unifs <- termByTerm ct coll1 coll2
+  = Just term_unifs
   | null psx
   , isGiven (ctEvidence ct)
   = unifiers'' ct (S ps1) (S ps2)
   | not $ null psx
   = unifiers' ct (S ps1'') (S ps2'')
   where
-    k1 = subtractIneq (s1,s2,True)
     ps1'  = ps1 \\ psx
     ps2'  = ps2 \\ psx
     ps1'' | null ps1' = [P [I 0]]
@@ -596,14 +606,82 @@ unifiers' ct s1@(S ps1) s2@(S ps2)
           | otherwise = ps2'
     psx = intersect ps1 ps2
 
-unifiers' _ s1 s2 = [UnifyItem s1 s2]
+unifiers' _ s1 s2 = return [UnifyItem s1 s2]
 
-unifiers'' :: Ct -> CoreSOP -> CoreSOP -> [CoreUnify]
+-- | Try to match the two expressions term-by-term.
+-- If this produces a **single unifier**, then we succeed.
+--
+-- Example: x + 3^(x+2) ~ 2*y - 3^(2*(y+1))
+--
+-- We recur on each pair, (x, 2*y), (3^(x+2),3^(2*(y+1))).
+-- This produces a single unifier "x ~ 2*y", so we proceed.
+--
+-- NB: this is somewhat fragile: if one moves the terms with negative
+-- coefficients to the other side, due to the variable ordering x < y,
+-- we would get:
+--
+--   x + 3^(2*(y+1)) ~ 3^(x+2) + 2*y
+--
+-- for which the same approach fails. So we use 'partitionTerms' as a heuristic
+-- in the case there are only two free variables.
+-- See https://github.com/clash-lang/ghc-typelits-natnormalise/issues/96.
+termByTerm :: Ct -> [CoreProduct] -> [CoreProduct] -> Maybe [CoreUnify]
+termByTerm ct ps1 ps2
+  | length ps1 == length ps2
+  , length ps1 > 1
+  , Just u@[_] <- unifs
+  = Just u
+  | otherwise
+  = Nothing
+  where
+    unifs = fmap (nub . concat) (zipWithM (\x y -> unifiers' ct (S [x]) (S [y])) ps1 ps2)
+
+-- | If an equality only contains two free variables, try to collect
+-- terms with either FV on either side of the equality.
+--
+-- This makes 'termByTerm' more likely to succeed.
+partitionTerms :: [CoreProduct] -> [CoreProduct] -> Maybe (CoreSOP, CoreSOP)
+partitionTerms lhs rhs
+  | [fv1, fv2] <- fvs
+  , Just (lhs1, lhs2) <- mbPairs fv1 fv2 lhs
+  , Just (rhs1, rhs2) <- mbPairs fv1 fv2 rhs
+  = Just $
+      let (lhs', rhs') =
+            if length rhs1 + length lhs2 <= length lhs1 + length rhs2
+            then (lhs1 ++ map negateProd rhs1, map negateProd lhs2 ++ rhs2)
+            else (map negateProd lhs1 ++ rhs1, lhs2 ++ map negateProd rhs2)
+      in (simplifySOP (S lhs'), simplifySOP (S rhs'))
+  | otherwise
+  = Nothing
+  where
+    fvs :: [TyVar]
+    fvs = nonDetEltsUniqSet $ fvSOP (S $ lhs ++ rhs)
+
+    mbPairs :: TyVar -> TyVar -> [CoreProduct] -> Maybe ([CoreProduct], [CoreProduct])
+    mbPairs fv1 fv2 x = partitionEithers <$> traverse ( collect fv1 fv2 ) x
+
+    collect :: TyVar -> TyVar -> CoreProduct -> Maybe (Either CoreProduct CoreProduct)
+    collect fv1 fv2 tm =
+      let tmFvs = fvProduct tm
+      in case (fv1 `elementOfUniqSet` tmFvs, fv2 `elementOfUniqSet` tmFvs) of
+           (True, False) -> Just $ Left  tm
+           (False, True) -> Just $ Right tm
+           _             -> Nothing
+
+unifiers'' :: Ct -> CoreSOP -> CoreSOP -> Maybe [CoreUnify]
 unifiers'' ct (S [P [I i],P [V v]]) s2
-  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s2 (S [P [I (negate i)]]))]
+  | isGiven (ctEvidence ct)
+  , let s' = mergeSOPAdd s2 (S [P [I (negate i)]])
+  = if canBeNatural s'
+    then Just [SubstItem v s']
+    else Nothing
 unifiers'' ct s1 (S [P [I i],P [V v]])
-  | isGiven (ctEvidence ct) = [SubstItem v (mergeSOPAdd s1 (S [P [I (negate i)]]))]
-unifiers'' _ _ _ = []
+  | isGiven (ctEvidence ct)
+  , let s' = mergeSOPAdd s1 (S [P [I (negate i)]])
+  = if canBeNatural s'
+    then Just [SubstItem v s']
+    else Nothing
+unifiers'' _ _ _ = Just []
 
 collectBases :: CoreProduct -> Maybe ([CoreSOP],[CoreProduct])
 collectBases = fmap unzip . traverse go . unP
@@ -624,18 +702,6 @@ fvSymbol (C _)   = emptyUniqSet
 fvSymbol (V v)   = unitUniqSet v
 fvSymbol (E s p) = fvSOP s `unionUniqSets` fvProduct p
 
-eqFV :: CoreSOP -> CoreSOP -> Bool
-eqFV = (==) `on` fvSOP
-
-containsConstants :: CoreSOP -> Bool
-containsConstants =
-  any (any symbolContainsConstant . unP) . unS
-  where
-    symbolContainsConstant c = case c of
-      C {} -> True
-      E s p -> containsConstants s || containsConstants (S [p])
-      _ -> False
-
 safeDiv :: Integer -> Integer -> Maybe Integer
 safeDiv i j
   | j == 0    = Just 0
@@ -655,12 +721,38 @@ integerLogBase x y | x > 1 && y > 0 =
          else Just (smallInteger z1)
 integerLogBase _ _ = Nothing
 
+-- | Might this be a natural number?
+--
+-- Equivalently: it is not the case that this is definitely not a natural number.
+--
+-- For example, @-1@ is definitely not a natural number, while @α@ or
+-- @-2 * β@ could both be natural numbers (where @α, β@ are metavariables).
+canBeNatural :: CoreSOP -> Bool
+canBeNatural = maybe True fst . runWriterT . isNatural
+
+-- | Is this a natural number?
+--
+--  - @Just True@ <=> definitely a natural number
+--  - @Just False@ <=> definitely not a natural number
+--  - @Nothing@ <=> not sure
+--
+-- The 'Set CType' writer accumulator returns inner types that must also be
+-- positive for the overall 'CoreSOP' to be positive.
 isNatural :: CoreSOP -> WriterT (Set CType) Maybe Bool
 isNatural (S [])           = return True
 isNatural (S [P []])       = return True
-isNatural (S [P (I i:ps)])
-  | i >= 0    = isNatural (S [P ps])
-  | otherwise = return False
+isNatural (S [P (I i:ps)]) =
+  case compare i 0 of
+    EQ -> return True
+    GT ->
+      -- NB: assumes the SOP term has been normalised, so no possibly of
+      -- a second negative constant factor to cancel out this one.
+      isNatural (S [P ps])
+    LT ->
+      -- '-1 * ty' can be a natural number if 'ty' ends up being zero
+      if any canBeZero ps
+      then WriterT Nothing
+      else return False
 isNatural (S [P (V _:ps)]) = isNatural (S [P ps])
 isNatural (S [P (E s p:ps)]) = do
   sN <- isNatural s
@@ -682,6 +774,23 @@ isNatural (S (p:ps)) = do
     _             -> WriterT Nothing
     -- if one is natural and the other isn't, then their sum *might* be natural,
     -- but we simply cant be sure.
+
+-- | Can this 'CoreSymbol' be zero?
+--
+-- Examples:
+--
+--  - the literal '0',
+--  - a metavariable,
+--  - a type family application.
+canBeZero :: CoreSymbol -> Bool
+canBeZero (I i) = i == 0
+canBeZero (C {}) = True -- e.g. 'F 3' where 'F' is a type family
+canBeZero (E (S es) _)
+  | [P bs] <- es
+  = any canBeZero bs
+  | otherwise
+  = True
+canBeZero (V {}) = True -- e.g. 'tau' where 'tau' is an unfilled metavariable
 
 -- | Try to solve inequalities
 solveIneq
@@ -802,14 +911,12 @@ leTrans _ _ = noRewrite
 -- * SOP version: -2 + x
 -- * Convert back to inequality: 2 <= x
 plusMonotone :: IneqRule
-plusMonotone want have
-  | Just want' <- sopToIneq (subtractIneq want)
-  , want' /= want
-  = pure [(want',have)]
-  | Just have' <- sopToIneq (subtractIneq have)
-  , have' /= have
-  = pure [(want,have')]
-plusMonotone _ _ = noRewrite
+plusMonotone want have =
+  case (simplifyIneq want, simplifyIneq have) of
+    (Just want', Just have') -> pure [(want', have')]
+    (Just want', _         ) -> pure [(want', have )]
+    (_         , Just have') -> pure [(want , have')]
+    _ -> noRewrite
 
 -- | Make the `a` of a given `a <= b` smaller
 haveSmaller :: IneqRule

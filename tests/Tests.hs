@@ -363,7 +363,7 @@ proxyEq3
    . ((x + 1) ~ (2 * y), 1 <= y)
   => Proxy x
   -> Proxy y
-  -> Proxy (((2 * (y - 1)) + 1))
+  -> Proxy ((2 * (y - 1)) + 1)
   -> Proxy x
 proxyEq3 _ _ x = x
 
@@ -627,6 +627,7 @@ tests = testGroup "ghc-typelits-natnormalise"
     , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $
         testProxy15 (Proxy :: Proxy 1) `throws` testProxy15Errors
     , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
+    , testCase "Do not unify in non-injective positions" $ t99 `throws` t99_errors
     , testGroup "Inequality"
       [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
       , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
@@ -723,12 +724,27 @@ useFunc _ = libFunc (Proxy @0) (Proxy @(d+1))
 #endif
 
 -- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/71
-t1 :: (((1 + m1) + n1) ~ (1 + (m2 + n2))) => Proxy '(m1, n1, m2, n2) -> ()
-t1 _ = ()
-t2 :: ((m1 + n1) ~ (m2 + n2)) => Proxy '(m1, n1, m2, n2) -> ()
-t2 px = t1 px
+t71_aux :: (((1 + m1) + n1) ~ (1 + (m2 + n2))) => Proxy '(m1, n1, m2, n2) -> ()
+t71_aux _ = ()
+t71 :: ((m1 + n1) ~ (m2 + n2)) => Proxy '(m1, n1, m2, n2) -> ()
+t71 px = t71_aux px
 
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94
+t94 ::
+  (KnownNat n, KnownNat m, KnownNat s, s ~ (m - n)) =>
+  Proxy m -> Proxy n -> Proxy (s + 2) -> Proxy (s + 2)
+t94 _ _ = t94_aux
 
+t94_aux :: (1 <= n) => Proxy n -> Proxy n
+t94_aux px = px
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/96
+t96
+  :: ( 2 <= x, 2 <= y
+     , ( 4 * x + 2 * 2^y ) ~ ( 4 * y + 2 * 2^x )
+     )
+  => Proxy x -> Proxy y
+t96 x = x
 
 type family TF (a :: Nat) (b :: Nat) :: Nat
 
@@ -747,3 +763,25 @@ proxyEq5 = theProxy
     -> Proxy b
     -> Proxy (3 * TF (3 * a) b)
   theProxy _ _ = Proxy
+
+type family Rank sh where
+  Rank '[] = 0
+  Rank (_ : sh) = Rank sh + 1
+foo :: ( ( 1 + Rank sh ) ~ ( 1 + n ) )
+    => Proxy sh -> Proxy n -> Proxy (Rank sh) -> Proxy n
+foo _ _ px = px
+
+noContra :: ((Rank sh + 2) <= 2) => Proxy sh -> ()
+noContra _ = ()
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/97
+t97 :: ( (1 + n) ~ m, ( m - 1 ) ~ n ) => Proxy m -> Proxy n -> ()
+t97  _ _ = ()
+
+t97b
+  :: ( n ~ (m - 2)
+     , (n + 1) ~ (m - 1)
+     , m ~ (n + 2)
+     )
+  => Proxy n -> Proxy m -> ()
+t97b _ _ = ()
