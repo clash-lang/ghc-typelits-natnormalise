@@ -283,7 +283,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
    do
     let
       givensTyConSubst = mkTyConSubst givens
-    (redGivens, _) <- reduceGivens False opts tcs givensTyConSubst givens
+    (redGivens, _) <- reduceGivens False opts tcs givens
 
     tcPluginTrace "decideEqualSOP Givens {" $
       vcat [ text "givens:" <+> ppr givens ]
@@ -318,10 +318,10 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
                         . ctEvidence )
                  wanteds
 
-    (redGivens, negWanteds) <- reduceGivens True opts tcs givensTyConSubst givens
+    (redGivens, negWanteds) <- reduceGivens True opts tcs givens
     reducible_wanteds
       <- catMaybes <$> mapM (\ct -> fmap (ct,) <$>
-                                    reduceNatConstr givensTyConSubst redGivens ct)
+                                    reduceNatConstr redGivens ct)
                             nonEqs
 
     tcPluginTrace "decideEqualSOP Wanteds {" $
@@ -378,14 +378,14 @@ type NatEquality   = (Ct,CoreSOP,CoreSOP)
 type NatInEquality = (Ct,(CoreSOP,CoreSOP,Bool))
 
 reduceGivens :: Bool -- ^ allow generating new "non-negative" Wanteds
-             -> Opts -> LookedUpTyCons -> TyConSubst
+             -> Opts -> LookedUpTyCons
              -> [Ct]
              -> TcPluginM Solve ([Ct], Map CType CtLoc)
-reduceGivens gen_wanteds opts tcs givensTyConSubst origGivens = go [] Map.empty origGivens
+reduceGivens gen_wanteds opts tcs origGivens = go [] Map.empty origGivens
   where
     go rev_acc_gs acc_ws [] = return ( reverse rev_acc_gs, acc_ws )
     go rev_acc_gs acc_ws (g:gs) =
-      case tryReduceGiven opts tcs givensTyConSubst origGivens g of
+      case tryReduceGiven opts tcs origGivens g of
         Just ( pred', evExpr, ws )
           | gen_wanteds || null ws || negNumbers opts
           -> do
@@ -402,12 +402,11 @@ reduceGivens gen_wanteds opts tcs givensTyConSubst origGivens = go [] Map.empty 
 
 tryReduceGiven
   :: Opts -> LookedUpTyCons
-  -> TyConSubst
   -> [Ct] -> Ct
   -> Maybe (PredType, EvTerm, [PredType])
-tryReduceGiven opts tcs givensTyConSubst simplGivens ct = do
+tryReduceGiven opts tcs simplGivens ct = do
     let (mans, ws) =
-          runWriter $ normaliseNatEverywhere givensTyConSubst $
+          runWriter $ normaliseNatEverywhere $
           ctEvPred $ ctEvidence ct
         ws' = [ p
               | p <- subToPred opts tcs ws
@@ -425,10 +424,10 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: TyConSubst -> [Ct] -> Ct -> TcPluginM Solve (Maybe (EvTerm, [(Type, Type)], [Ct]))
-reduceNatConstr givensTyConSubst givens ct = do
+reduceNatConstr :: [Ct] -> Ct -> TcPluginM Solve (Maybe (EvTerm, [(Type, Type)], [Ct]))
+reduceNatConstr givens ct = do
   let pred0 = ctEvPred $ ctEvidence ct
-      (mans, tests) = runWriter $ normaliseNatEverywhere givensTyConSubst pred0
+      (mans, tests) = runWriter $ normaliseNatEverywhere pred0
 
       -- Even if we didn't rewrite the Wanted,
       -- we may still be able to solve it from a (rewritten) Given.
@@ -666,8 +665,8 @@ toNatEquality :: LookedUpTyCons -> TyConSubst -> Ct -> [(Either NatEquality NatI
 toNatEquality tcs givensTyConSubst ct0
   | Just (((x,y), mbLTE), cos0) <- isNatRel tcs givensTyConSubst pred0
   , let
-      ((x', cos1),k1) = runWriter (normaliseNat givensTyConSubst x)
-      ((y', cos2),k2) = runWriter (normaliseNat givensTyConSubst y)
+      ((x', cos1),k1) = runWriter (normaliseNat x)
+      ((y', cos2),k2) = runWriter (normaliseNat y)
       ks      = k1 ++ k2
   = case mbLTE of
       Nothing ->
@@ -685,7 +684,7 @@ toNatEquality tcs givensTyConSubst ct0
         -- See https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94.
         | isGiven (ctEvidence ct0)
         , className kn == knownNatClassName
-        , let ((x', cos0), ks) = runWriter (normaliseNat givensTyConSubst x)
+        , let ((x', cos0), ks) = runWriter (normaliseNat x)
         -> [(Right (ct0, (S [], x', True)), ks, cos0)]
       _ -> []
   where
@@ -716,8 +715,8 @@ toNatEquality tcs givensTyConSubst ct0
     rewrite x y
       | isNatKind (typeKind x)
       , isNatKind (typeKind y)
-      , let ((x', cos1),k1) = runWriter (normaliseNat givensTyConSubst x)
-      , let ((y', cos2),k2) = runWriter (normaliseNat givensTyConSubst y)
+      , let ((x', cos1),k1) = runWriter (normaliseNat x)
+      , let ((y', cos2),k2) = runWriter (normaliseNat y)
       = [(Left (ct0,x',y'),k1 ++ k2, cos1 ++ cos2)]
       | otherwise
       = []
