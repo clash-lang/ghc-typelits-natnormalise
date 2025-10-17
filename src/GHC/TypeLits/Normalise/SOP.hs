@@ -128,7 +128,8 @@ instance (Eq v, Eq c) => Eq (SOP v c) where
   (S ps1) == (S ps2)      = ps1 == ps2
 
 instance (Outputable v, Outputable c) => Outputable (SOP v c) where
-  ppr = hcat . punctuate (text " + ") . map ppr . unS
+  ppr (S []) = integer 0
+  ppr (S s) = hcat . punctuate (text " + ") . map ppr $ s
 
 instance (Outputable v, Outputable c) => Outputable (Product v c) where
   ppr = hcat . punctuate (text " * ") . map ppr . unP
