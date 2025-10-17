@@ -64,9 +64,9 @@ flag deverror
 
 library
   exposed-modules:     GHC.TypeLits.Normalise,
+                       GHC.TypeLits.Normalise.Compat,
                        GHC.TypeLits.Normalise.SOP,
                        GHC.TypeLits.Normalise.Unify
-  other-modules:       GHC.TypeLits.Normalise.Compat
   build-depends:       base                >=4.9   && <5,
                        containers          >=0.5.7.1 && <0.8,
                        ghc                 >=8.8.1 && <9.15,
