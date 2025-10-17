@@ -1,5 +1,10 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.9.0 *October 17th 2025*
+* Drop `TyConSubst` argument from `normaliseNat`, `normaliseNatEverywhere` and `normaliseSimplifyNat`.
+* Expose `GHC.TypeLits.Normalise.Compat`
+* Report contractions for equations such as `1 + k <= n; n ~ 0` in "solve givens" phase
+
 ## 0.8.1 *October 1st 2025*
 * Fixes [#85](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/85) Deriving equalities from inequalities produces a misleading error message
 * Fixes [#94](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94) Normalization fails when adding an equality constraint with substraction
