@@ -79,8 +79,6 @@ import GHC.Types.Unique.Set
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API
-import GHC.TcPlugin.API.TyConSubst
-  ( TyConSubst )
 import GHC.Utils.Outputable
 
 
@@ -113,8 +111,8 @@ type CoreSymbol  = Symbol TyVar CType
 -- * literals
 -- * type variables
 -- * Applications of the arithmetic operators @(+,-,*,^)@
-normaliseNat :: TyConSubst -> Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
-normaliseNat givensTyConSubst ty
+normaliseNat :: Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
+normaliseNat ty
   | Just (tc, xs) <- splitTyConApp_maybe ty
   = goTyConApp tc xs
   | Just i <- isNumLitTy ty
@@ -127,21 +125,21 @@ normaliseNat givensTyConSubst ty
       goTyConApp :: TyCon -> [Type] -> Writer [(Type,Type)] (CoreSOP, [Coercion])
       goTyConApp tc [x,y]
         | tc == typeNatAddTyCon =
-            do (x', cos1) <- normaliseNat givensTyConSubst x
-               (y', cos2) <- normaliseNat givensTyConSubst y
+            do (x', cos1) <- normaliseNat x
+               (y', cos2) <- normaliseNat y
                return (mergeSOPAdd x' y', cos1 ++ cos2)
         | tc == typeNatSubTyCon = do
-          (x', cos1) <- normaliseNat givensTyConSubst x
-          (y', cos2) <- normaliseNat givensTyConSubst y
+          (x', cos1) <- normaliseNat x
+          (y', cos2) <- normaliseNat y
           tell [(reifySOP $ simplifySOP x', reifySOP $ simplifySOP y')]
           return (mergeSOPAdd x' (mergeSOPMul (S [P [I (-1)]]) y'), cos1 ++ cos2)
         | tc == typeNatMulTyCon =
-          do (x', cos1) <- normaliseNat givensTyConSubst x
-             (y', cos2) <- normaliseNat givensTyConSubst y
+          do (x', cos1) <- normaliseNat x
+             (y', cos2) <- normaliseNat y
              return (mergeSOPMul x' y', cos1 ++ cos2)
         | tc == typeNatExpTyCon =
-          do (x', cos1) <- normaliseNat givensTyConSubst x
-             (y', cos2) <- normaliseNat givensTyConSubst y
+          do (x', cos1) <- normaliseNat x
+             (y', cos2) <- normaliseNat y
              return (normaliseExp x' y', cos1 ++ cos2)
       goTyConApp tc xs
         = return (S [P [C (CType $ mkTyConApp tc xs)]], [])
@@ -164,8 +162,8 @@ maybeRunWriter w =
 -- | Applies 'normaliseNat' and 'simplifySOP' to type or predicates to reduce
 -- any occurrences of sub-terms of /kind/ 'GHC.TypeLits.Nat'. If the result is
 -- the same as input, returns @'Nothing'@.
-normaliseNatEverywhere :: TyConSubst -> Type -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
-normaliseNatEverywhere givensTyConSubst ty0
+normaliseNatEverywhere :: Type -> Writer [(Type, Type)] (Maybe (Type, [Coercion]))
+normaliseNatEverywhere ty0
   | Just (tc, fields) <- splitTyConApp_maybe ty0
   =   if tc `elem` knownTyCons
       then do
@@ -174,7 +172,7 @@ normaliseNatEverywhere givensTyConSubst ty0
         ty1M <- maybeRunWriter (go tc fields)
         let (ty1, cos1) = fromMaybe (ty0, []) ty1M
         -- Normalize (subterm-normalized) type given to 'normaliseNatEverywhere'
-        (ty2, cos2) <- normaliseSimplifyNat givensTyConSubst ty1
+        (ty2, cos2) <- normaliseSimplifyNat ty1
         -- TODO: 'normaliseNat' could keep track whether it changed anything. That's
         -- TODO: probably cheaper than checking for equality here.
         pure $
@@ -205,12 +203,12 @@ normaliseNatEverywhere givensTyConSubst ty0
       , Just (tc', flds') <- splitTyConApp_maybe ty'
       = go tc' flds'
       | otherwise
-      = normaliseNatEverywhere givensTyConSubst ty'
+      = normaliseNatEverywhere ty'
 
-normaliseSimplifyNat :: TyConSubst -> Type -> Writer [(Type, Type)] (Type, [Coercion])
-normaliseSimplifyNat givensTyConSubst ty
+normaliseSimplifyNat :: Type -> Writer [(Type, Type)] (Type, [Coercion])
+normaliseSimplifyNat ty
   | typeKind ty `eqType` natKind = do
-      (ty', cos1) <- normaliseNat givensTyConSubst ty
+      (ty', cos1) <- normaliseNat ty
       return $ (reifySOP $ simplifySOP ty', cos1)
   | otherwise = return (ty, [])
 
