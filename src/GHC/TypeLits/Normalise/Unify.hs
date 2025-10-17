@@ -788,7 +788,7 @@ canBeZero (E (S es) _)
   = any canBeZero bs
   | otherwise
   = True
-canBeZero (V {}) = True -- e.g. 'tau' where 'tau' is an unfilled metavariable
+canBeZero (V v) = isMetaTyVar v -- e.g. 'tau' where 'tau' is an unfilled metavariable
 
 -- | Try to solve inequalities
 solveIneq
