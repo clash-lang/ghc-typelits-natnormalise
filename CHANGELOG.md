@@ -1,5 +1,9 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## 0.9.1 *October 21st 2025*
+* Fixes [#105](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/105) Unsound derived contradiction with 0.9.0
+* Support for GHC 9.14
+
 ## 0.9.0 *October 17th 2025*
 * Drop `TyConSubst` argument from `normaliseNat`, `normaliseNatEverywhere` and `normaliseSimplifyNat`.
 * Expose `GHC.TypeLits.Normalise.Compat`
