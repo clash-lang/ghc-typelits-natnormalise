@@ -40,7 +40,11 @@ testProxy1 :: Proxy (x + 1) -> Proxy (2 + x)
 testProxy1 = id
 
 testProxy1Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy (2 + x)"
+  ,"  Actual: Proxy (x + 1)"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy (x + 1) -> Proxy (2 + x)"
   ,"  Actual: Proxy (x + 1) -> Proxy (x + 1)"
   ]
@@ -58,7 +62,11 @@ testProxy2 :: Proxy (GCD 6 8 + x) -> Proxy (x + GCD 9 6)
 testProxy2 = id
 
 testProxy2Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy (x + GCD 9 6)"
+  ,"  Actual: Proxy (2 + x)"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy (GCD 6 8 + x) -> Proxy (x + GCD 9 6)"
   ,"  Actual: Proxy (2 + x) -> Proxy (2 + x)"
   ]
@@ -75,7 +83,11 @@ testProxy3 :: Proxy 8 -> ()
 testProxy3 = proxyFun3
 
 testProxy3Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy ((x0 + x0) + x0)"
+  ,"  Actual: Proxy 8"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 8 -> ()"
   ,"  Actual: Proxy ((x0 + x0) + x0) -> ()"
   ]
@@ -92,7 +104,11 @@ testProxy4 :: Proxy 2 -> ()
 testProxy4 = proxyFun4
 
 testProxy4Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy ((2 * 0) + 4)"
+  ,"  Actual: Proxy 2"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 2 -> ()"
   ,"  Actual: Proxy ((2 * 0) + 4) -> ()"
   ]
@@ -106,7 +122,11 @@ testProxy5 :: Proxy 7 -> ()
 testProxy5 = proxyFun4
 
 testProxy5Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy ((2 * y0) + 4)"
+  ,"  Actual: Proxy 7"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 7 -> ()"
   ,"  Actual: Proxy ((2 * y0) + 4) -> ()"
   ]
@@ -144,7 +164,11 @@ testProxy8 :: Proxy x -> Proxy (y + x)
 testProxy8 = id
 
 testProxy8Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy (y + x)"
+  ,"  Actual: Proxy x"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy x -> Proxy (y + x)"
   ,"  Actual: Proxy x -> Proxy x"
   ]
@@ -408,7 +432,11 @@ testProxy15 :: (CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => Proxy n -> Proxy (n+d)
 testProxy15 = id
 
 testProxy15Errors =
-#if __GLASGOW_HASKELL__ >= 900
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy (n + d)"
+  ,"  Actual: Proxy n"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy n -> Proxy (n + d)"
   ,"  Actual: Proxy n -> Proxy n"
   ]
