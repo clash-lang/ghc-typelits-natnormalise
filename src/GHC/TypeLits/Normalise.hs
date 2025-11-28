@@ -165,7 +165,7 @@ where
 import Control.Arrow
   ( second )
 import Control.Monad
-  ( (<=<) )
+  ( (<=<), unless )
 import Control.Monad.Trans.Writer.Strict
   ( WriterT(runWriterT), runWriter )
 import Data.Either
@@ -213,6 +213,12 @@ import GHC.TypeLits.Normalise.Compat
 import GHC.TypeLits.Normalise.SOP
   ( SOP(S), Product(P), Symbol(V) )
 import GHC.TypeLits.Normalise.Unify
+
+-- transformers
+import Control.Monad.Trans.Class
+  ( lift )
+import Control.Monad.Trans.State.Strict
+  ( StateT, evalStateT, get, modify )
 
 --------------------------------------------------------------------------------
 
@@ -289,16 +295,18 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
       vcat [ text "givens:" <+> ppr givens ]
 
     -- Try to find contradictory Givens, to improve pattern match warnings.
-    SimplifyResult _simpls contras <-
+    SimplifyResult { simplifiedWanteds, contradictions } <-
       simplifyNats opts tcs [] $
-        concatMap (toNatEquality tcs givensTyConSubst) redGivens
+        concatMap (toNatEquality opts tcs givensTyConSubst) redGivens
+
     tcPluginTrace "decideEqualSOP Givens }" $
       vcat [ text "givens:" <+> ppr givens
-           , text "simpls:" <+> ppr _simpls
-           , text "contra:" <+> ppr contras ]
+           , text "simpls:" <+> ppr simplifiedWanteds
+           , text "contra:" <+> ppr contradictions
+           ]
     return $
       mkTcPluginSolveResult
-        ( map fromNatEquality contras )
+        ( map fromNatEquality contradictions )
         [] -- no solved Givens
         [] -- no new Givens
 
@@ -311,7 +319,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
                   then []
                   else wanteds0 ++ deriveds
         givensTyConSubst = mkTyConSubst givens
-        unit_wanteds0 = concatMap (toNatEquality tcs givensTyConSubst) wanteds
+        unit_wanteds0 = concatMap (toNatEquality opts tcs givensTyConSubst) wanteds
         nonEqs = filter ( not
                         . (\p -> isEqPred p || isEqClassPred p)
                         . ctEvPred
@@ -341,18 +349,18 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
         -- that is to be added to new [W]anteds.
         let mkNegWanted ( CType wtdPred ) loc = mkNonCanonical <$> newWanted loc wtdPred
         ineqForRedWants <- Map.traverseWithKey mkNegWanted negWanteds
-        let unit_givens = concatMap (toNatEquality tcs givensTyConSubst) redGivens
-            unit_wanteds = unit_wanteds0 ++ concatMap (toNatEquality tcs givensTyConSubst) ineqForRedWants
-        sr@(SimplifyResult evs contras) <- simplifyNats opts tcs unit_givens unit_wanteds
+        let unit_givens = concatMap (toNatEquality opts tcs givensTyConSubst) redGivens
+            unit_wanteds = unit_wanteds0 ++ concatMap (toNatEquality opts tcs givensTyConSubst) ineqForRedWants
+        sr@SimplifyResult{simplifiedWanteds, contradictions} <-
+          simplifyNats opts tcs unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- for reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
           wants <- evSubtPreds (ctLoc origCt) $ subToPred opts tcs ws
           return ((term, origCt), wDicts ++ wants)
-        let simpld = filter (not . isGiven . ctEvidence . (\((_,x),_) -> x)) evs
-            -- Only solve a Derived when there are Wanteds in play
-            simpld1 = case filter (isWanted . ctEvidence . (\((_,x),_) -> x)) evs ++ reds of
+        let -- Only solve a Derived when there are Wanteds in play
+            simpld1 = case filter (isWanted . ctEvidence . (\((_,x),_) -> x)) simplifiedWanteds ++ reds of
                         [] -> []
-                        _  -> simpld
+                        _  -> simplifiedWanteds
             (solved,newWanteds) = second concat (unzip $ simpld1 ++ reds)
 
         tcPluginTrace "decideEqualSOP Wanteds }" $
@@ -370,7 +378,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
                 ]
         return $
           mkTcPluginSolveResult
-            (map fromNatEquality contras)
+            (map fromNatEquality contradictions)
             solved
             newWanteds
 
@@ -470,16 +478,65 @@ toReducedDict ct pred' deps' =
 
 data SimplifyResult
   = SimplifyResult
-     { simplified :: [((EvTerm,Ct),[Ct])]
-     , impossible :: [Either NatEquality NatInEquality]
+     { simplifiedWanteds :: [((EvTerm,Ct),[Ct])]
+     -- ^ List of:
+     --   * Tuple of:
+     --     * Evidence for:
+     --     * The solved Wanted
+     --   * Preconditions (in the for of new Wanteds)
+     , contradictions :: [Either NatEquality NatInEquality]
+     -- ^ List of contradictions
      }
 
 instance Outputable SimplifyResult where
-  ppr (SimplifyResult { simplified, impossible }) =
-    text "SimplifyResult { simplified =" <+> ppr simplified
-                <+> text ", impossible =" <+> ppr impossible <+> text "}"
+  ppr (SimplifyResult { simplifiedWanteds, contradictions }) =
+    text "SimplifyResult { simplified =" <+> ppr simplifiedWanteds
+               <+> text ", impossible =" <+> ppr contradictions <+> text "}"
 
-type NatCt = (Either NatEquality NatInEquality, [(Type,Type)], [Coercion])
+data NatCt
+  = NatCt
+  { predicate :: Either NatEquality NatInEquality
+  -- ^ Predicate: either an equality or inequality
+  , preconds :: [PredType]
+  -- ^ Preconditions (in the form of inequalities encoded as PredTypes)
+  , ctDeps :: [Coercion]
+  -- ^ Coercion(s) from which the predicate is derived, needed so that evidence
+  -- doesn't float above the coercions from which it is derived.
+  }
+
+instance Outputable NatCt where
+  ppr (NatCt {predicate, preconds, ctDeps}) =
+    text "NatCt { predicate = " <+> ppr predicate
+      <+> text ", preconditions = " <+> ppr preconds
+      <+> text ", dependencies = " <+> ppr ctDeps <+> text "}"
+
+data SimplifyState
+  = SimplifyState
+  { stDeps :: [Coercion]
+    -- ^ Coercions on which the simplified evidence depends, this needs to be
+    -- kept around because sometimes we solving one constraint (which has a
+    -- depedency) is used to solve another constraint
+  , subst :: [CoreUnify]
+    -- ^ Derived simplifications (i.e. b ~ c derived from (a + b) ~ (a + c)),
+    -- and substitutions (i.e. n := 0 derived from y ^ n ~ 1)
+  , evs :: [((EvTerm,Ct),[Ct])]
+    -- ^ Collected evidence
+  , leqsG :: [(CoreSOP,CoreSOP,Bool)]
+    -- ^ Given inequalities
+  , unsolved :: [NatCt]
+    -- ^ Tried, but unsolved predicates. We keep them around in case we solve a
+    -- new predicate which could lead to a substitution that enables a solve.
+  }
+
+emptySimplifyState :: SimplifyState
+emptySimplifyState
+  = SimplifyState
+  { stDeps = []
+  , subst = []
+  , evs = []
+  , leqsG = []
+  , unsolved = []
+  }
 
 simplifyNats
   :: Opts
@@ -490,15 +547,15 @@ simplifyNats
   -> [NatCt]
   -- ^ Wanted constraints
   -> TcPluginM Solve SimplifyResult
-simplifyNats opts@Opts {..} tcs eqsG eqsW = do
-    let eqsG1 = map (\ (eq, _, deps) -> (eq, [] :: [(Type, Type)], deps)) eqsG
-        (varEqs, otherEqs) = partition isVarEqs eqsG1
+simplifyNats Opts{depth} tcs eqsG eqsW = do
+    let eqsG1 = map (\nCt -> nCt{preconds = []}) eqsG
+        (varEqs, otherEqs) = partition (isVarEqs . predicate) eqsG1
         fancyGivens = concatMap (makeGivensSet otherEqs) varEqs
     case varEqs of
       [] -> do
         let eqs = otherEqs ++ eqsW
         tcPluginTrace "simplifyNats" (ppr eqs)
-        simples [] [] [] [] [] eqs
+        evalStateT (simples eqs) emptySimplifyState
       _  -> do
         tcPluginTrace ("simplifyNats(backtrack: " ++ show (length fancyGivens) ++ ")")
                       (ppr varEqs)
@@ -506,54 +563,85 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
         allSimplified <- for fancyGivens $ \v -> do
           let eqs = v ++ eqsW
           tcPluginTrace "simplifyNats" (ppr eqs)
-          simples [] [] [] [] [] eqs
+          evalStateT (simples eqs) emptySimplifyState
 
         pure (foldr findFirstSimpliedWanted (SimplifyResult [] []) allSimplified)
   where
-    simples :: [Coercion]
-            -> [CoreUnify]
-            -> [((EvTerm, Ct), [Ct])]
-            -> [(CoreSOP,CoreSOP,Bool)]
-            -> [NatCt]
-            -> [NatCt]
-            -> TcPluginM Solve SimplifyResult
-    simples _ _subst evs _leqsG _xs [] = return (SimplifyResult evs [])
-    simples deps subst evs leqsG xs (eq@(lr@(Left (ct,u,v)),k,deps2):eqs') = do
+    simples ::
+      [NatCt] ->
+      StateT SimplifyState (TcPluginM Solve) SimplifyResult
+    simples [] = do
+      SimplifyState{evs} <- get
+      return (SimplifyResult evs [])
+    simples (eq@NatCt{predicate=(Left (ct,u,v)), preconds, ctDeps}:eqs) = do
+      SimplifyState{stDeps, subst, evs, leqsG, unsolved} <- get
+      let allDeps = stDeps ++ ctDeps
+
       let u' = substsSOP subst u
           v' = substsSOP subst v
-      ur <- unifyNats ct u' v'
-      tcPluginTrace "unifyNats result" (ppr ur)
+      ur <- lift (unifyNats ct u' v')
+      lift (tcPluginTrace "unifyNats result" (ppr ur))
       case ur of
         Win -> do
-          evs' <- maybe evs (:evs) <$> evMagic tcs ct (deps ++ deps2) Set.empty (subToPred opts tcs k)
-          tcPluginTrace "unifyNats Win" $
-            vcat [ text "evs:" <+> ppr evs
-                 , text "evs':" <+> ppr evs'
-                 , text "ct:" <+> ppr ct
-                 ]
-          simples deps subst evs' leqsG [] (xs ++ eqs')
+          -- Do note record "new" evidence for given constraints.
+          unless (isGiven (ctEvidence ct)) $ do
+            -- Only recorde evidence for wanted contstraints
+            evM <- lift (evMagic tcs ct allDeps mempty preconds)
+            lift $ tcPluginTrace "unifyNats Win" $
+              vcat [ text "evM:" <+> ppr evM
+                   , text "ct:" <+> ppr ct
+                   ]
+            modify (\s -> s {evs = maybe evs (:evs) evM})
+          simples eqs
         Lose ->
-          addContra lr <$> simples deps subst evs leqsG xs eqs'
-        Draw [] -> simples deps subst evs [] (eq:xs) eqs'
-        Draw subst' -> do
-          evM <- evMagic tcs ct deps Set.empty (map unifyItemToPredType subst' ++
-                                                subToPred opts tcs k)
+          addContra (predicate eq) <$> simples eqs
+        Draw [] -> do
+          -- No progress made, add it to the "unsolved" list, in the hope we
+          -- can make progress when we later find a new substitution
+          modify (\s -> s {unsolved = eq:unsolved})
+          simples eqs
+        Draw unifications -> do -- We made some progress in the form of a unifier
 
-          tcPluginTrace "unifyNats: Draw (non-empty subst)" $
-             vcat [ text "subst':" <+> ppr subst'
-                  , text "evM:" <+> ppr evM ]
+          -- As the derived unifiers we record here can lead to solving another
+          -- equation, we add it and its dependencies to the list of global
+          -- dependencies which we use when creating new evidence
+          let stDeps1 = ctEvCoercion (ctEvidence ct):allDeps
+          -- We add apply the derived unification in the existing set of
+          -- unification, and also add the derived unificaiton to the global
+          -- state; to be used in solving later equations.
+          let subst1 = substsSubst unifications subst ++ unifications
+          if isGiven (ctEvidence ct) then do
+            if null preconds then do
+              -- We only record the unification derived from a given constraint
+              -- when it has no preconditions in order for this unification to
+              -- hold. The reason for that is that we can currently not record
+              -- new Wanteds to be emitted at the end of the solve.
+              modify (\s -> s { stDeps = stDeps1
+                              , subst = subst1
+                              , leqsG = eqToLeq u' v' ++ leqsG
+                              , unsolved = []
+                              })
+              simples (unsolved ++ eqs)
+            else
+              simples eqs
+          else do
+            let allPreconds = map unifyItemToPredType unifications ++ preconds
+            evM <- lift (evMagic tcs ct allDeps Set.empty allPreconds)
+            case evM of
+              Nothing ->
+                simples eqs
+              Just ev -> do
+                -- We only record the unification derived from a wanted constraint
+                -- when we can actually record evidence for a succesful solve.
+                modify (\s -> s { stDeps = stDeps1
+                                , subst = subst1
+                                , evs = ev:evs
+                                , unsolved = []
+                                })
+                simples (unsolved ++ eqs)
 
-          let (leqsG1, deps1)
-                | isGiven (ctEvidence ct) = ( eqToLeq u' v' ++ leqsG
-                                            , ctEvCoercion (ctEvidence ct):deps)
-                | otherwise               = (leqsG, deps)
-          case evM of
-            Nothing -> simples deps1 subst evs leqsG1 xs eqs'
-            Just ev ->
-              simples (ctEvCoercion (ctEvidence ct):deps ++ deps2)
-                      (substsSubst subst' subst ++ subst')
-                      (ev:evs) leqsG1 [] (xs ++ eqs')
-    simples deps subst evs leqsG xs (eq@(lr@(Right (ct,u@(x,y,b))),k,deps2):eqs') = do
+    simples (eq@NatCt{predicate=Right (ct,u@(x,y,b)), preconds, ctDeps}:eqs) = do
+      SimplifyState{stDeps, subst, evs, leqsG, unsolved} <- get
       let u'    = substsSOP subst (subtractIneq u)
           x'    = substsSOP subst x
           y'    = substsSOP subst y
@@ -562,16 +650,18 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
                  | otherwise               = leqsG
           ineqs = concat [ leqsG
                          , map (substLeq subst) leqsG
-                         , map snd (rights (map (\ (lr', _, _) -> lr') eqsG))
+                         , map snd (rights (map predicate eqsG))
                          ]
-      tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs))
+          allDeps = stDeps ++ ctDeps
+      lift (tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs)))
       case runWriterT (isNatural u') of
         Just (True,knW)  -> do
-          evs' <- maybe evs (:evs) <$> evMagic tcs ct deps knW (subToPred opts tcs k)
-          simples deps subst evs' leqsG' xs eqs'
+          evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps knW preconds)
+          modify (\s -> s {evs = evs', leqsG = leqsG'})
+          simples eqs
 
-        Just (False,_) | null k ->
-          addContra lr <$> simples deps subst evs leqsG xs eqs'
+        Just (False,_) | null preconds ->
+          addContra (predicate eq) <$> simples eqs
         _ -> do
           let solvedIneq = mapMaybe runWriterT
                  -- it is an inequality that can be instantly solved, such as
@@ -589,15 +679,20 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
               smallest = solvedInEqSmallestConstraint solvedIneq
           case smallest of
             (True,kW) -> do
-              let deps' = deps ++ deps2
-              evs' <- maybe evs (:evs) <$> evMagic tcs ct deps' kW (subToPred opts tcs k)
-              simples deps' subst evs' leqsG' xs eqs'
-            _ -> simples deps subst evs leqsG (eq:xs) eqs'
+              evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps kW preconds)
+              modify (\s -> s { stDeps = allDeps
+                              , evs = evs'
+                              , leqsG = leqsG'
+                              })
+              simples eqs
+            _ -> do
+              modify (\s -> s {unsolved = eq:unsolved})
+              simples eqs
 
     eqToLeq x y = [(x,y,True),(y,x,True)]
     substLeq s (x,y,b) = (substsSOP s x, substsSOP s y, b)
 
-    isVarEqs (Left (_,S [P [V _]], S [P [V _]]), _, _) = True
+    isVarEqs (Left (_,S [P [V _]], S [P [V _]])) = True
     isVarEqs _ = False
 
     makeGivensSet :: [NatCt] -> NatCt -> [[NatCt]]
@@ -605,7 +700,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
       = let (noMentionsV,mentionsV)   = partitionEithers
                                           (map (matchesVarEq varEq) otherEqs)
             (mentionsLHS,mentionsRHS) = partitionEithers mentionsV
-            vS = swapVar varEq
+            vS = varEq {predicate = swapVar (predicate varEq)}
             givensLHS = case mentionsLHS of
               [] -> []
               _  -> [mentionsLHS ++ ((varEq:mentionsRHS) ++ noMentionsV)]
@@ -619,7 +714,7 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
     matchesVarEq :: NatCt
                  -> NatCt
                  -> Either NatCt (Either NatCt NatCt)
-    matchesVarEq (Left (_, S [P [V v1]], S [P [V v2]]), _, _) r@(e, _, _) =
+    matchesVarEq NatCt{predicate = Left (_, S [P [V v1]], S [P [V v2]])} r@(NatCt e _ _) =
       case e of
         Left (_,S [P [V v3]],_)
           | v1 == v3 -> Right (Left r)
@@ -636,19 +731,19 @@ simplifyNats opts@Opts {..} tcs eqsG eqsW = do
         _ -> Left r
     matchesVarEq _ _ = error "internal error"
 
-    swapVar (Left (ct,S [P [V v1]], S [P [V v2]]), ps, deps) =
-      (Left (ct,S [P [V v2]], S [P [V v1]]), ps, deps)
+    swapVar (Left (ct,S [P [V v1]], S [P [V v2]])) =
+      Left (ct,S [P [V v2]], S [P [V v1]])
     swapVar _ = error "internal error"
 
-    findFirstSimpliedWanted s1@(SimplifyResult evs imposs) s2
-      |  not (null imposs)
-      || any (isWanted . ctEvidence . snd . fst) evs
+    findFirstSimpliedWanted s1@(SimplifyResult {simplifiedWanteds, contradictions}) s2
+      |  not (null contradictions)
+      || any (isWanted . ctEvidence . snd . fst) simplifiedWanteds
       = s1
       | otherwise
       = s2
 
 addContra :: Either NatEquality NatInEquality -> SimplifyResult -> SimplifyResult
-addContra contra sr = sr { impossible = contra : impossible sr }
+addContra contra sr = sr { contradictions = contra : contradictions sr }
 
 -- If we allow negated numbers we simply do not emit the inequalities
 -- derived from the subtractions that are converted to additions with a
@@ -661,20 +756,20 @@ subToPred Opts{..} tcs
     map (\ (a, b) -> mkLEqNat tcs b a)
 
 -- | Extract all Nat equality and inequality constraints from another constraint.
-toNatEquality :: LookedUpTyCons -> TyConSubst -> Ct -> [(Either NatEquality NatInEquality, [(Type,Type)], [Coercion])]
-toNatEquality tcs givensTyConSubst ct0
+toNatEquality :: Opts -> LookedUpTyCons -> TyConSubst -> Ct -> [NatCt]
+toNatEquality opts tcs givensTyConSubst ct0
   | Just (((x,y), mbLTE), cos0) <- isNatRel tcs givensTyConSubst pred0
   , let
       ((x', cos1),k1) = runWriter (normaliseNat x)
       ((y', cos2),k2) = runWriter (normaliseNat y)
-      ks      = k1 ++ k2
+      preds = subToPred opts tcs (k1 ++ k2)
   = case mbLTE of
       Nothing ->
         -- Equality constraint: x ~ y
-        [(Left (ct0, x', y'), ks, cos0 ++ cos1 ++ cos2)]
+        [NatCt (Left (ct0, x', y')) preds (cos0 ++ cos1 ++ cos2)]
       Just b ->
         -- Inequality constraint: (x <=? y) ~ b
-        [(Right (ct0, (x', y', b)), ks, cos0 ++ cos1 ++ cos2)]
+        [NatCt (Right (ct0, (x', y', b))) preds (cos0 ++ cos1 ++ cos2)]
   | otherwise
   = case classifyPredType pred0 of
       EqPred NomEq t1 t2
@@ -685,12 +780,13 @@ toNatEquality tcs givensTyConSubst ct0
         | isGiven (ctEvidence ct0)
         , className kn == knownNatClassName
         , let ((x', cos0), ks) = runWriter (normaliseNat x)
-        -> [(Right (ct0, (S [], x', True)), ks, cos0)]
+        , let preds = subToPred opts tcs ks
+        -> [NatCt (Right (ct0, (S [], x', True))) preds cos0]
       _ -> []
   where
     pred0 = ctPred ct0
     -- x ~ y
-    goNomEq :: Type -> Type -> [(Either NatEquality NatInEquality, [(Type,Type)], [Coercion])]
+    goNomEq :: Type -> Type -> [NatCt]
     goNomEq lhs rhs
       -- Recur into a TyCon application for TyCons that we **do not** rewrite,
       -- e.g. peek inside the Maybe in 'Maybe (x + y) ~ Maybe (y + x)'.
@@ -711,13 +807,14 @@ toNatEquality tcs givensTyConSubst ct0
       | otherwise
       = rewrite lhs rhs
 
-    rewrite :: Type -> Type -> [(Either NatEquality NatInEquality, [(Type,Type)], [Coercion])]
+    rewrite :: Type -> Type -> [NatCt]
     rewrite x y
       | isNatKind (typeKind x)
       , isNatKind (typeKind y)
       , let ((x', cos1),k1) = runWriter (normaliseNat x)
       , let ((y', cos2),k2) = runWriter (normaliseNat y)
-      = [(Left (ct0,x',y'),k1 ++ k2, cos1 ++ cos2)]
+      , let preds = subToPred opts tcs (k1 ++ k2)
+      = [NatCt (Left (ct0,x',y')) preds (cos1 ++ cos2)]
       | otherwise
       = []
 
@@ -737,7 +834,18 @@ unifyItemToPredType ui = mkEqPredRole Nominal ty1 ty2
 evSubtPreds :: CtLoc -> [PredType] -> TcPluginM Solve [Ct]
 evSubtPreds loc = mapM (fmap mkNonCanonical . newWanted loc)
 
-evMagic :: LookedUpTyCons -> Ct -> [Coercion] -> Set CType -> [PredType] -> TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
+evMagic ::
+  -- | Known TyCon environment
+  LookedUpTyCons ->
+  -- | Constraint for which we are creating evidence
+  Ct ->
+  -- | Coercions in which the evidence depends
+  [Coercion] ->
+  -- | Types that we should be known to be a Natural
+  Set CType ->
+  -- | Inequalities that should hold
+  [PredType] ->
+  TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
 evMagic tcs ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
   knWanted <- mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
