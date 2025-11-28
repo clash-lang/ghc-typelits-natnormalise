@@ -175,7 +175,7 @@ import Data.Foldable
 import Data.List
   ( stripPrefix, partition )
 import Data.Maybe
-  ( mapMaybe, catMaybes, fromMaybe )
+  ( mapMaybe, catMaybes, fromMaybe, isJust )
 import Data.Traversable
   ( for )
 import Text.Read
@@ -296,14 +296,30 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
       vcat [ text "givens:" <+> ppr givens ]
 
     -- Try to find contradictory Givens, to improve pattern match warnings.
-    SimplifyResult { simplifiedWanteds, contradictions } <-
+    SimplifyResult { simplifiedWanteds, contradictions, newGivens } <-
       simplifyNats opts tcs [] $
         concatMap (toNatEquality opts tcs givensTyConSubst) redGivens
+
+    -- Only enter actual new evidence into the solver loop, i.e. we could derive
+    -- a new given in our solver loop for which there already is existing evidence.
+    -- We have no use for two different proofs of the same fact.
+    let givensPreds = map (CType . ctEvPred . ctEvidence) givens
+        actuallyNewGivens =
+          filter ((`notElem` givensPreds) . CType . ctEvPred . ctEvidence) newGivens
+    -- For now, only admit improved givens in the form of `n ~ L`, where `n` is
+    -- a type variable and `L` is a numeric literal.
+    let simplNewGivens = filter
+          ( \case {EqPred NomEq t1 t2 -> isTyVarTy t1 && isJust (isNumLitTy t2); _ -> False}
+          . classifyPredType
+          . ctEvPred
+          . ctEvidence
+          ) actuallyNewGivens
 
     tcPluginTrace "decideEqualSOP Givens }" $
       vcat [ text "givens:" <+> ppr givens
            , text "simpls:" <+> ppr simplifiedWanteds
            , text "contra:" <+> ppr contradictions
+           , text "new:" <+> ppr simplNewGivens
            ]
     return $
       mkTcPluginSolveResult
@@ -313,7 +329,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
         []
 #endif
         [] -- no solved Givens
-        [] -- no new Givens
+        simplNewGivens
 
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
@@ -491,12 +507,15 @@ data SimplifyResult
      --   * Preconditions (in the for of new Wanteds)
      , contradictions :: [Either NatEquality NatInEquality]
      -- ^ List of contradictions
+     , newGivens :: [Ct]
+     -- ^ Givens derived in the improve givens stage
      }
 
 instance Outputable SimplifyResult where
-  ppr (SimplifyResult { simplifiedWanteds, contradictions }) =
+  ppr (SimplifyResult { simplifiedWanteds, contradictions, newGivens }) =
     text "SimplifyResult { simplified =" <+> ppr simplifiedWanteds
-               <+> text ", impossible =" <+> ppr contradictions <+> text "}"
+               <+> text ", impossible =" <+> ppr contradictions
+               <+> text ", new_givens =" <+> ppr newGivens <+> text "}"
 
 data NatCt
   = NatCt
@@ -531,6 +550,9 @@ data SimplifyState
   , unsolved :: [NatCt]
     -- ^ Tried, but unsolved predicates. We keep them around in case we solve a
     -- new predicate which could lead to a substitution that enables a solve.
+  , derivedGivens :: [Ct]
+    -- ^ Unifiers derived from Givens. E.g. when we have /[G] x ^ n ~ 1/, this
+    -- field will hold a derived /[G] n ~ 0/.
   }
 
 emptySimplifyState :: SimplifyState
@@ -541,6 +563,7 @@ emptySimplifyState
   , evs = []
   , leqsG = []
   , unsolved = []
+  , derivedGivens = []
   }
 
 simplifyNats
@@ -570,16 +593,19 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
           tcPluginTrace "simplifyNats" (ppr eqs)
           evalStateT (simples eqs) emptySimplifyState
 
-        pure (foldr findFirstSimpliedWanted (SimplifyResult [] []) allSimplified)
+        pure (foldr findFirstSimpliedWanted (SimplifyResult [] [] []) allSimplified)
   where
     simples ::
       [NatCt] ->
       StateT SimplifyState (TcPluginM Solve) SimplifyResult
     simples [] = do
-      SimplifyState{evs} <- get
-      return (SimplifyResult evs [])
+      SimplifyState{evs, derivedGivens} <- get
+      return SimplifyResult { simplifiedWanteds = evs
+                            , contradictions = []
+                            , newGivens = derivedGivens
+                            }
     simples (eq@NatCt{predicate=(Left (ct,u,v)), preconds, ctDeps}:eqs) = do
-      SimplifyState{stDeps, subst, evs, leqsG, unsolved} <- get
+      SimplifyState{stDeps, subst, evs, leqsG, unsolved, derivedGivens} <- get
       let allDeps = stDeps ++ ctDeps
 
       let u' = substsSOP subst u
@@ -621,10 +647,12 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
               -- when it has no preconditions in order for this unification to
               -- hold. The reason for that is that we can currently not record
               -- new Wanteds to be emitted at the end of the solve.
+              givensU <- lift (mapM (unifyItemToGiven (ctLoc ct) allDeps) unifications)
               modify (\s -> s { stDeps = stDeps1
                               , subst = subst1
                               , leqsG = eqToLeq u' v' ++ leqsG
                               , unsolved = []
+                              , derivedGivens = givensU ++ derivedGivens
                               })
               simples (unsolved ++ eqs)
             else
@@ -835,6 +863,20 @@ unifyItemToPredType ui = mkEqPredRole Nominal ty1 ty2
     ty2 = case ui of
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
+
+
+unifyItemToGiven :: CtLoc -> [Coercion] -> CoreUnify -> TcPluginM Solve Ct
+unifyItemToGiven loc deps ui = mkNonCanonical <$> newGiven loc pty (EvExpr (Coercion co))
+  where
+    ty1 = case ui of
+            SubstItem {..} -> mkTyVarTy siVar
+            UnifyItem {..} -> reifySOP siLHS
+    ty2 = case ui of
+            SubstItem {..} -> reifySOP siSOP
+            UnifyItem {..} -> reifySOP siRHS
+
+    pty = mkEqPredRole Nominal ty1 ty2
+    co = mkPluginUnivCo "ghc-typelits-natnormalise" Nominal deps ty1 ty2
 
 evSubtPreds :: CtLoc -> [PredType] -> TcPluginM Solve [Ct]
 evSubtPreds loc = mapM (fmap mkNonCanonical . newWanted loc)
