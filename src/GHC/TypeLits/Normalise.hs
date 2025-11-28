@@ -143,6 +143,7 @@ xs :: OptVector t (n-l)
 where /n-l/ is a negative number.
 -}
 
+{-# LANGUAGE CPP                   #-}
 {-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE ExplicitNamespaces    #-}
@@ -306,7 +307,11 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
            ]
     return $
       mkTcPluginSolveResult
+#if MIN_VERSION_ghc(9,14,0)
         ( map fromNatEquality contradictions )
+#else
+        []
+#endif
         [] -- no solved Givens
         [] -- no new Givens
 
