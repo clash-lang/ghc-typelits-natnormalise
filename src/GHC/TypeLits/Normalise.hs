@@ -206,7 +206,7 @@ import GHC.TcPlugin.API
 import GHC.TcPlugin.API.TyConSubst
   ( TyConSubst, mkTyConSubst )
 import GHC.Plugins
-  ( Plugin(..), defaultPlugin, purePlugin )
+  ( Plugin(..), defaultPlugin, purePlugin, allVarSet, isEmptyVarSet, tyCoVarsOfType )
 import GHC.Utils.Outputable
 
 -- ghc-typelits-natnormalise
@@ -835,8 +835,37 @@ toNatEquality opts tcs givensTyConSubst ct0
                 case tyConInjectivityInfo tc of
                   Injective inj ->
                     filterByList (inj ++ repeat True) xys
-                  _ -> drop (tyConArity tc) xys
-      = concatMap (uncurry rewrite) subs
+                  _ ->
+                    -- However, it is okay to recur in the following specific
+                    -- exception:
+                    let (tcArgs,rest) = splitAt (tyConArity tc) xys
+                        diffs = filter (not . uncurry eqType) tcArgs
+                     in case diffs of
+                            -- 1. The types only differ in one argument position
+                          [(x,y)]
+                            | let xFVs = tyCoVarsOfType x
+                            , let yFVs = tyCoVarsOfType y
+                            -- 2. The argument must have variables, and they must
+                            -- all be skolem variables.
+                            , not (isEmptyVarSet xFVs)
+                            , allVarSet isSkolemTyVar xFVs
+                            -- 3. The variables in both argument postions must
+                            -- be the same.
+                            , xFVs == yFVs
+                            -> (x,y):rest
+                          _ -> rest
+      = case concatMap (uncurry rewrite) subs of
+          [] -> []
+          [rw] -> [rw]
+          rws ->
+            -- For Given Cts, it's fine to extract multiple (in)equalities. However,
+            -- for Wanted Cts we should not claim to solve the entire Ct when we
+            -- only solve a part of the Ct. So when we can extra two or more inequalities
+            -- from a Wanted Ct, we conservatively choose not to solve any of them.
+            if isGiven (ctEvidence ct0) then
+              rws
+            else
+              []
       | otherwise
       = rewrite lhs rhs
 
