@@ -640,6 +640,7 @@ tests = testGroup "ghc-typelits-natnormalise"
         testProxy15 (Proxy :: Proxy 1) `throws` testProxy15Errors
     , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
     , testCase "Do not unify in non-injective positions" $ t99 `throws` t99_errors
+    , testCase "Do not rewrite constraint to itself" $ t113 `throws` t113_errors
     , testGroup "Inequality"
       [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
       , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
