@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## 0.9.3
+## 0.9.3 *December 2nd 2025*
 * Fixes [#114](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Poor error message in plugin version 0.8 and higher
 * Fixes [#113](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Wanted contraints rewrites to itself, leading to infinite solver iterations
 
