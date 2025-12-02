@@ -512,6 +512,15 @@ oneLtPowSubst = go
     go :: 1 <= b => Proxy a -> Proxy a
     go = id
 
+isOkay ::
+  forall x y sh .
+  Proxy x ->
+  Proxy y ->
+  Proxy sh ->
+  Proxy (Drop (x + y) sh) ->
+  Proxy (Drop (y + x) sh)
+isOkay _ _ _ px = px
+
 main :: IO ()
 main = defaultMain tests
 
@@ -555,6 +564,9 @@ tests = testGroup "ghc-typelits-natnormalise"
       "Proxy"
     , testCase "(((2 ^ x) - 2) * (2 ^ (x + x))) ~ ((2 ^ ((x + (x + x)) - 1)) + ((2 ^ ((x + (x + x)) - 1)) - (2 ^ ((x + x) + 1))))" $
       show (proxyEq2 @2 Proxy) @?=
+      "Proxy"
+    , testCase "Unify in non-injective positions under specific conditions" $
+      show (isOkay @2 @3 @'[] Proxy Proxy Proxy Proxy) @?=
       "Proxy"
     ]
   , testGroup "Implications"

@@ -555,10 +555,12 @@ unifiers' ct (S [p2]) (S [P [E s1 p1]])
 -- Where 'a' is a variable, 'i' and 'j' are integer literals, and j `mod` i == 0
 unifiers' ct (S [P ((I i):ps)]) (S [P [I j]])
   | Just k <- safeDiv j i
+  , not (null ps)
   = unifiers' ct (S [P ps]) (S [P [I k]])
 
 unifiers' ct (S [P [I j]]) (S [P ((I i):ps)])
   | Just k <- safeDiv j i
+  , not (null ps)
   = unifiers' ct (S [P ps]) (S [P [I k]])
 
 -- (2*a) ~ (2*b) ==> [a := b]
