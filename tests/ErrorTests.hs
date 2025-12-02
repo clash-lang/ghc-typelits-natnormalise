@@ -592,3 +592,21 @@ t99_errors =
      )
   ]
 #endif
+
+t113 :: Proxy a -> Proxy b -> Proxy ((2 * a) + b) -> Proxy 5
+t113 _ _ = id
+
+t113_errors =
+#if __GLASGOW_HASKELL__ >= 914
+  ["Expected: Proxy 5"
+  ,"  Actual: Proxy ((2 * a) + b)"
+  ]
+#elif __GLASGOW_HASKELL__ >= 900
+  ["Expected: Proxy ((2 * a) + b) -> Proxy 5"
+  ,"  Actual: Proxy 5 -> Proxy 5"
+  ]
+#else
+  ["Expected type: Proxy ((2 * a) + b) -> Proxy 5"
+  ,"Actual type: Proxy 5 -> Proxy 5"
+  ]
+#endif

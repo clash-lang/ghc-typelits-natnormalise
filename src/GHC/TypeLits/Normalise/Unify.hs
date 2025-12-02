@@ -9,6 +9,7 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ViewPatterns               #-}
 {-# LANGUAGE TupleSections              #-}
 
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
@@ -52,7 +53,7 @@ import Control.Monad
 import Data.Either
   ( partitionEithers )
 import Data.List
-  ( (\\), intersect, nub )
+  ( (\\), intersect, nub, sort )
 import Data.Maybe
   ( fromMaybe, mapMaybe, isJust )
 import GHC.Base
@@ -306,7 +307,15 @@ simplifyIneq ineq@(x, y, isLE)
     else Just (x', y', isLE)
   where
     S ps = subtractIneq ineq
-    (neg, pos) = partitionEithers $ map classify ps
+    -- We need to sort the products in order to retain our canonical form,
+    -- not sorting would result in the following rewrite:
+    --
+    -- 2 * a + b ~ 5  ==>
+    -- 5 + -1 * b + -2 * a ==>
+    -- b + 2 * a ~ 5
+    --
+    -- Which lead to issue #113
+    (sort -> neg, sort -> pos) = partitionEithers $ map classify ps
     (x', y') =
       if isLE
       then ( S neg, S pos )
