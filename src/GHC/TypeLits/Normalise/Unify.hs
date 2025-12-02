@@ -615,7 +615,11 @@ unifiers' ct s1@(S ps1) s2@(S ps2)
           | otherwise = ps2'
     psx = intersect ps1 ps2
 
-unifiers' _ s1 s2 = return [UnifyItem s1 s2]
+-- Don't generate unify items where one of the sides is an empty sum (i.e.) zero
+-- Doing so leads to poor error messages, see #114
+unifiers' _ (S []) _ = return []
+unifiers' _ _ (S []) = return []
+unifiers' _ s1 s2    = return [UnifyItem s1 s2]
 
 -- | Try to match the two expressions term-by-term.
 -- If this produces a **single unifier**, then we succeed.

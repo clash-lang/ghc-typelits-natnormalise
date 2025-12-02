@@ -105,16 +105,16 @@ testProxy4 = proxyFun4
 
 testProxy4Errors =
 #if __GLASGOW_HASKELL__ >= 914
-  ["Expected: Proxy ((2 * 0) + 4)"
+  ["Expected: Proxy ((2 * y0) + 4)"
   ,"  Actual: Proxy 2"
   ]
 #elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 2 -> ()"
-  ,"  Actual: Proxy ((2 * 0) + 4) -> ()"
+  ,"  Actual: Proxy ((2 * y0) + 4) -> ()"
   ]
 #else
   ["Expected type: Proxy 2 -> ()"
-  ,"Actual type: Proxy ((2 * 0) + 4) -> ()"
+  ,"Actual type: Proxy ((2 * y0) + 4) -> ()"
   ]
 #endif
 
@@ -123,16 +123,16 @@ testProxy5 = proxyFun4
 
 testProxy5Errors =
 #if __GLASGOW_HASKELL__ >= 914
-  ["Expected: Proxy ((2 * y0) + 4)"
+  ["Expected: Proxy ((2 * y1) + 4)"
   ,"  Actual: Proxy 7"
   ]
 #elif __GLASGOW_HASKELL__ >= 900
   ["Expected: Proxy 7 -> ()"
-  ,"  Actual: Proxy ((2 * y0) + 4) -> ()"
+  ,"  Actual: Proxy ((2 * y1) + 4) -> ()"
   ]
 #else
   ["Expected type: Proxy 7 -> ()"
-  ,"Actual type: Proxy ((2 * y0) + 4) -> ()"
+  ,"Actual type: Proxy ((2 * y1) + 4) -> ()"
   ]
 #endif
 
