@@ -37,7 +37,7 @@ import qualified Prelude as P
 import Data.Type.Ord
 #endif
 
-import Data.Kind (Type)
+import Data.Kind (Type, Constraint)
 import Data.List (isInfixOf)
 import Data.Proxy
 import Control.Exception
@@ -521,6 +521,23 @@ isOkay ::
   Proxy (Drop (y + x) sh)
 isOkay _ _ _ px = px
 
+type family Foo (a :: Nat) :: Nat where
+  Foo 2 = 2
+
+constraintSolvesUnitConstraintUnderTyFam ::
+  (1 <= a) =>
+  (1 <= Foo (a + 1)) =>
+  Proxy a ->
+  Proxy a
+constraintSolvesUnitConstraintUnderTyFam a = go a
+  where
+    go ::
+      ((1 <= Foo (c + 1)) ~ (() :: Constraint)) =>
+      Proxy c ->
+      Proxy c
+    go _ = Proxy
+
+
 main :: IO ()
 main = defaultMain tests
 
@@ -626,6 +643,9 @@ tests = testGroup "ghc-typelits-natnormalise"
       "()"
     , testCase "b ~ (2^a) => 1 <= b" $
       show (oneLtPowSubst (Proxy :: Proxy 0)) @?=
+      "Proxy"
+    , testCase "1 <= Foo (c + 1) => (1 <= Foo (c + 1)) ~ (() :: Constraint)" $
+      show (constraintSolvesUnitConstraintUnderTyFam (Proxy :: Proxy 1)) @?=
       "Proxy"
     ]
   , testGroup "errors"

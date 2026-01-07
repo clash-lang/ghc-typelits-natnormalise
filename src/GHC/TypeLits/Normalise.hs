@@ -168,7 +168,7 @@ import Control.Arrow
 import Control.Monad
   ( (<=<), unless )
 import Control.Monad.Trans.Writer.Strict
-  ( WriterT(runWriterT), runWriter )
+  ( Writer, WriterT(runWriterT), runWriter )
 import Data.Either
   ( rights, partitionEithers )
 import Data.Foldable
@@ -793,8 +793,8 @@ toNatEquality :: Opts -> LookedUpTyCons -> TyConSubst -> Ct -> [NatCt]
 toNatEquality opts tcs givensTyConSubst ct0
   | Just (((x,y), mbLTE), cos0) <- isNatRel tcs givensTyConSubst pred0
   , let
-      ((x', cos1),k1) = runWriter (normaliseNat x)
-      ((y', cos2),k2) = runWriter (normaliseNat y)
+      ((x', cos1),k1) = runWriter (normaliseNatWithSubterms x)
+      ((y', cos2),k2) = runWriter (normaliseNatWithSubterms y)
       preds = subToPred opts tcs (k1 ++ k2)
   = case mbLTE of
       Nothing ->
@@ -812,7 +812,7 @@ toNatEquality opts tcs givensTyConSubst ct0
         -- See https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94.
         | isGiven (ctEvidence ct0)
         , className kn == knownNatClassName
-        , let ((x', cos0), ks) = runWriter (normaliseNat x)
+        , let ((x', cos0), ks) = runWriter (normaliseNatWithSubterms x)
         , let preds = subToPred opts tcs ks
         -> [NatCt (Right (ct0, (S [], x', True))) preds cos0]
       _ -> []
@@ -873,12 +873,19 @@ toNatEquality opts tcs givensTyConSubst ct0
     rewrite x y
       | isNatKind (typeKind x)
       , isNatKind (typeKind y)
-      , let ((x', cos1),k1) = runWriter (normaliseNat x)
-      , let ((y', cos2),k2) = runWriter (normaliseNat y)
+      , let ((x', cos1),k1) = runWriter (normaliseNatWithSubterms x)
+      , let ((y', cos2),k2) = runWriter (normaliseNatWithSubterms y)
       , let preds = subToPred opts tcs (k1 ++ k2)
       = [NatCt (Left (ct0,x',y')) preds (cos1 ++ cos2)]
       | otherwise
       = []
+
+    normaliseNatWithSubterms :: Type -> Writer [(Type, Type)] (CoreSOP, [Coercion])
+    normaliseNatWithSubterms ty = do
+      tyM <- normaliseNatEverywhere ty
+      let (ty1, cos0) = fromMaybe (ty, []) tyM
+      (sop, cos1) <- normaliseNat ty1
+      pure (sop, cos0 ++ cos1)
 
     isNatKind :: Kind -> Bool
     isNatKind = (`eqType` natKind)
