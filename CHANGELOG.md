@@ -2,6 +2,8 @@
 
 ## Unreleased
 * Fixes [#116](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Compile-time loop when processing Given constraints.
+* Fixes [#119](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/119) solving constraints involving type families applied to normalised Nat expressions (e.g. `Foo (a + b)`).
+
 
 ## 0.9.3 *December 2nd 2025*
 * Fixes [#114](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Poor error message in plugin version 0.8 and higher
