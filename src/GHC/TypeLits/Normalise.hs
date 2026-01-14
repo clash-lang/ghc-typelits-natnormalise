@@ -300,26 +300,43 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
       simplifyNats opts tcs [] $
         concatMap (toNatEquality opts tcs givensTyConSubst) redGivens
 
-    -- Only enter actual new evidence into the solver loop, i.e. we could derive
-    -- a new given in our solver loop for which there already is existing evidence.
-    -- We have no use for two different proofs of the same fact.
-    let givensPreds = map (CType . ctEvPred . ctEvidence) givens
-        actuallyNewGivens =
-          filter ((`notElem` givensPreds) . CType . ctEvPred . ctEvidence) newGivens
-    -- For now, only admit improved givens in the form of `n ~ L`, where `n` is
-    -- a type variable and `L` is a numeric literal.
-    let simplNewGivens = filter
-          ( \case {EqPred NomEq t1 t2 -> isTyVarTy t1 && isJust (isNumLitTy t2); _ -> False}
-          . classifyPredType
-          . ctEvPred
-          . ctEvidence
-          ) actuallyNewGivens
+    -- Only add new Givens that are genuinely new, i.e. that GHC doesn't
+    -- already know.
+    --
+    -- For example, in #116 we had: [G] m ~ n, [G] n ~ 0. Recalling that
+    -- the inert set in GHC is a /not necessarily idempotent/ terminating
+    -- generalised substitution (see Note [The KickOut Criteria] in GHC.Tc.Solver.InertSet),
+    -- we don't want to emit a new Given [G] m ~ 0: GHC already knows this, and
+    -- if we repeatedly emit this Given we will cause a typechecker loop (as in #116).
+    let
+      isSolvedGiven subst ct =
+        case classifyPredType $ substTy subst (ctPred ct) of
+          EqPred _rel t1 t2 -> t1 `eqType` t2
+          _ -> False
+      tyEqLit ct =
+        case classifyPredType (ctPred ct) of
+          EqPred NomEq t1 t2 -> isTyVarTy t1 && isJust (isNumLitTy t2)
+          _ -> False
+      givensSubst = ctsSubst givens -- Computes the idempotent substitution from the Givens
+      actuallyNewGivens =
+        filter
+          (\ ct ->
+            tyEqLit ct
+              -- For now, only admit improved Givens in the form of `n ~ L`,
+              -- where `n` is a type variable and `L` is a numeric literal.
+              &&
+            not (isSolvedGiven givensSubst ct)
+              -- Ensure this Given is genuinely new information to GHC, to
+              -- avoid repeatedly emitting facts that GHC already knows,
+              -- which can cause the typechecker to loop (#116).
+          )
+          newGivens
 
     tcPluginTrace "decideEqualSOP Givens }" $
       vcat [ text "givens:" <+> ppr givens
            , text "simpls:" <+> ppr simplifiedWanteds
            , text "contra:" <+> ppr contradictions
-           , text "new:" <+> ppr simplNewGivens
+           , text "new:" <+> ppr actuallyNewGivens
            ]
     return $
       mkTcPluginSolveResult
@@ -329,7 +346,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
         []
 #endif
         [] -- no solved Givens
-        simplNewGivens
+        actuallyNewGivens
 
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
