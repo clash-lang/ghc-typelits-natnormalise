@@ -37,7 +37,7 @@ import qualified Prelude as P
 import Data.Type.Ord
 #endif
 
-import Data.Kind (Type)
+import Data.Kind (Type, Constraint)
 import Data.List (isInfixOf)
 import Data.Proxy
 import Data.Type.Equality ((:~:)(..))
@@ -810,3 +810,24 @@ t116 a b c =
           case c of
             Refl ->
               3.0
+
+type family Foo (n :: Nat) :: Nat
+
+t119a :: Proxy n -> Proxy (Foo (n + 2)) -> Proxy (Foo (2 + n))
+t119a _ = id
+
+--Only applicable for GHC >= 9.4 as prior InEq constraints are of the form `a <=? b ~ 'True`
+#if __GLASGOW_HASKELL__ >= 904
+t119b ::
+  (1 <= a) =>
+  (1 <= Foo (a + 1)) =>
+  Proxy a ->
+  Proxy a
+t119b a = go a
+  where
+    go ::
+      ((1 <= Foo (c + 1)) ~ (() :: Constraint)) =>
+      Proxy c ->
+      Proxy c
+    go _ = Proxy
+#endif

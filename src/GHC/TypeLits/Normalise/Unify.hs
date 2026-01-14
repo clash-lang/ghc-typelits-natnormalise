@@ -106,12 +106,7 @@ type CoreSOP     = SOP TyVar CType
 type CoreProduct = Product TyVar CType
 type CoreSymbol  = Symbol TyVar CType
 
--- | Convert a type of /kind/ 'GHC.TypeLits.Nat' to an 'SOP' term, but
--- only when the type is constructed out of:
---
--- * literals
--- * type variables
--- * Applications of the arithmetic operators @(+,-,*,^)@
+-- | Convert a type of /kind/ 'GHC.TypeLits.Nat' to an 'SOP' term
 normaliseNat :: Type -> Writer [(Type,Type)] (CoreSOP, [Coercion])
 normaliseNat ty
   | Just (tc, xs) <- splitTyConApp_maybe ty
@@ -143,7 +138,8 @@ normaliseNat ty
              (y', cos2) <- normaliseNat y
              return (normaliseExp x' y', cos1 ++ cos2)
       goTyConApp tc xs
-        = return (S [P [C (CType $ mkTyConApp tc xs)]], [])
+        = do (xs', cos') <- fmap unzip (traverse normaliseSimplifyNat xs)
+             return (S [P [C (CType (mkTyConApp tc xs'))]], concat cos')
 
 knownTyCons :: [TyCon]
 knownTyCons = [typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon, typeNatAddTyCon]
