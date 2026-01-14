@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                ghc-typelits-natnormalise
-version:             0.9.3
+version:             0.9.4
 synopsis:            GHC typechecker plugin for types of kind GHC.TypeLits.Nat
 description:
   A type checker plugin for GHC that can solve /equalities/ and /inequalities/
@@ -70,7 +70,7 @@ library
   build-depends:       base                >=4.9   && <5,
                        containers          >=0.5.7.1 && <0.9,
                        ghc                 >=8.8.1 && <9.15,
-                       ghc-tcplugin-api    >=0.18.0 && <0.19,
+                       ghc-tcplugin-api    >=0.18.2 && <0.19,
                        transformers        >=0.5.2.0 && < 0.7
   if impl(ghc >= 9.0.0)
     build-depends:     ghc-bignum >=1.0 && <1.5

@@ -40,6 +40,7 @@ import Data.Type.Ord
 import Data.Kind (Type)
 import Data.List (isInfixOf)
 import Data.Proxy
+import Data.Type.Equality ((:~:)(..))
 import Control.Exception
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -798,3 +799,14 @@ t97b
      )
   => Proxy n -> Proxy m -> ()
 t97b _ _ = ()
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/116
+t116 :: forall n m l. m :~: n -> n :~: 0 -> l :~: 1 -> Float
+t116 a b c =
+  case a of
+    Refl ->
+      case b of
+        Refl ->
+          case c of
+            Refl ->
+              3.0
