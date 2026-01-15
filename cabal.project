@@ -1,3 +1,5 @@
+write-ghc-environment-files: always
+
 packages: ./ghc-typelits-natnormalise.cabal
 
 package ghc-typelits-natnormalise

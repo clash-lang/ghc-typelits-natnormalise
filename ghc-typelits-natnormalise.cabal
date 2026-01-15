@@ -100,12 +100,15 @@ library
 test-suite unit-tests
   type:                exitcode-stdio-1.0
   main-is:             Tests.hs
-  Other-Modules:       ErrorTests
+  Other-Modules:       ShouldError
+                       ShouldError.Tasty
   build-depends:       base >=4.8 && <5,
                        ghc-typelits-natnormalise,
+                       interpolate,
+                       process,
                        tasty >= 0.10,
                        tasty-hunit >= 0.9,
-                       template-haskell >= 2.11.0.0
+                       temporary
   if impl(ghc >= 9.4)
     build-depends:     ghc-prim >= 0.9
   hs-source-dirs:      tests
@@ -114,7 +117,6 @@ test-suite unit-tests
                        GADTs
                        KindSignatures
                        NoImplicitPrelude
-                       TemplateHaskell
                        TypeFamilies
                        TypeOperators
                        ScopedTypeVariables
