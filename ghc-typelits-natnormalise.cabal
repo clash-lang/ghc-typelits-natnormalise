@@ -46,7 +46,7 @@ copyright:           Copyright © 2015-2016, University of Twente,
                                  2017-2018, QBayLogic B.V.
 category:            Type System
 build-type:          Simple
-extra-source-files:  README.md
+extra-doc-files:     README.md
                      CHANGELOG.md
 tested-with:         GHC == 8.8.4, GHC == 8.10.7, GHC == 9.0.2, GHC == 9.2.8,
                      GHC == 9.4.8, GHC == 9.6.7, GHC == 9.8.4, GHC == 9.10.2,
@@ -100,23 +100,26 @@ library
 test-suite unit-tests
   type:                exitcode-stdio-1.0
   main-is:             Tests.hs
-  Other-Modules:       ErrorTests
+  Other-Modules:       ShouldError
+                       ShouldError.Tasty
   build-depends:       base >=4.8 && <5,
                        ghc-typelits-natnormalise,
+                       interpolate,
+                       process,
                        tasty >= 0.10,
                        tasty-hunit >= 0.9,
-                       template-haskell >= 2.11.0.0
+                       temporary
   if impl(ghc >= 9.4)
     build-depends:     ghc-prim >= 0.9
   hs-source-dirs:      tests
+  ghc-options:         -Wall
   default-language:    Haskell2010
   other-extensions:    DataKinds
                        GADTs
                        KindSignatures
                        NoImplicitPrelude
-                       TemplateHaskell
                        TypeFamilies
                        TypeOperators
                        ScopedTypeVariables
   if flag(deverror)
-    ghc-options:       -dcore-lint
+    ghc-options:       -Werror -dcore-lint

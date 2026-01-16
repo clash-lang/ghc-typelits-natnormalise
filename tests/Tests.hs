@@ -38,14 +38,12 @@ import Data.Type.Ord
 #endif
 
 import Data.Kind (Type, Constraint)
-import Data.List (isInfixOf)
 import Data.Proxy
 import Data.Type.Equality ((:~:)(..))
-import Control.Exception
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import ErrorTests
+import qualified ShouldError
 
 data Vec :: Nat -> Type -> Type where
   Nil  :: Vec 0 a
@@ -309,6 +307,15 @@ predBNat (B1 a) = case a of
   a' -> B0 a'
 predBNat (B0 x)  = B1 (predBNat x)
 
+proxyFun3 :: Proxy (x + x + x) -> ()
+proxyFun3 = const ()
+
+proxyFun4 :: Proxy ((2*y)+4) -> ()
+proxyFun4 = const ()
+
+proxyFun7 :: Proxy (2^k) -> Proxy k
+proxyFun7 = const Proxy
+
 -- issue 52 begin
 type role Signal nominal representational
 data Signal (dom :: Symbol) a = a :- Signal dom a
@@ -325,6 +332,16 @@ instance Bundle (Signal dom) (a,b) (Signal dom a, Signal dom b)
 issue52 :: (1 <= n, KnownNat n) => (Signal dom (),Signal dom (BitVector (n-1+1))) -> Signal dom ((),BitVector n)
 issue52 = bundle
 -- issue 52 end
+
+#if __GLASGOW_HASKELL__ >= 904
+proxyInEq :: ((a <= b) ~ (() :: Constraint)) => Proxy (a :: Nat) -> Proxy b -> ()
+#else
+proxyInEq :: (a <= b) => Proxy (a :: Nat) -> Proxy b -> ()
+#endif
+proxyInEq _ _ = ()
+
+proxyInEq' :: ((a <=? b) ~ 'False) => Proxy (a :: Nat) -> Proxy b -> ()
+proxyInEq' _ _ = ()
 
 proxyInEq1 :: Proxy a -> Proxy (a+1) -> ()
 proxyInEq1 = proxyInEq
@@ -454,6 +471,14 @@ instance Show (AtMost n) where
 succAtMost :: AtMost n -> AtMost (n + 1)
 succAtMost (AtMost (Proxy :: Proxy a)) = AtMost (Proxy :: Proxy a)
 
+data Dict c where
+  Dict :: c => Dict c
+
+instance Show (Dict c) where
+  show Dict = "Dict"
+
+data Boo (n :: Nat) = Boo
+
 eqReduceForward
   :: Eq (Boo (n + 1))
   => Dict (Eq (Boo (n + 2 - 1)))
@@ -473,6 +498,9 @@ eqReduceBackward'
   :: (Eq (Boo (1 + m + 2)))
   => Dict (Eq (Boo (m + 3)))
 eqReduceBackward' = Dict
+
+type family CLog (b :: Nat) (x :: Nat) :: Nat
+type instance CLog 2 2 = 1
 
 proxyInEq8fun
   :: (1 <= (n + CLog 2 n))
@@ -512,6 +540,11 @@ oneLtPowSubst = go
   where
     go :: 1 <= b => Proxy a -> Proxy a
     go = id
+
+type family Drop (n :: Nat) (xs :: [Nat]) :: [Nat] where
+  Drop 0 xs = xs
+  Drop n (x ': xs) = Drop (n-1) xs
+  Drop n '[] = '[]
 
 isOkay ::
   forall x y sh .
@@ -629,46 +662,8 @@ tests = testGroup "ghc-typelits-natnormalise"
       show (oneLtPowSubst (Proxy :: Proxy 0)) @?=
       "Proxy"
     ]
-  , testGroup "errors"
-    [ testCase "x + 2 ~ 3 + x" $ testProxy1 `throws` testProxy1Errors
-    , testCase "GCD 6 8 + x ~ x + GCD 9 6" $ testProxy2 `throws` testProxy2Errors
-    , testCase "Unify \"x + x + x\" with \"8\"" $ testProxy3 `throws` testProxy3Errors
-    , testCase "Unify \"(2*x)+4\" with \"2\"" $ testProxy4 `throws` testProxy4Errors
-    , testCase "Unify \"(2*x)+4\" with \"7\"" $ testProxy5 `throws` testProxy5Errors
-    , testCase "Unify \"2^k\" with \"7\"" $ testProxy6 `throws` testProxy6Errors
-    , testCase "x ~ y + x" $ testProxy8 `throws` testProxy8Errors
-    , testCase "(CLog 2 (2 ^ n) ~ n, (1 <=? n) ~ True) => n ~ (n+d)" $
-        testProxy15 (Proxy :: Proxy 1) `throws` testProxy15Errors
-    , testCase "(n - 1) + 1 ~ n implies (1 <= n)" $ test16 `throws` test16Errors
-    , testCase "Do not unify in non-injective positions" $ t99 `throws` t99_errors
-    , testCase "Do not rewrite constraint to itself" $ t113 `throws` t113_errors
-    , testGroup "Inequality"
-      [ testCase "a+1 <= a" $ testProxy9 `throws` testProxy9Errors
-      , testCase "(a <=? a+1) ~ False" $ testProxy10 `throws` testProxy10Errors
-      , testCase "(a <=? a) ~ False" $ testProxy11 `throws` testProxy11Errors
-      , testCase "() => (a+b <= a+c)" $ testProxy12 `throws` testProxy12Errors
-      , testCase "4a <= 2a" $ testProxy13 `throws` testProxy13Errors
-      , testCase "2a <=? 4a ~ False" $ testProxy14 `throws` testProxy14Errors
-      , testCase "Show (Boo n) => Show (Boo (n - 1 + 1))" $
-          testProxy17 `throws` test17Errors
-      , testCase "1 <= m, m <= rp implies 1 <= rp - m" $ (testProxy19 (Proxy @1) (Proxy @1)) `throws` test19Errors
-      , testCase "Vacuously: 1 <= m ^ 2 ~ True" $ testProxy20 `throws` testProxy20Errors
-      ]
-    ]
+  , ShouldError.tests
   ]
-
--- | Assert that evaluation of the first argument (to WHNF) will throw
--- an exception whose string representation contains the given
--- substrings.
-throws :: a -> [String] -> Assertion
-throws v xs = do
-  result <- try (evaluate v)
-  case result of
-    Right _ -> assertFailure "No exception!"
-    Left (TypeError msg) ->
-      if all (`isInfixOf` msg) xs
-         then return ()
-         else assertFailure msg
 
 showFin :: forall n. KnownNat n => Fin n -> String
 showFin f = mconcat [
@@ -680,6 +675,10 @@ showFin f = mconcat [
 finToInt :: Fin n -> Int
 finToInt FZ      = 0
 finToInt (FS fn) = finToInt fn + 1
+
+data Fin (n :: Nat) where
+  FZ :: Fin (n + 1)
+  FS :: Fin n -> Fin (n + 1)
 
 predFin :: Fin (n + 2) -> Fin (n + 1)
 predFin (FS fn) = fn
