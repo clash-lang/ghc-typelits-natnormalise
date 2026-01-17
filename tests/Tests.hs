@@ -486,6 +486,20 @@ proxyInEq8
   -> Proxy n
 proxyInEq8 = proxyInEq8fun
 
+type family Stuck (n :: Nat) :: Nat
+
+proxyInEqStuckNatFun
+  :: 1 <= (1 + Stuck a)
+  => Proxy n
+  -> Proxy n
+proxyInEqStuckNatFun = id
+
+proxyInEqStuckNat
+  :: KnownNat (Stuck n)
+  => Proxy n
+  -> Proxy n
+proxyInEqStuckNat = proxyInEqStuckNatFun
+
 data H2 = H2 { p :: Nat }
 
 class Q (dom :: Symbol) where

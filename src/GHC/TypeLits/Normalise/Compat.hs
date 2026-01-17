@@ -42,7 +42,7 @@ import qualified GHC.TypeError
 #endif
 #if MIN_VERSION_ghc(9,1,0)
 import qualified Data.Type.Ord
-  ( OrdCond, type (<=) )
+  ( Compare, OrdCond, type (<=) )
 
 #else
 import GHC.TypeNats
@@ -55,6 +55,8 @@ import GHC.Builtin.Types
   , promotedFalseDataCon, promotedTrueDataCon
   , promotedLTDataCon, promotedEQDataCon, promotedGTDataCon
   )
+import GHC.Core.Type
+  ( coreView )
 #if MIN_VERSION_ghc(9,1,0)
 import GHC.Builtin.Types
   ( cTupleTyCon, cTupleDataCon )
@@ -88,6 +90,7 @@ data LookedUpTyCons
 #if MIN_VERSION_ghc(9,1,0)
        -- | @<= :: k -> k -> Constraint@
       ordCondTyCon :: TyCon,
+      compareTyCon :: TyCon,
       leqTyCon :: TyCon,
 #else
        -- | @<= :: Nat -> Nat -> Constraint@
@@ -109,10 +112,12 @@ lookupTyCons = do
 #if MIN_VERSION_ghc(9,1,0)
     leqT    <- lookupTHName ''(Data.Type.Ord.<=) >>= tcLookupTyCon
     ordCond <- lookupTHName ''Data.Type.Ord.OrdCond >>= tcLookupTyCon
+    cmp     <- lookupTHName ''Data.Type.Ord.Compare >>= tcLookupTyCon
     return $
       LookedUpTyCons
         { leqTyCon     = leqT
         , ordCondTyCon = ordCond
+        , compareTyCon = cmp
 #  if MIN_VERSION_ghc(9,3,0)
         , assertTyCon  = assertT
 #  endif
@@ -186,6 +191,10 @@ cmpNat_maybe tcs givensTyConSubst =
   where
     go tc [x,y]
       | tc == cmpNatTyCon tcs
+      = Just (x,y)
+    go tc [_k,x,y]
+      | tc == compareTyCon tcs
+      , all ( ( `eqType` natKind ) . typeKind ) [ x, y ]
       = Just (x,y)
     go _ _ = Nothing
 #endif
@@ -282,6 +291,12 @@ isNatRel tcs givensTyConSubst ty0
       , [ty, _] <- _tys
       = booleanRel True ty
 #endif
+#if MIN_VERSION_ghc(9,1,0)
+      | _tc == leqTyCon tcs
+      , [_k, x, y] <- _tys
+      , all ((`eqType` natKind) . typeKind) [x, y]
+      = Just (((x, y), Just True), [])
+#endif
       | otherwise
       = Nothing
 
@@ -362,7 +377,20 @@ isNatRel tcs givensTyConSubst ty0
 upToGivens :: TyConSubst -> (TyCon -> [Type] -> Maybe (a, [Coercion])) -> Type -> Maybe (a, [Coercion])
 upToGivens givensTyConSubst f ty =
   asum $ map ( \ (tc, tys, deps) -> second ( deps ++ ) <$> f tc tys ) $
-    maybe [] NE.toList $ splitTyConApp_upTo givensTyConSubst ty
+    maybe [] NE.toList $ splitTyConApp_upTo givensTyConSubst (expandSynonyms ty)
+  where
+    -- NOTE: We need to look through type synonyms here. On GHC >= 9.3, Nat
+    -- inequalities like @(0 <= t)@ are encoded as @Assert (0 <=? t) msg@, and
+    -- 'mkLEqNat' emits constraints involving @(<=)@. If we don't expand
+    -- synonyms, we may fail to recognize that @((0 <= t) ~ (() :: Constraint))@
+    -- and @(Assert ... ~ (() :: Constraint))@ encode the same Nat relation,
+    -- which can lead to non-termination of the constraint solver.
+    -- This can be removed once https://github.com/clash-lang/ghc-typelits-natnormalise/pull/121
+    -- is merged.
+    expandSynonyms t =
+      case coreView t of
+        Nothing -> t
+        Just t' -> expandSynonyms t'
 
 --------------------------------------------------------------------------------
 

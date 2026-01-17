@@ -212,7 +212,7 @@ import GHC.Utils.Outputable
 -- ghc-typelits-natnormalise
 import GHC.TypeLits.Normalise.Compat
 import GHC.TypeLits.Normalise.SOP
-  ( SOP(S), Product(P), Symbol(V) )
+  ( SOP(S), Product(P), Symbol(I, V) )
 import GHC.TypeLits.Normalise.Unify
 
 -- transformers
@@ -706,8 +706,22 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
       lift (tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs)))
       case runWriterT (isNatural u') of
         Just (True,knW)  -> do
-          evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps knW preconds)
-          modify (\s -> s {evs = evs', leqsG = leqsG'})
+          if isGiven (ctEvidence ct) then do
+            -- Do not emit Wanteds when processing a Given: GHC may re-run the
+            -- plugin repeatedly, and re-emitting the same preconditions can
+            -- cause a solver loop (repro/LoopStuck.hs).
+            --
+            -- For Givens, we only record the inequality for later use.
+            -- Only trust the Given when it has no preconditions, for the same
+            -- reason we do for equalities above: we currently have no way of
+            -- recording new Wanteds to discharge these preconditions.
+            if null preconds then
+              modify (\s -> s { leqsG = leqsG' })
+            else
+              pure ()
+          else do
+            evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps knW preconds)
+            modify (\s -> s {evs = evs', leqsG = leqsG'})
           simples eqs
 
         Just (False,_) | null preconds ->
@@ -729,11 +743,17 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
               smallest = solvedInEqSmallestConstraint solvedIneq
           case smallest of
             (True,kW) -> do
-              evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps kW preconds)
-              modify (\s -> s { stDeps = allDeps
-                              , evs = evs'
-                              , leqsG = leqsG'
-                              })
+              if isGiven (ctEvidence ct) then
+                if null preconds then
+                  modify (\s -> s { leqsG = leqsG' })
+                else
+                  pure ()
+              else do
+                evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps kW preconds)
+                modify (\s -> s { stDeps = allDeps
+                                , evs = evs'
+                                , leqsG = leqsG'
+                                })
               simples eqs
             _ -> do
               modify (\s -> s {unsolved = eq:unsolved})
@@ -831,7 +851,7 @@ toNatEquality opts tcs givensTyConSubst ct0
         , className kn == knownNatClassName
         , let ((x', cos0), ks) = runWriter (normaliseNat x)
         , let preds = subToPred opts tcs ks
-        -> [NatCt (Right (ct0, (S [], x', True))) preds cos0]
+        -> [NatCt (Right (ct0, (S [P [I 0]], x', True))) preds cos0]
       _ -> []
   where
     pred0 = ctPred ct0
@@ -941,8 +961,43 @@ evMagic ::
   TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
 evMagic tcs ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
-  knWanted <- mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
-  let newWant = knWanted ++ holeWanteds
+  let
+    loc = ctLoc ct
+    ct0_pred = ctPred ct
+    emptyTyConSubst = mkTyConSubst []
+    ct0_natrel = isNatRel tcs emptyTyConSubst ct0_pred
+
+    -- Avoid a typechecker loop when the solved constraint is itself of the form
+    -- @(0 <= ty)@ (e.g. @0 <= Stuck a@). In that case, 'knW' contains @ty@ and
+    -- we would otherwise emit the exact same Wanted again.
+    --
+    -- We cannot rely on 'eqType' alone to detect this, as GHC may have
+    -- simplified/canonicalised the original constraint (e.g. by reducing the
+    -- error-message argument to 'Assert'), while the freshly generated Wanted
+    -- is still in its synonym form.
+    --
+    -- Instead, compare the underlying Nat relation and ignore incidental
+    -- differences in error messages.
+    sameNatRelPred p1 =
+      case (isNatRel tcs emptyTyConSubst p1, ct0_natrel) of
+        (Just (rel1, _), Just (rel2, _)) -> sameRel rel1 rel2
+        _ -> False
+     where
+      sameRel ((x1, y1), mb1) ((x2, y2), mb2) =
+        mb1 == mb2 && x1 `eqType` x2 && y1 `eqType` y2
+
+    skipGe0Pred ge0_pred =
+      ge0_pred `eqType` ct0_pred || sameNatRelPred ge0_pred
+
+  ge0Wanteds <-
+    fmap catMaybes $
+      for (Set.elems knW) $ \(CType ty) -> do
+        let ge0_pred = mkLEqNat tcs (mkNumLitTy 0) ty
+        if skipGe0Pred ge0_pred
+          then pure Nothing
+          else Just . mkNonCanonical <$> newWanted loc ge0_pred
+
+  let newWant = ge0Wanteds ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
       let ctEv = mkPluginUnivCo "ghc-typelits-natnormalise" Nominal deps t1 t2
@@ -953,13 +1008,3 @@ evMagic tcs ct deps knW preds = do
           dcApp = evDataConApp (c0DataCon tcs) [] []
        in return (Just ((EvExpr $ evCast dcApp co, ct),newWant))
     _ -> return Nothing
-
-mkKnWanted
-  :: CtLoc
-  -> CType
-  -> TcPluginM Solve Ct
-mkKnWanted loc (CType ty) = do
-  kc_clas <- tcLookupClass knownNatClassName
-  let kn_pred = mkClassPred kc_clas [ty]
-  wantedCtEv <- newWanted loc kn_pred
-  return $ mkNonCanonical wantedCtEv
