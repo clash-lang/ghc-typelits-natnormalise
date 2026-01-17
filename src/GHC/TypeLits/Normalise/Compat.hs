@@ -71,6 +71,10 @@ import GHC.Types.Unique
 import GHC.Types.Unique.FM
   ( intersectUFM_C, nonDetEltsUFM )
 #endif
+#if MIN_VERSION_ghc(9,12,0)
+import GHC.Tc.Utils.TcType
+  ( sameDepthAs, strictlyDeeperThan )
+#endif
 
 -- ghc-tcplugin-api
 import GHC.TcPlugin.API

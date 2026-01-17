@@ -1,6 +1,7 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
 ## Unreleased
+* Fixes [#68](https://github.com/clash-lang/ghc-typelits-knownnat/issues/68) do not emit the same `KnownNat x` multiple times.
 * Fixes [#116](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Compile-time loop when processing Given constraints.
 * Fixes [#119](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/119) solving constraints involving type families applied to normalised Nat expressions (e.g. `Foo (a + b)`).
 * Fixes [#120](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/120) stop emitting Assert (a <=? b) msg ~ (() :: Constraint) constraints

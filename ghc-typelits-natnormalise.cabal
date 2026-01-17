@@ -84,6 +84,8 @@ library
         , TysWiredIn as GHC.Builtin.Types
         , Unique     as GHC.Types.Unique
         , Util       as GHC.Utils.Misc
+        , Constraint as Constraint
+        , TcOrigin   as TcOrigin
         )
 
   hs-source-dirs:      src

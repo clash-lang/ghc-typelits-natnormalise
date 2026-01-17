@@ -173,7 +173,7 @@ import Data.Either
   ( rights, partitionEithers )
 import Data.Foldable
 import Data.List
-  ( stripPrefix, partition )
+  ( stripPrefix, partition, isPrefixOf )
 import Data.Maybe
   ( mapMaybe, catMaybes, fromMaybe, isJust )
 import Data.Traversable
@@ -207,6 +207,22 @@ import GHC.TcPlugin.API.TyConSubst
   ( TyConSubst, mkTyConSubst )
 import GHC.Plugins
   ( Plugin(..), defaultPlugin, purePlugin, allVarSet, isEmptyVarSet, tyCoVarsOfType )
+#if MIN_VERSION_ghc(9,12,0)
+import GHC.Tc.Types.CtLoc
+  ( ctLocOrigin, updateCtLocOrigin )
+import GHC.Tc.Types.Origin
+  ( CtOrigin(..) )
+#elif MIN_VERSION_ghc(9,0,0)
+import GHC.Tc.Types.Constraint
+  ( ctLocOrigin, updateCtLocOrigin )
+import GHC.Tc.Types.Origin
+  ( CtOrigin(..) )
+#else
+import Constraint
+  ( ctLocOrigin, updateCtLocOrigin )
+import TcOrigin
+  ( CtOrigin(..) )
+#endif
 import GHC.Utils.Outputable
 
 -- ghc-typelits-natnormalise
@@ -247,26 +263,28 @@ data Opts = Opts { negNumbers :: Bool, depth :: Word }
 
 normalisePlugin :: Opts -> TcPlugin
 normalisePlugin opts =
-  TcPlugin { tcPluginInit    = lookupExtraDefs
+  TcPlugin { tcPluginInit    = mkSolverContext
            , tcPluginSolve   = decideEqualSOP opts
            , tcPluginRewrite = const emptyUFM
            , tcPluginStop    = const (return ())
            }
 
-data ExtraDefs
-  = ExtraDefs
-    { tyCons :: LookedUpTyCons }
+data SolverContext
+  = SolverContext
+    { tyCons :: LookedUpTyCons
+    }
 
-lookupExtraDefs :: TcPluginM Init ExtraDefs
-lookupExtraDefs = do
+mkSolverContext :: TcPluginM Init SolverContext
+mkSolverContext = do
   tcs <- lookupTyCons
   return $
-    ExtraDefs
-      { tyCons = tcs }
+    SolverContext
+      { tyCons = tcs
+      }
 
 decideEqualSOP
   :: Opts
-  -> ExtraDefs
+  -> SolverContext
       -- ^ 1. Givens that is already generated.
       --   We have to generate new givens at most once;
       --   otherwise GHC will loop indefinitely.
@@ -286,7 +304,7 @@ decideEqualSOP
 -- without this phase, we cannot derive, e.g.,
 -- @IsVector UVector (Fin (n + 1))@ from
 -- @Unbox (1 + n)@!
-decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
+decideEqualSOP opts (SolverContext { tyCons = tcs }) givens [] =
    do
     let
       givensTyConSubst = mkTyConSubst givens
@@ -351,7 +369,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
 -- containing naturals.
-decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
+decideEqualSOP opts (SolverContext { tyCons = tcs }) givens wanteds0 = do
     deriveds <- askDeriveds
     let wanteds = if null wanteds0
                   then []
@@ -705,7 +723,8 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
           allDeps = stDeps ++ ctDeps
       lift (tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs)))
       case runWriterT (isNatural u') of
-        Just (True,knW)  -> do
+        Just (True,knW0)  -> do
+          let knW = if shouldEmitKnownNat ct then knW0 else Set.empty
           evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps knW preconds)
           modify (\s -> s {evs = evs', leqsG = leqsG'})
           simples eqs
@@ -728,7 +747,8 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
                 map (solveIneq depth uS) ineqs)
               smallest = solvedInEqSmallestConstraint solvedIneq
           case smallest of
-            (True,kW) -> do
+            (True,kW0) -> do
+              let kW = if shouldEmitKnownNat ct then kW0 else Set.empty
               evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps kW preconds)
               modify (\s -> s { stDeps = allDeps
                               , evs = evs'
@@ -941,7 +961,7 @@ evMagic ::
   TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
 evMagic tcs ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
-  knWanted <- mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
+  knWanted <- catMaybes <$> mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
   let newWant = knWanted ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
@@ -957,9 +977,37 @@ evMagic tcs ct deps knW preds = do
 mkKnWanted
   :: CtLoc
   -> CType
-  -> TcPluginM Solve Ct
+  -> TcPluginM Solve (Maybe Ct)
 mkKnWanted loc (CType ty) = do
   kc_clas <- tcLookupClass knownNatClassName
   let kn_pred = mkClassPred kc_clas [ty]
-  wantedCtEv <- newWanted loc kn_pred
-  return $ mkNonCanonical wantedCtEv
+  let loc' = tagNatNormaliseOrigin loc
+  wantedCtEv <- newWanted loc' kn_pred
+  pure (Just (mkNonCanonical wantedCtEv))
+
+-- Avoid looping when KnownNat-derived constraints feed back into this plugin.
+shouldEmitKnownNat :: Ct -> Bool
+shouldEmitKnownNat = not . hasNatNormaliseOrigin . ctLoc
+
+hasNatNormaliseOrigin :: CtLoc -> Bool
+hasNatNormaliseOrigin loc =
+#if MIN_VERSION_ghc(9,2,0)
+  case ctLocOrigin loc of
+    CycleBreakerOrigin (CycleBreakerOrigin _) -> True
+    _ -> False
+#else
+  case ctLocOrigin loc of
+    Shouldn'tHappenOrigin msg -> natNormaliseOriginTag `isPrefixOf` msg
+    _ -> False
+#endif
+
+tagNatNormaliseOrigin :: CtLoc -> CtLoc
+tagNatNormaliseOrigin loc =
+#if MIN_VERSION_ghc(9,2,0)
+  updateCtLocOrigin loc (\orig -> CycleBreakerOrigin (CycleBreakerOrigin orig))
+#else
+  updateCtLocOrigin loc (\_ -> Shouldn'tHappenOrigin natNormaliseOriginTag)
+#endif
+
+natNormaliseOriginTag :: String
+natNormaliseOriginTag = "ghc-typelits-natnormalise:knownnat"
