@@ -167,6 +167,8 @@ import Control.Arrow
   ( second )
 import Control.Monad
   ( (<=<), unless )
+import Control.Monad.IO.Class
+  ( liftIO )
 import Control.Monad.Trans.Writer.Strict
   ( WriterT(runWriterT), runWriter )
 import Data.Either
@@ -176,6 +178,8 @@ import Data.List
   ( stripPrefix, partition )
 import Data.Maybe
   ( mapMaybe, catMaybes, fromMaybe, isJust )
+import Data.IORef
+  ( IORef, atomicModifyIORef', newIORef )
 import Data.Traversable
   ( for )
 import Text.Read
@@ -185,7 +189,7 @@ import Text.Read
 import Data.Set
   ( Set )
 import qualified Data.Set as Set
-  ( elems, empty )
+  ( elems, empty, insert, member )
 import Data.Map.Strict
   ( Map )
 import qualified Data.Map.Strict as Map
@@ -247,26 +251,31 @@ data Opts = Opts { negNumbers :: Bool, depth :: Word }
 
 normalisePlugin :: Opts -> TcPlugin
 normalisePlugin opts =
-  TcPlugin { tcPluginInit    = lookupExtraDefs
+  TcPlugin { tcPluginInit    = mkSolverContext
            , tcPluginSolve   = decideEqualSOP opts
            , tcPluginRewrite = const emptyUFM
            , tcPluginStop    = const (return ())
            }
 
-data ExtraDefs
-  = ExtraDefs
-    { tyCons :: LookedUpTyCons }
+data SolverContext
+  = SolverContext
+    { tyCons :: LookedUpTyCons
+    , emittedKnownNat :: IORef (Set KnownNatKey)
+    }
 
-lookupExtraDefs :: TcPluginM Init ExtraDefs
-lookupExtraDefs = do
+mkSolverContext :: TcPluginM Init SolverContext
+mkSolverContext = do
   tcs <- lookupTyCons
+  emittedKnownNat <- liftIO $ newIORef (Set.empty :: Set KnownNatKey)
   return $
-    ExtraDefs
-      { tyCons = tcs }
+    SolverContext
+      { tyCons = tcs
+      , emittedKnownNat
+      }
 
 decideEqualSOP
   :: Opts
-  -> ExtraDefs
+  -> SolverContext
       -- ^ 1. Givens that is already generated.
       --   We have to generate new givens at most once;
       --   otherwise GHC will loop indefinitely.
@@ -286,7 +295,7 @@ decideEqualSOP
 -- without this phase, we cannot derive, e.g.,
 -- @IsVector UVector (Fin (n + 1))@ from
 -- @Unbox (1 + n)@!
-decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
+decideEqualSOP opts (SolverContext { tyCons = tcs, emittedKnownNat }) givens [] =
    do
     let
       givensTyConSubst = mkTyConSubst givens
@@ -297,7 +306,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
 
     -- Try to find contradictory Givens, to improve pattern match warnings.
     SimplifyResult { simplifiedWanteds, contradictions, newGivens } <-
-      simplifyNats opts tcs [] $
+      simplifyNats opts tcs emittedKnownNat [] $
         concatMap (toNatEquality opts tcs givensTyConSubst) redGivens
 
     -- Only add new Givens that are genuinely new, i.e. that GHC doesn't
@@ -351,7 +360,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens [] =
 -- Solving phase.
 -- Solves in/equalities on Nats and simplifiable constraints
 -- containing naturals.
-decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
+decideEqualSOP opts (SolverContext { tyCons = tcs, emittedKnownNat }) givens wanteds0 = do
     deriveds <- askDeriveds
     let wanteds = if null wanteds0
                   then []
@@ -390,7 +399,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
         let unit_givens = concatMap (toNatEquality opts tcs givensTyConSubst) redGivens
             unit_wanteds = unit_wanteds0 ++ concatMap (toNatEquality opts tcs givensTyConSubst) ineqForRedWants
         sr@SimplifyResult{simplifiedWanteds, contradictions} <-
-          simplifyNats opts tcs unit_givens unit_wanteds
+          simplifyNats opts tcs emittedKnownNat unit_givens unit_wanteds
         tcPluginTrace "normalised" (ppr sr)
         reds <- for reducible_wanteds $ \(origCt,(term, ws, wDicts)) -> do
           wants <- evSubtPreds (ctLoc origCt) $ subToPred opts tcs ws
@@ -587,12 +596,13 @@ simplifyNats
   :: Opts
   -- ^ Allow negated numbers (potentially unsound!)
   -> LookedUpTyCons
+  -> IORef (Set KnownNatKey)
   -> [NatCt]
   -- ^ Given constraints
   -> [NatCt]
   -- ^ Wanted constraints
   -> TcPluginM Solve SimplifyResult
-simplifyNats Opts{depth} tcs eqsG eqsW = do
+simplifyNats Opts{depth} tcs emittedKnownNat eqsG eqsW = do
     let eqsG1 = map (\nCt -> nCt{preconds = []}) eqsG
         (varEqs, otherEqs) = partition (isVarEqs . predicate) eqsG1
         fancyGivens = concatMap (makeGivensSet otherEqs) varEqs
@@ -634,7 +644,7 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
           -- Do note record "new" evidence for given constraints.
           unless (isGiven (ctEvidence ct)) $ do
             -- Only recorde evidence for wanted contstraints
-            evM <- lift (evMagic tcs ct allDeps mempty preconds)
+            evM <- lift (evMagic tcs emittedKnownNat ct allDeps mempty preconds)
             lift $ tcPluginTrace "unifyNats Win" $
               vcat [ text "evM:" <+> ppr evM
                    , text "ct:" <+> ppr ct
@@ -676,7 +686,7 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
               simples eqs
           else do
             let allPreconds = map unifyItemToPredType unifications ++ preconds
-            evM <- lift (evMagic tcs ct allDeps Set.empty allPreconds)
+            evM <- lift (evMagic tcs emittedKnownNat ct allDeps Set.empty allPreconds)
             case evM of
               Nothing ->
                 simples eqs
@@ -706,7 +716,7 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
       lift (tcPluginTrace "unifyNats(ineq) results" (ppr (ct,u,u',ineqs)))
       case runWriterT (isNatural u') of
         Just (True,knW)  -> do
-          evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps knW preconds)
+          evs' <- maybe evs (:evs) <$> lift (evMagic tcs emittedKnownNat ct allDeps knW preconds)
           modify (\s -> s {evs = evs', leqsG = leqsG'})
           simples eqs
 
@@ -729,7 +739,7 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
               smallest = solvedInEqSmallestConstraint solvedIneq
           case smallest of
             (True,kW) -> do
-              evs' <- maybe evs (:evs) <$> lift (evMagic tcs ct allDeps kW preconds)
+              evs' <- maybe evs (:evs) <$> lift (evMagic tcs emittedKnownNat ct allDeps kW preconds)
               modify (\s -> s { stDeps = allDeps
                               , evs = evs'
                               , leqsG = leqsG'
@@ -930,6 +940,7 @@ evSubtPreds loc = mapM (fmap mkNonCanonical . newWanted loc)
 evMagic ::
   -- | Known TyCon environment
   LookedUpTyCons ->
+  IORef (Set KnownNatKey) ->
   -- | Constraint for which we are creating evidence
   Ct ->
   -- | Coercions in which the evidence depends
@@ -939,9 +950,9 @@ evMagic ::
   -- | Inequalities that should hold
   [PredType] ->
   TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
-evMagic tcs ct deps knW preds = do
+evMagic tcs emittedKnownNat ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
-  knWanted <- mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
+  knWanted <- catMaybes <$> mapM (mkKnWanted emittedKnownNat (ctLoc ct)) (Set.elems knW)
   let newWant = knWanted ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
@@ -955,11 +966,21 @@ evMagic tcs ct deps knW preds = do
     _ -> return Nothing
 
 mkKnWanted
-  :: CtLoc
+  :: IORef (Set KnownNatKey)
+  -> CtLoc
   -> CType
-  -> TcPluginM Solve Ct
-mkKnWanted loc (CType ty) = do
-  kc_clas <- tcLookupClass knownNatClassName
-  let kn_pred = mkClassPred kc_clas [ty]
-  wantedCtEv <- newWanted loc kn_pred
-  return $ mkNonCanonical wantedCtEv
+  -> TcPluginM Solve (Maybe Ct)
+mkKnWanted emittedKnownNat loc (CType ty) = do
+  let key = mkKnownNatKey ty loc
+  shouldEmit <- liftIO $
+    atomicModifyIORef' emittedKnownNat $ \seen ->
+      if Set.member key seen
+      then (seen, False)
+      else (Set.insert key seen, True)
+  if not shouldEmit then
+    pure Nothing
+  else do
+    kc_clas <- tcLookupClass knownNatClassName
+    let kn_pred = mkClassPred kc_clas [ty]
+    wantedCtEv <- newWanted loc kn_pred
+    pure (Just (mkNonCanonical wantedCtEv))

@@ -22,6 +22,7 @@ tests = testGroup "ShouldError"
     , test10
     , test11
     , inequalityTests
+    , branchKnownNatTest
     ]
 
 preamble :: String
@@ -557,3 +558,29 @@ inequalityTests = testGroup "Inequality"
   , test19
   , test20
   ]
+
+branchKnownNatSource :: String
+branchKnownNatSource = preamble <> [i|
+type family FBranch (n :: Nat) :: Nat
+
+data KNBranch (n :: Nat) where
+  KNGiven :: KnownNat (FBranch n) => KNBranch n
+  KNPlain :: KNBranch n
+
+needsFNonNeg :: (1 <= (1 + FBranch n)) => KNBranch n -> ()
+needsFNonNeg _ = ()
+
+test :: forall n. KNBranch n -> ()
+test b = case b of
+  KNGiven -> needsFNonNeg b
+  KNPlain -> needsFNonNeg b
+|]
+
+branchKnownNatExpected :: [String]
+branchKnownNatExpected =
+  ["KnownNat (FBranch"]
+
+branchKnownNatTest :: TestTree
+branchKnownNatTest =
+  testCase "GADT branches require fresh KnownNat evidence" $
+    assertCompileError branchKnownNatSource branchKnownNatExpected

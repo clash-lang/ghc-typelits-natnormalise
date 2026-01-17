@@ -25,6 +25,8 @@ module GHC.TypeLits.Normalise.Compat
 
   , mkTcPluginSolveResult
 
+  , KnownNatKey(..), mkKnownNatKey
+
   ) where
 
 -- base
@@ -36,6 +38,19 @@ import Data.Foldable
   ( asum )
 import GHC.TypeNats
   ( CmpNat )
+#if MIN_VERSION_ghc(9,12,0)
+import GHC.Tc.Types.CtLoc
+  ( SubGoalDepth, ctLocDepth, ctLocLevel, ctLocSpan )
+#elif MIN_VERSION_ghc(9,0,0)
+import GHC.Tc.Types.Constraint
+  ( SubGoalDepth, ctLocDepth, ctLocLevel, ctLocSpan )
+#elif MIN_VERSION_ghc(8,10,0)
+import Constraint
+  ( SubGoalDepth, ctLocDepth, ctLocLevel, ctLocSpan )
+#else
+import TcRnTypes
+  ( SubGoalDepth, ctLocDepth, ctLocLevel, ctLocSpan )
+#endif
 #if MIN_VERSION_ghc(9,3,0)
 import qualified GHC.TypeError
   ( Assert )
@@ -62,6 +77,8 @@ import GHC.Builtin.Types
 import GHC.Builtin.Types
   ( cTupleTyConName )
 #endif
+import GHC.Types.SrcLoc
+  ( RealSrcSpan )
 #if MIN_VERSION_ghc(9,7,0)
 import GHC.Types.Unique.Map
   ( UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList )
@@ -70,6 +87,10 @@ import GHC.Types.Unique
   ( Uniquable )
 import GHC.Types.Unique.FM
   ( intersectUFM_C, nonDetEltsUFM )
+#endif
+#if MIN_VERSION_ghc(9,12,0)
+import GHC.Tc.Utils.TcType
+  ( sameDepthAs, strictlyDeeperThan )
 #endif
 
 -- ghc-tcplugin-api
@@ -395,5 +416,39 @@ mkTcPluginSolveResult contras solved new =
   then TcPluginContradiction contras
   else TcPluginOk solved new
 #endif
+
+--------------------------------------------------------------------------------
+
+#if MIN_VERSION_ghc(9,12,0)
+newtype TcLevelKey = TcLevelKey TcLevel
+
+instance Eq TcLevelKey where
+  TcLevelKey lvl1 == TcLevelKey lvl2 = sameDepthAs lvl1 lvl2
+
+instance Ord TcLevelKey where
+  compare (TcLevelKey lvl1) (TcLevelKey lvl2)
+    | sameDepthAs lvl1 lvl2 = EQ
+    | strictlyDeeperThan lvl1 lvl2 = GT
+    | otherwise = LT
+#else
+newtype TcLevelKey = TcLevelKey TcLevel
+  deriving (Eq, Ord)
+#endif
+
+data KnownNatKey = KnownNatKey Type RealSrcSpan TcLevelKey SubGoalDepth
+
+instance Eq KnownNatKey where
+  KnownNatKey ty1 span1 lvl1 depth1 == KnownNatKey ty2 span2 lvl2 depth2 =
+    eqType ty1 ty2 && span1 == span2 && lvl1 == lvl2 && depth1 == depth2
+
+instance Ord KnownNatKey where
+  compare (KnownNatKey ty1 span1 lvl1 depth1) (KnownNatKey ty2 span2 lvl2 depth2) =
+    case nonDetCmpType ty1 ty2 of
+      EQ -> compare (span1, lvl1, depth1) (span2, lvl2, depth2)
+      other -> other
+
+mkKnownNatKey :: Type -> CtLoc -> KnownNatKey
+mkKnownNatKey ty loc =
+  KnownNatKey ty (ctLocSpan loc) (TcLevelKey (ctLocLevel loc)) (ctLocDepth loc)
 
 --------------------------------------------------------------------------------
