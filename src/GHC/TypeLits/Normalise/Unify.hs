@@ -588,6 +588,8 @@ unifiers' ct (S [P ps1]) (S [P ps2])
 --
 -- NB: this also handles situations such as (2 + x) ~ 5 ==> [x := 3].
 unifiers' ct s1@(S ps1) s2@(S ps2)
+  | not $ null psx
+  = unifiers' ct (S ps1'') (S ps2'')
   | Just (s1',s2',_) <- simplifyIneq (s1, s2, True)
   = unifiers' ct s1' s2'
   | Just term_unifs <- termByTerm ct ps1 ps2
@@ -600,8 +602,6 @@ unifiers' ct s1@(S ps1) s2@(S ps2)
   | null psx
   , isGiven (ctEvidence ct)
   = unifiers'' ct (S ps1) (S ps2)
-  | not $ null psx
-  = unifiers' ct (S ps1'') (S ps2'')
   where
     ps1'  = ps1 \\ psx
     ps2'  = ps2 \\ psx
