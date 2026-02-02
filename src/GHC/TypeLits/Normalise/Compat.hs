@@ -140,14 +140,7 @@ lookupTyCons = do
 -- | The constraint @(a <= b)@.
 mkLEqNat :: LookedUpTyCons -> Type -> Type -> PredType
 mkLEqNat tcs a b =
-#if MIN_VERSION_ghc(9,3,0)
-  -- Starting from GHC 9.3, (a <= b) turns into 'Assert (a <=? b) msg'.
-  -- We prefer to emit 'Assert (a <=? b) msg ~ (() :: Constraint)',
-  -- in order to avoid creating an Irred constraint.
-  mkEqPredRole Nominal
-    (mkTyConApp (leqTyCon tcs) [natKind, a, b])
-    (mkTyConTy $ c0TyCon tcs)
-#elif MIN_VERSION_ghc(9,1,0)
+#if MIN_VERSION_ghc(9,1,0)
   mkTyConApp (leqTyCon tcs) [natKind, a, b]
 #else
   mkTyConApp (leqNatTyCon tcs) [a, b]
