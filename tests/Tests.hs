@@ -333,11 +333,7 @@ issue52 :: (1 <= n, KnownNat n) => (Signal dom (),Signal dom (BitVector (n-1+1))
 issue52 = bundle
 -- issue 52 end
 
-#if __GLASGOW_HASKELL__ >= 904
-proxyInEq :: ((a <= b) ~ (() :: Constraint)) => Proxy (a :: Nat) -> Proxy b -> ()
-#else
 proxyInEq :: (a <= b) => Proxy (a :: Nat) -> Proxy b -> ()
-#endif
 proxyInEq _ _ = ()
 
 proxyInEq' :: ((a <=? b) ~ 'False) => Proxy (a :: Nat) -> Proxy b -> ()
