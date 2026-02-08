@@ -826,3 +826,12 @@ t119b a = go a
       Proxy c
     go _ = Proxy
 #endif
+
+data NatPhantom (n :: Nat) = NatPhantom
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/124
+t124 :: 1 <= n => NatPhantom m -> NatPhantom (m + n - 1)
+t124 x = go x
+  where
+    go :: NatPhantom a -> NatPhantom (b + a)
+    go _ = NatPhantom
