@@ -21,6 +21,7 @@ tests = testGroup "ShouldError"
     , test9
     , test10
     , test11
+    , testIssue126
     , inequalityTests
     ]
 
@@ -334,6 +335,43 @@ expected11 =
 
 test11 :: TestTree
 test11 = testCase "Do not rewrite constraint to itself" $ assertCompileError source11 expected11
+
+-- ((3 * (n - 1)) + 1) simplifies to (3 * n - 2), so
+-- the equality would require b0 ~ -2, which is impossible at kind Nat.
+sourceIssue126 :: String
+sourceIssue126 = preamble <> [i|
+data Index (n :: Nat) = Index
+
+truncateB :: Index (a + b) -> Index a
+truncateB = undefined
+
+mul :: Index 4 -> Index n -> Index ((3 * (n - 1)) + 1)
+mul _ _ = Index
+
+zeroExtendTimesThree :: (1 <= n) => Index n -> Index (n * 3)
+zeroExtendTimesThree = truncateB . (mul Index)
+|]
+
+expectedIssue126 :: [String]
+expectedIssue126 =
+#if __GLASGOW_HASKELL__ >= 906
+  [ "Could not deduce ((n * 3) + b0) ~ ((3 * (n - 1)) + 1)"
+#elif __GLASGOW_HASKELL__ >= 904
+  [ "Could not deduce (((n * 3) + b0) ~ ((3 * (n - 1)) + 1))"
+#elif __GLASGOW_HASKELL__ >= 902
+  [ "Could not deduce: ((n * 3) + b0) ~ ((3 * (n - 1)) + 1)"
+#else
+  [ "Could not deduce: ((3 * (n - 1)) + 1) ~ ((n * 3) + b0)"
+#endif
+  , "from the context: 1 <= n"
+  ]
+
+
+
+testIssue126 :: TestTree
+testIssue126 =
+  testCase "Issue 126 regression reproducer" $
+    assertCompileError sourceIssue126 expectedIssue126
 
 proxyInEqDef :: String
 proxyInEqDef =
