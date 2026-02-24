@@ -23,6 +23,7 @@
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -dcore-lint #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 import GHC.TypeLits
 #if MIN_VERSION_base(4,18,0)
@@ -121,6 +122,7 @@ powUNat x (USucc y) = multUNat x (powUNat x y)
 -- 1
 head :: Vec (n + 1) a -> a
 head (x :> _) = x
+head Nil = error "head: impossible"
 
 head'
   :: forall n a
@@ -135,6 +137,7 @@ head' = head @(n-1)
 -- <2,3>
 tail :: Vec (n + 1) a -> Vec n a
 tail (_ :> xs) = xs
+tail Nil = error "tail: impossible"
 
 tail' :: (1 <= m) => Vec m a -> Vec (m-1) a
 tail' = tail
@@ -146,6 +149,7 @@ tail' = tail
 init :: Vec (n + 1) a -> Vec n a
 init (_ :> Nil)     = Nil
 init (x :> y :> ys) = x :> init (y :> ys)
+init Nil            = error "init: impossible"
 
 init' :: (1 <= m) => Vec m a -> Vec (m-1) a
 init' = init
@@ -172,6 +176,7 @@ splitAtU :: UNat m -> Vec (m + n) a -> (Vec m a, Vec n a)
 splitAtU UZero     ys        = (Nil,ys)
 splitAtU (USucc s) (y :> ys) = let (as,bs) = splitAtU s ys
                                in  (y :> as, bs)
+splitAtU (USucc _) Nil       = error "splitAtU: impossible"
 
 {-# INLINE splitAtI #-}
 -- | Split a vector into two vectors where the length of the two is determined
@@ -247,6 +252,8 @@ unconcatU (USucc n') m ys = let (as,bs) = splitAtU m ys
 merge :: Vec n a -> Vec n a -> Vec (n + n) a
 merge Nil       Nil       = Nil
 merge (x :> xs) (y :> ys) = x :> y :> merge xs ys
+merge Nil       (_ :> _)  = error "merge: impossible"
+merge (_ :> _)  Nil       = error "merge: impossible"
 
 -- | 'drop' @n xs@ returns the suffix of @xs@ after the first @n@ elements
 --
@@ -392,12 +399,12 @@ proxyEq4
 proxyEq4 = theProxy
  where
   theProxy
-    :: forall a b c
-     . (KnownNat (((a - b) + c) + (b - c)), c <= b, b <= a)
-    => Proxy b
-    -> Proxy c
-    -> Proxy a
-    -> Proxy (((a - b) + c) + (b - c))
+    :: forall a' b' c'
+     . (KnownNat (((a' - b') + c') + (b' - c')), c' <= b', b' <= a')
+    => Proxy b'
+    -> Proxy c'
+    -> Proxy a'
+    -> Proxy (((a' - b') + c') + (b' - c'))
   theProxy _ _ = id
 
 proxyInEqImplication :: (2 <= (2 ^ (n + d)))
@@ -510,13 +517,13 @@ proxyInEq8
   -> Proxy n
 proxyInEq8 = proxyInEq8fun
 
-data H2 = H2 { p :: Nat }
+data H2 = H2 { pNat :: Nat }
 
 class Q (dom :: Symbol) where
   type G2 dom :: H2
 
 type family P (c :: H2) :: Nat where
-  P ('H2 p) = p
+  P ('H2 pNat) = pNat
 
 type F2 (dom :: Symbol) = P (G2 dom)
 
@@ -558,25 +565,25 @@ tests :: TestTree
 tests = testGroup "ghc-typelits-natnormalise"
   [ testGroup "Basic functionality"
     [ testCase "show (head (1:>2:>3:>Nil))" $
-      show (head (1:>2:>3:>Nil)) @?=
+      show (head ((1 :: Integer):>2:>3:>Nil)) @?=
       "1"
     , testCase "show (tail (1:>2:>3:>Nil))" $
-      show (tail (1:>2:>3:>Nil)) @?=
+      show (tail ((1 :: Integer):>2:>3:>Nil)) @?=
       "<2,3>"
     , testCase "show (init (1:>2:>3:>Nil))" $
-      show (init (1:>2:>3:>Nil)) @?=
+      show (init ((1 :: Integer):>2:>3:>Nil)) @?=
       "<1,2>"
     , testCase "show ((1:>2:>3:>Nil) ++ (7:>8:>Nil))" $
-      show ((1:>2:>3:>Nil) ++ (7:>8:>Nil)) @?=
+      show (((1 :: Integer):>2:>3:>Nil) ++ (7:>8:>Nil)) @?=
       "<1,2,3,7,8>"
     , testCase "show (splitAt (snat :: SNat 3) (1:>2:>3:>7:>8:>Nil))" $
-      show (splitAt (snat :: SNat 3) (1:>2:>3:>7:>8:>Nil)) @?=
+      show (splitAt (snat :: SNat 3) ((1 :: Integer):>2:>3:>7:>8:>Nil)) @?=
       "(<1,2,3>,<7,8>)"
     , testCase "show (concat ((1:>2:>3:>Nil) :> (4:>5:>6:>Nil) :> (7:>8:>9:>Nil) :> (10:>11:>12:>Nil) :> Nil))" $
-      show (concat ((1:>2:>3:>Nil) :> (4:>5:>6:>Nil) :> (7:>8:>9:>Nil) :> (10:>11:>12:>Nil) :> Nil)) @?=
+      show (concat (((1 :: Integer):>2:>3:>Nil) :> (4:>5:>6:>Nil) :> (7:>8:>9:>Nil) :> (10:>11:>12:>Nil) :> Nil)) @?=
       "<1,2,3,4,5,6,7,8,9,10,11,12>"
     , testCase "show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil))" $
-      show (unconcat (snat :: SNat 4) (1:>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil)) @?=
+      show (unconcat (snat :: SNat 4) ((1 :: Integer):>2:>3:>4:>5:>6:>7:>8:>9:>10:>11:>12:>Nil)) @?=
       "<<1,2,3,4>,<5,6,7,8>,<9,10,11,12>>"
     , testCase "show (proxyFun3 (Proxy :: Proxy 9))" $
       show (proxyFun3 (Proxy :: Proxy 9)) @?=
@@ -766,11 +773,11 @@ proxyEq5
 proxyEq5 = theProxy
  where
   theProxy
-    :: forall a b
-     . KnownNat (TF (2 * a + a) b + (2 * TF (a + 2 * a) b))
-    => Proxy a
-    -> Proxy b
-    -> Proxy (3 * TF (3 * a) b)
+    :: forall a' b'
+     . KnownNat (TF (2 * a' + a') b' + (2 * TF (a' + 2 * a') b'))
+    => Proxy a'
+    -> Proxy b'
+    -> Proxy (3 * TF (3 * a') b')
   theProxy _ _ = Proxy
 
 type family Rank sh where
