@@ -941,7 +941,8 @@ evMagic ::
   TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
 evMagic tcs ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
-  knWanted <- mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
+  let knWants = filter (shouldEmitKnownNat ct . unCType) (Set.elems knW)
+  knWanted <- mapM (mkKnWanted (ctLoc ct)) knWants
   let newWant = knWanted ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
@@ -961,5 +962,6 @@ mkKnWanted
 mkKnWanted loc (CType ty) = do
   kc_clas <- tcLookupClass knownNatClassName
   let kn_pred = mkClassPred kc_clas [ty]
-  wantedCtEv <- newWanted loc kn_pred
+  let loc' = attachNatnormaliseOrigin ty loc
+  wantedCtEv <- newWanted loc' kn_pred
   return $ mkNonCanonical wantedCtEv

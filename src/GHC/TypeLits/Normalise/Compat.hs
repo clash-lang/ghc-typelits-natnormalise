@@ -24,12 +24,18 @@ module GHC.TypeLits.Normalise.Compat
   , UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList
 
   , mkTcPluginSolveResult
+  , shouldEmitKnownNat
+  , attachNatnormaliseOrigin
 
   ) where
 
 -- base
 import Control.Arrow
   ( second )
+#if MIN_VERSION_ghc(9,15,0)
+import Data.Dynamic
+  ( fromDynamic, toDyn )
+#endif
 import qualified Data.List.NonEmpty as NE
   ( toList )
 import Data.Foldable
@@ -76,6 +82,19 @@ import GHC.Types.Unique.FM
 import GHC.TcPlugin.API
 import GHC.TcPlugin.API.TyConSubst
   ( TyConSubst, splitTyConApp_upTo )
+#if MIN_VERSION_ghc(9,15,0)
+import qualified GHC.Tc.Types.CtLoc as CtLoc
+import GHC.Tc.Types.Origin
+  ( CtOrigin ( CtTcPluginOrigin
+             , KindEqOrigin
+             , DefaultReprEqOrigin
+             , CycleBreakerOrigin
+             , WantedSuperclassOrigin
+             , ScOrigin
+             )
+  , ClsInstOrQC (IsQC)
+  )
+#endif
 
 --------------------------------------------------------------------------------
 
@@ -144,6 +163,49 @@ mkLEqNat tcs a b =
   mkTyConApp (leqTyCon tcs) [natKind, a, b]
 #else
   mkTyConApp (leqNatTyCon tcs) [a, b]
+#endif
+
+attachNatnormaliseOrigin :: Type -> CtLoc -> CtLoc
+#if MIN_VERSION_ghc(9,15,0)
+attachNatnormaliseOrigin kn loc =
+  let payload = toDyn (NatNormaliseKnownNatOrigin kn)
+      origin = CtLoc.ctLocOrigin loc
+  in CtLoc.setCtLocOrigin loc (CtTcPluginOrigin natNormalisePluginName payload origin)
+#else
+attachNatnormaliseOrigin _ loc = loc
+#endif
+
+shouldEmitKnownNat :: Ct -> Type -> Bool
+#if MIN_VERSION_ghc(9,15,0)
+shouldEmitKnownNat ct kn =
+  not (originHasSameKnownNat kn (CtLoc.ctLocOrigin (ctLoc ct)))
+#else
+shouldEmitKnownNat _ _ = True
+#endif
+
+#if MIN_VERSION_ghc(9,15,0)
+newtype NatNormaliseKnownNatOrigin
+  = NatNormaliseKnownNatOrigin Type
+
+natNormalisePluginName :: ModuleName
+natNormalisePluginName = mkModuleName "GHC.TypeLits.Normalise"
+
+originHasSameKnownNat :: Type -> CtOrigin -> Bool
+originHasSameKnownNat kn = go
+  where
+    go (CtTcPluginOrigin name payload orig)
+      | name == natNormalisePluginName
+      , Just (NatNormaliseKnownNatOrigin kn') <- fromDynamic payload
+      , eqType kn kn'
+      = True
+      | otherwise
+      = go orig
+    go (KindEqOrigin _ _ orig _) = go orig
+    go (DefaultReprEqOrigin _ _ orig) = go orig
+    go (CycleBreakerOrigin orig) = go orig
+    go (WantedSuperclassOrigin _ orig) = go orig
+    go (ScOrigin (IsQC _ orig) _) = go orig
+    go _ = False
 #endif
 
 -- | Is this type 'True' or 'False'?
