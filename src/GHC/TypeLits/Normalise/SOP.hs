@@ -132,7 +132,8 @@ instance (Outputable v, Outputable c) => Outputable (SOP v c) where
   ppr (S s) = hcat . punctuate (text " + ") . map ppr $ s
 
 instance (Outputable v, Outputable c) => Outputable (Product v c) where
-  ppr = hcat . punctuate (text " * ") . map ppr . unP
+  ppr (P []) = integer 1
+  ppr (P p)  = hcat . punctuate (text " * ") . map ppr $ p
 
 instance (Outputable v, Outputable c) => Outputable (Symbol v c) where
   ppr (I i)   = integer i

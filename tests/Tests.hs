@@ -40,10 +40,15 @@ import Data.Type.Ord
 import Data.Kind (Type, Constraint)
 import Data.Proxy
 import Data.Type.Equality ((:~:)(..))
+import Hedgehog hiding (eval)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.Hedgehog
+
+import GHC.TypeLits.Normalise.SOP (simplifySOP)
 
 import qualified ShouldError
+import Generator hiding (const)
 
 data Vec :: Nat -> Type -> Type where
   Nil  :: Vec 0 a
@@ -659,6 +664,16 @@ tests = testGroup "ghc-typelits-natnormalise"
       "Proxy"
     ]
   , ShouldError.tests
+  , testGroup "properties"
+    [ testProperty "simplifySOP" $ withTests 10000 $ withShrinks 1000 $ property $ do
+        sop <- forAll defaultSop
+        let simplified = simplifySOP sop
+        annotateShow simplified
+        mv <- forAll $ varModel (maybeFail someInt)
+        mc <- forAll $ constModel (maybeFail someInt)
+        let evalHere = eval mv mc
+        evalHere simplified === evalHere sop
+    ]
   ]
 
 showFin :: forall n. KnownNat n => Fin n -> String
