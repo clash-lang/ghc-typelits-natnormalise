@@ -1,6 +1,7 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
 ## Unreleased
+* Make the test suite not emit compile warnings
 
 ## 0.9.4 *March 19th 2026*
 * Fixes [#116](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Compile-time loop when processing Given constraints.
