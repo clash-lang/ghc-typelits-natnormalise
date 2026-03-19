@@ -1,6 +1,6 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
-## Unreleased
+## 0.9.5 *March 19th 2026*
 * Make the test suite not emit compile warnings
 
 ## 0.9.4 *March 19th 2026*
