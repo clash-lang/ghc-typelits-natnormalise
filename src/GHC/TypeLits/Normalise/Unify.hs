@@ -1058,12 +1058,14 @@ powMonotone want (x, S [P [E yS yP]],le)
         -- new have: 1 <=? x ~ True
       _ | x == yS
         -> pure [(want,(S [P [I 1]],S [yP],le))]
-        -- want: XXX
-        -- have: 1 <=? base ^ exp ~ True, where base >= 1
+        -- want: (any)
+        -- have: 1 <=? base ^ exp ~ True, where base is a literal >= 1
         --
         -- For any natural base >= 1 and exponent e,
         -- base^e >= 1^e = 1, so the have is trivially true.
-        -- Simplify the have to 1 <=? 1 ~ True.
+        --
+        -- new want: want (unchanged)
+        -- new have: 1 <=? 1 ~ True
       _ | S [P [I 1]] <- x
         , S [P [I y']] <- yS
         , y' >= 1
@@ -1094,11 +1096,14 @@ powMonotone (a,S [P [E bS bP]],le) have
         -- new have: XXX
       _ | a == bS
         -> pure [((S [P [I 1]],S [bP],le),have)]
-        -- want: 1 <=? base ^ exp ~ True, where base >= 1
-        -- have: XXX
+        -- want: 1 <=? base ^ exp ~ True, where base is a literal >= 1
+        -- have: (any)
         --
         -- For any natural base >= 1 and exponent e,
         -- base^e >= 1^e = 1, so the inequality holds trivially.
+        --
+        -- new want: 1 <=? 1 ~ True
+        -- new have: 1 <=? 1 ~ True
       _ | S [P [I 1]] <- a
         , S [P [I b']] <- bS
         , b' >= 1
