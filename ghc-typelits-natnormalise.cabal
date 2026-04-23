@@ -79,11 +79,12 @@ library
 
     mixins:
       ghc
-        ( TcTypeNats as GHC.Builtin.Types.Literals
-        , TyCon      as GHC.Core.TyCon
-        , TysWiredIn as GHC.Builtin.Types
-        , Unique     as GHC.Types.Unique
-        , Util       as GHC.Utils.Misc
+        ( TcTypeNats  as GHC.Builtin.Types.Literals
+        , TyCon       as GHC.Core.TyCon
+        , TysWiredIn  as GHC.Builtin.Types
+        , TcEvidence  as GHC.Tc.Types.Evidence
+        , Unique      as GHC.Types.Unique
+        , Util        as GHC.Utils.Misc
         )
 
   hs-source-dirs:      src
