@@ -884,6 +884,7 @@ ineqRules =
   , timesMonotone
   , powMonotone
   , pow2MonotoneSpecial
+  , powPositive
   , haveSmaller
   , haveBigger
   ]
@@ -1058,18 +1059,6 @@ powMonotone want (x, S [P [E yS yP]],le)
         -- new have: 1 <=? x ~ True
       _ | x == yS
         -> pure [(want,(S [P [I 1]],S [yP],le))]
-        -- want: (any)
-        -- have: 1 <=? base ^ exp ~ True, where base is a literal >= 1
-        --
-        -- For any natural base >= 1 and exponent e,
-        -- base^e >= 1^e = 1, so the have is trivially true.
-        --
-        -- new want: want (unchanged)
-        -- new have: 1 <=? 1 ~ True
-      _ | S [P [I 1]] <- x
-        , S [P [I y']] <- yS
-        , y' >= 1
-        -> pure [(want,(S [P [I 1]],S [P [I 1]],le))]
       _ -> noRewrite
 
 powMonotone (a,S [P [E bS bP]],le) have
@@ -1096,22 +1085,31 @@ powMonotone (a,S [P [E bS bP]],le) have
         -- new have: XXX
       _ | a == bS
         -> pure [((S [P [I 1]],S [bP],le),have)]
-        -- want: 1 <=? base ^ exp ~ True, where base is a literal >= 1
-        -- have: (any)
-        --
-        -- For any natural base >= 1 and exponent e,
-        -- base^e >= 1^e = 1, so the inequality holds trivially.
-        --
-        -- new want: 1 <=? 1 ~ True
-        -- new have: 1 <=? 1 ~ True
-      _ | S [P [I 1]] <- a
-        , S [P [I b']] <- bS
-        , b' >= 1
-        -> let trivial = (S [P [I 1]], S [P [I 1]], le)
-           in pure [(trivial, trivial)]
       _ -> noRewrite
 
 powMonotone _ _ = noRewrite
+
+-- | Positivity of exponentiation: for any natural base >= 1 and exponent e,
+-- @base^e >= 1^e = 1@, so @1 <= base^exp@ holds trivially.
+powPositive :: IneqRule
+-- want: (any)
+-- have: 1 <=? base ^ exp ~ True, where base is a literal >= 1
+--
+-- new want: want (unchanged)
+-- new have: 1 <=? 1 ~ True
+powPositive want (S [P [I 1]], S [P [E (S [P [I b']]) _]], _)
+  | b' >= 1
+  = pure [(want, (S [P [I 1]], S [P [I 1]], True))]
+-- want: 1 <=? base ^ exp ~ True, where base is a literal >= 1
+-- have: (any)
+--
+-- new want: 1 <=? 1 ~ True
+-- new have: 1 <=? 1 ~ True
+powPositive (S [P [I 1]], S [P [E (S [P [I b']]) _]], _) _
+  | b' >= 1
+  = let trivial = (S [P [I 1]], S [P [I 1]], True)
+    in pure [(trivial, trivial)]
+powPositive _ _ = noRewrite
 
 -- | Try to get the power-of-2 factors, and apply the monotonicity of
 -- exponentiation rule.
