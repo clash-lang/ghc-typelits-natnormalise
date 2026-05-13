@@ -2,6 +2,7 @@
 
 ## 0.9.5 *March 19th 2026*
 * Make the test suite not emit compile warnings
+* Bump ghc-tcplugin-api to prepare for inclusion into stackage
 
 ## 0.9.4 *March 19th 2026*
 * Fixes [#116](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/113) Compile-time loop when processing Given constraints.

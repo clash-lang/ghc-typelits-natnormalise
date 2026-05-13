@@ -247,10 +247,11 @@ data Opts = Opts { negNumbers :: Bool, depth :: Word }
 
 normalisePlugin :: Opts -> TcPlugin
 normalisePlugin opts =
-  TcPlugin { tcPluginInit    = lookupExtraDefs
-           , tcPluginSolve   = decideEqualSOP opts
-           , tcPluginRewrite = const emptyUFM
-           , tcPluginStop    = const (return ())
+  TcPlugin { tcPluginInit     = lookupExtraDefs
+           , tcPluginSolve    = decideEqualSOP opts
+           , tcPluginRewrite  = const emptyUFM
+           , tcPluginPostTc   = const (return ())
+           , tcPluginShutdown = const (return ())
            }
 
 data ExtraDefs
