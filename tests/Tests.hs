@@ -842,3 +842,18 @@ t124 x = go x
   where
     go :: NatPhantom a -> NatPhantom (b + a)
     go _ = NatPhantom
+
+-- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/131
+data PowT (k :: Nat) (a :: Type) (f :: TyFun Nat Type) :: Type
+type instance Apply (PowT k a) d = Vec (k^(2^d)) (RTree d a)
+
+type family MyTF a :: Nat where
+  MyTF Int = 3
+  MyTF _   = 5
+
+t131 :: forall d a. KnownNat d => Vec (MyTF a) a -> Vec (MyTF a^(2^d)) (RTree d a)
+t131 v = tdfold
+  (Proxy @(PowT (MyTF a) a))
+  (const $ RLeaf <$> v)
+  (\(_ :: SNat m) l r -> concatMap ((<$> r) . RBranch) l)
+  (trepeat @d ())
