@@ -40,6 +40,7 @@ import Data.Type.Ord
 
 import Data.Kind (Type, Constraint)
 import Data.Proxy
+import Data.Singletons (Apply, TyFun)
 import Data.Type.Equality ((:~:)(..))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -845,13 +846,13 @@ t124 x = go x
 
 -- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/131
 data PowT (k :: Nat) (a :: Type) (f :: TyFun Nat Type) :: Type
-type instance Apply (PowT k a) d = Vec (k^(2^d)) (RTree d a)
+type instance Apply (PowT k a) d = Vec (k^(2^d)) (Vec d a)
 
 type family MyTF a :: Nat where
   MyTF Int = 3
   MyTF _   = 5
 
-t131 :: forall d a. KnownNat d => Vec (MyTF a) a -> Vec (MyTF a^(2^d)) (RTree d a)
+t131 :: forall d a. KnownNat d => Vec (MyTF a) a -> Vec (MyTF a^(2^d)) (Vec d a)
 t131 v = tdfold
   (Proxy @(PowT (MyTF a) a))
   (const $ RLeaf <$> v)
