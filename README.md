@@ -2,7 +2,6 @@
 
 [![Build Status](https://github.com/clash-lang/ghc-typelits-natnormalise/actions/workflows/haskell-ci.yml/badge.svg?branch=master)](https://github.com/clash-lang/ghc-typelits-natnormalise/actions)
 [![Hackage](https://img.shields.io/hackage/v/ghc-typelits-natnormalise.svg)](https://hackage.haskell.org/package/ghc-typelits-natnormalise)
-[![Hackage Dependencies](https://img.shields.io/hackage-deps/v/ghc-typelits-natnormalise.svg?style=flat)](http://packdeps.haskellers.com/feed?needle=exact%3Aghc-typelits-natnormalise)
 
 A type checker plugin for GHC that can solve _equalities_ and _inequalities_
 of types of kind `Nat`, where these types are either:
