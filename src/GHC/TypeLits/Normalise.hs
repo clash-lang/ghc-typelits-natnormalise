@@ -198,6 +198,8 @@ import GHC.Builtin.Types.Literals
   ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon )
 import GHC.Core.TyCon
   ( Injectivity (..), tyConInjectivityInfo, tyConArity )
+import GHC.Tc.Types.Evidence
+  ( EvBindsVar(CoEvBindsVar) )
 import GHC.Utils.Misc
   ( filterByList )
 
@@ -428,7 +430,15 @@ reduceGivens :: Bool -- ^ allow generating new "non-negative" Wanteds
              -> Opts -> LookedUpTyCons
              -> [Ct]
              -> TcPluginM Solve ([Ct], Map CType CtLoc)
-reduceGivens gen_wanteds opts tcs origGivens = go [] Map.empty origGivens
+reduceGivens gen_wanteds opts tcs origGivens = do
+  -- Check if we can safely create new evidence bindings for Givens.
+  -- When the evidence bindings variable is a CoEvBindsVar, we must not
+  -- attempt to add evidence bindings, as this would cause a GHC panic
+  -- (e.g. when processing ill-kinded type expressions).
+  evBinds <- askEvBinds
+  case evBinds of
+    CoEvBindsVar {} -> return (origGivens, Map.empty)
+    _ -> go [] Map.empty origGivens
   where
     go rev_acc_gs acc_ws [] = return ( reverse rev_acc_gs, acc_ws )
     go rev_acc_gs acc_ws (g:gs) =
@@ -665,14 +675,18 @@ simplifyNats Opts{depth} tcs eqsG eqsW = do
               -- when it has no preconditions in order for this unification to
               -- hold. The reason for that is that we can currently not record
               -- new Wanteds to be emitted at the end of the solve.
-              givensU <- lift (mapM (unifyItemToGiven (ctLoc ct) allDeps) unifications)
-              modify (\s -> s { stDeps = stDeps1
-                              , subst = subst1
-                              , leqsG = eqToLeq u' v' ++ leqsG
-                              , unsolved = []
-                              , derivedGivens = givensU ++ derivedGivens
-                              })
-              simples (unsolved ++ eqs)
+              canBind <- lift canCreateGivens
+              if canBind then do
+                givensU <- lift (mapM (unifyItemToGiven (ctLoc ct) allDeps) unifications)
+                modify (\s -> s { stDeps = stDeps1
+                                , subst = subst1
+                                , leqsG = eqToLeq u' v' ++ leqsG
+                                , unsolved = []
+                                , derivedGivens = givensU ++ derivedGivens
+                                })
+                simples (unsolved ++ eqs)
+              else
+                simples eqs
             else
               simples eqs
           else do
@@ -911,6 +925,17 @@ unifyItemToPredType ui = mkEqPredRole Nominal ty1 ty2
             SubstItem {..} -> reifySOP siSOP
             UnifyItem {..} -> reifySOP siRHS
 
+
+-- | Check if we can safely create new evidence bindings for Given constraints.
+-- When the evidence bindings variable is a 'CoEvBindsVar', we must not
+-- attempt to add evidence bindings, as this would cause a GHC panic
+-- (e.g. when processing ill-kinded type expressions).
+canCreateGivens :: TcPluginM Solve Bool
+canCreateGivens = do
+  evBinds <- askEvBinds
+  case evBinds of
+    CoEvBindsVar {} -> return False
+    _               -> return True
 
 unifyItemToGiven :: CtLoc -> [Coercion] -> CoreUnify -> TcPluginM Solve Ct
 unifyItemToGiven loc deps ui = mkNonCanonical <$> newGiven loc pty (EvExpr (Coercion co))

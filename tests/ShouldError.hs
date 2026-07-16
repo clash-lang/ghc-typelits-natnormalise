@@ -22,6 +22,7 @@ tests = testGroup "ShouldError"
     , test10
     , test11
     , testIssue126
+    , testIllKinded
     , inequalityTests
     ]
 
@@ -372,6 +373,44 @@ testIssue126 :: TestTree
 testIssue126 =
   testCase "Issue 126 regression reproducer" $
     assertCompileError sourceIssue126 expectedIssue126
+
+-- Ill-kinded expressions should produce a kind error, not a GHC panic.
+-- BitSize Meta (where Meta :: Type -> Type) is ill-kinded; BitSize expects
+-- a Type argument.
+sourceIllKinded :: String
+sourceIllKinded = [i|
+import Data.Kind (Type)
+import Data.Proxy
+import GHC.TypeLits
+
+type family BitSize (a :: Type) :: Nat
+type instance BitSize Bool = 1
+type instance BitSize (Meta a) = 1 + (1 + BitSize a)
+
+data Meta a = Meta Bool Bool a
+
+split :: forall m n. Proxy (m + n) -> (Proxy m, Proxy n)
+split _ = (undefined, undefined)
+
+wordToMeta ::
+  forall a n.
+  (KnownNat n, BitSize (Meta a) <= n) =>
+  Proxy n ->
+  Proxy (BitSize (Meta a))
+wordToMeta word = meta
+ where
+  (_header, meta) = split @(n - BitSize Meta) word
+|]
+
+expectedIllKinded :: [String]
+expectedIllKinded =
+  [ "Expecting one more argument to Meta"
+  ]
+
+testIllKinded :: TestTree
+testIllKinded =
+  testCase "Ill-kinded type should produce kind error, not panic" $
+    assertCompileError sourceIllKinded expectedIllKinded
 
 proxyInEqDef :: String
 proxyInEqDef =
