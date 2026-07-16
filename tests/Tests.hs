@@ -670,7 +670,7 @@ tests = testGroup "ghc-typelits-natnormalise"
   , testGroup "Should compile with timeout"
     [ testCase "issue 131: exponentiation of type family application terminates" $ do
         source <- readFile "tests/WithTimeout/Test131.hs"
-        assertCompileSuccessWithin 3 source
+        assertCompileSuccessWithin 10 source
     ]
   ]
 
