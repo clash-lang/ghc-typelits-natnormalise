@@ -114,8 +114,6 @@ jobs:
           echo "ARG_BENCH=--enable-benchmarks" >> "$GITHUB_ENV"
           echo "HEADHACKAGE=false" >> "$GITHUB_ENV"
           echo "ARG_COMPILER=--$HCKIND --with-compiler=$HC" >> "$GITHUB_ENV"
-          echo "ARG_NORMAL_TEST_SUITES=unit-tests" >> "$GITHUB_ENV"
-          echo "ARG_TIMEOUT_TEST_SUITES=timeout-test-131" >> "$GITHUB_ENV"
         env:
           HCKIND: ${{ matrix.compilerKind }}
           HCNAME: ${{ matrix.compiler }}
@@ -213,15 +211,12 @@ jobs:
       - name: build w/o tests
         run: |
           $CABAL v2-build $ARG_COMPILER --disable-tests --disable-benchmarks all
-      - name: build normal
+      - name: build
         run: |
-          $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH ghc-typelits-natnormalise $ARG_NORMAL_TEST_SUITES --write-ghc-environment-files=always
-      - name: normal tests
+          $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH all --write-ghc-environment-files=always
+      - name: tests
         run: |
-          $CABAL v2-test $ARG_COMPILER $ARG_TESTS $ARG_BENCH $ARG_NORMAL_TEST_SUITES --test-show-details=direct
-      - name: compile timeout tests
-        run: |
-          timeout 3m $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH $ARG_TIMEOUT_TEST_SUITES --write-ghc-environment-files=always
+          $CABAL v2-test $ARG_COMPILER $ARG_TESTS $ARG_BENCH all --test-show-details=direct
       - name: cabal check
         run: |
           cd ${PKGDIR_ghc_typelits_natnormalise} || false

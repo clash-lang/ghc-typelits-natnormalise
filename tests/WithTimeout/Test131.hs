@@ -19,7 +19,9 @@
 module Main where
 
 import GHC.TypeLits
-#if MIN_VERSION_base(4,18,0)
+-- This file is compiled by a bare GHC invocation (see the unit-tests suite),
+-- so Cabal's MIN_VERSION macros are not available: base-4.18 came with GHC 9.6.
+#if __GLASGOW_HASKELL__ >= 906
   hiding (type SNat)
 #endif
 
