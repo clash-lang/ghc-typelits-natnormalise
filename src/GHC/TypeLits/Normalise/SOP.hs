@@ -280,6 +280,7 @@ normaliseExp b (S [P [I 1]]) = b
 
 -- x^(2xy) ==> x^(2xy)
 normaliseExp b@(S [P [V _]]) (S [e]) = S [P [E b e]]
+normaliseExp b@(S [P [C _]]) (S [e]) = S [P [E b e]]
 
 -- 2^(y^2) ==> 4^y
 normaliseExp b@(S [P [_]]) (S [e@(P [_])]) = S [P [reduceExp (E b e)]]

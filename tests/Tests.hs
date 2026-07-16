@@ -45,6 +45,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import qualified ShouldError
+import ShouldError.Tasty (assertCompileSuccessWithin)
 
 data Vec :: Nat -> Type -> Type where
   Nil  :: Vec 0 a
@@ -666,6 +667,11 @@ tests = testGroup "ghc-typelits-natnormalise"
       "Proxy"
     ]
   , ShouldError.tests
+  , testGroup "Should compile with timeout"
+    [ testCase "issue 131: exponentiation of type family application terminates" $ do
+        source <- readFile "tests/WithTimeout/Test131.hs"
+        assertCompileSuccessWithin 10 source
+    ]
   ]
 
 showFin :: forall n. KnownNat n => Fin n -> String

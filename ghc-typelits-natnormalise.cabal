@@ -48,6 +48,7 @@ category:            Type System
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
+extra-source-files:  tests/WithTimeout/Test131.hs
 tested-with:         GHC == 8.8.4, GHC == 8.10.7, GHC == 9.0.2, GHC == 9.2.8,
                      GHC == 9.4.8, GHC == 9.6.7, GHC == 9.8.4, GHC == 9.10.2,
                      GHC == 9.12.2
@@ -106,6 +107,11 @@ test-suite unit-tests
                        ghc-typelits-natnormalise,
                        interpolate,
                        process,
+                       -- Not used by the test suite itself, but needed in the
+                       -- build plan so the GHC spawned for
+                       -- tests/WithTimeout/Test131.hs can find it through the
+                       -- GHC environment file.
+                       singletons,
                        tasty >= 0.10,
                        tasty-hunit >= 0.9,
                        temporary
