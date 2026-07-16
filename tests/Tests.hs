@@ -545,6 +545,16 @@ oneLtPowSubst = go
     go :: 1 <= b => Proxy a -> Proxy a
     go = id
 
+-- issue 65: 1 <= base^exp should hold for any base >= 1
+oneLtPowSubstNonPow2 :: forall a b. (b ~ (3^a)) => Proxy a -> Proxy a
+oneLtPowSubstNonPow2 = go
+  where
+    go :: 1 <= b => Proxy a -> Proxy a
+    go = id
+
+proxyInEq9 :: Proxy 1 -> Proxy (3^a) -> ()
+proxyInEq9 = proxyInEq
+
 type family Drop (n :: Nat) (xs :: [Nat]) :: [Nat] where
   Drop 0 xs = xs
   Drop n (x ': xs) = Drop (n-1) xs
