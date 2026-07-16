@@ -210,12 +210,12 @@ jobs:
         run: |
           $CABAL v2-build $ARG_COMPILER --disable-tests --disable-benchmarks --dependencies-only -j2 all
           $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH --dependencies-only -j2 all
-      - name: build normal w/o tests
+      - name: build w/o tests
         run: |
-          $CABAL v2-build $ARG_COMPILER --disable-tests --disable-benchmarks $ARG_NORMAL_TEST_SUITES
+          $CABAL v2-build $ARG_COMPILER --disable-tests --disable-benchmarks all
       - name: build normal
         run: |
-          $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH $ARG_NORMAL_TEST_SUITES --write-ghc-environment-files=always
+          $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH ghc-typelits-natnormalise $ARG_NORMAL_TEST_SUITES --write-ghc-environment-files=always
       - name: normal tests
         run: |
           $CABAL v2-test $ARG_COMPILER $ARG_TESTS $ARG_BENCH $ARG_NORMAL_TEST_SUITES --test-show-details=direct
