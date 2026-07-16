@@ -124,3 +124,22 @@ test-suite unit-tests
                        ScopedTypeVariables
   if flag(deverror)
     ghc-options:       -Werror -dcore-lint
+
+test-suite timeout-test-131
+  type:                exitcode-stdio-1.0
+  main-is:             Test131.hs
+  build-depends:       base >=4.8 && <5,
+                       ghc-typelits-natnormalise,
+                       singletons,
+  hs-source-dirs:      tests/WithTimeout
+  ghc-options:         -Wall
+  default-language:    Haskell2010
+  other-extensions:    DataKinds
+                       GADTs
+                       KindSignatures
+                       NoImplicitPrelude
+                       TypeFamilies
+                       TypeOperators
+                       ScopedTypeVariables
+  if flag(deverror)
+    ghc-options:       -Werror -dcore-lint

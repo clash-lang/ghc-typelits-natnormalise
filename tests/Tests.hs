@@ -40,7 +40,6 @@ import Data.Type.Ord
 
 import Data.Kind (Type, Constraint)
 import Data.Proxy
-import Data.Singletons (Apply, TyFun, type (@@))
 import Data.Type.Equality ((:~:)(..))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -843,39 +842,3 @@ t124 x = go x
   where
     go :: NatPhantom a -> NatPhantom (b + a)
     go _ = NatPhantom
-
--- Test for https://github.com/clash-lang/ghc-typelits-natnormalise/issues/131
-data RTree :: Nat -> Type -> Type where
-  LR :: a -> RTree 0 a
-  BR :: RTree d a -> RTree d a -> RTree (d+1) a
-
-data PowT (k :: Nat) (a :: Type) (f :: TyFun Nat Type) :: Type
-type instance Apply (PowT k a) d = Vec (k^(2^d)) (RTree d a)
-
-instance Functor (Vec n) where
-  fmap = undefined
-
-tdfold :: forall p k a . KnownNat k
-       => Proxy (p :: TyFun Nat Type -> Type)
-       -> (a -> (p @@ 0))
-       -> (forall l . SNat l -> (p @@ l) -> (p @@ l) -> (p @@ (l+1)))
-       -> RTree k a
-       -> (p @@ k)
-tdfold _ _f _g = undefined
-
-trepeat :: KnownNat d => a -> RTree d a
-trepeat = undefined
-
-vConcatMap :: (a -> Vec m b) -> Vec n a -> Vec (n * m) b
-vConcatMap _f _xs = undefined
-
-type family MyTF a :: Nat where
-  MyTF Int = 3
-  MyTF _   = 5
-
-t131 :: forall d a. KnownNat d => Vec (MyTF a) a -> Vec (MyTF a^(2^d)) (RTree d a)
-t131 v = tdfold
-  (Proxy @(PowT (MyTF a) a))
-  (const $ LR <$> v)
-  (\(_ :: SNat m) l r -> vConcatMap ((<$> r) . BR) l)
-  (trepeat @d ())
