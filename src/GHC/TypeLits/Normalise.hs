@@ -192,16 +192,14 @@ import qualified Data.Map.Strict as Map
   ( empty, insertWith, traverseWithKey )
 
 -- ghc
-import GHC.Builtin.Names
-  ( knownNatClassName )
-import GHC.Builtin.Types.Literals
-  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon )
 import GHC.Core.TyCon
   ( Injectivity (..), tyConInjectivityInfo, tyConArity )
 import GHC.Utils.Misc
   ( filterByList )
 
 -- ghc-tcplugin-api
+import GHC.Builtins
+  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon )
 import GHC.TcPlugin.API
 import GHC.TcPlugin.API.TyConSubst
   ( TyConSubst, mkTyConSubst )
@@ -368,7 +366,7 @@ decideEqualSOP opts (ExtraDefs { tyCons = tcs }) givens wanteds0 = do
     (redGivens, negWanteds) <- reduceGivens True opts tcs givens
     reducible_wanteds
       <- catMaybes <$> mapM (\ct -> fmap (ct,) <$>
-                                    reduceNatConstr redGivens ct)
+                                    reduceNatConstr tcs redGivens ct)
                             nonEqs
 
     tcPluginTrace "decideEqualSOP Wanteds {" $
@@ -471,8 +469,8 @@ fromNatEquality :: Either NatEquality NatInEquality -> Ct
 fromNatEquality (Left  (ct, _, _)) = ct
 fromNatEquality (Right (ct, _))    = ct
 
-reduceNatConstr :: [Ct] -> Ct -> TcPluginM Solve (Maybe (EvTerm, [(Type, Type)], [Ct]))
-reduceNatConstr givens ct = do
+reduceNatConstr :: LookedUpTyCons -> [Ct] -> Ct -> TcPluginM Solve (Maybe (EvTerm, [(Type, Type)], [Ct]))
+reduceNatConstr tcs givens ct = do
   let pred0 = ctEvPred $ ctEvidence ct
       (mans, tests) = runWriter $ normaliseNatEverywhere pred0
 
@@ -483,7 +481,7 @@ reduceNatConstr givens ct = do
     -- No existing evidence found
     Nothing
       | ClassPred cls _ <- classifyPredType pred'
-      , className cls /= knownNatClassName
+      , cls /= knownNatClass tcs
 
       -- We actually did do some rewriting/normalisation.
       , Just {} <- mans
@@ -829,7 +827,7 @@ toNatEquality opts tcs givensTyConSubst ct0
         -- From [G] KnownNat blah, also produce [G] 0 <= blah
         -- See https://github.com/clash-lang/ghc-typelits-natnormalise/issues/94.
         | isGiven (ctEvidence ct0)
-        , className kn == knownNatClassName
+        , kn == knownNatClass tcs
         , let ((x', cos0), ks) = runWriter (normaliseNat x)
         , let preds = subToPred opts tcs ks
         -> [NatCt (Right (ct0, (S [], x', True))) preds cos0]
@@ -942,7 +940,7 @@ evMagic ::
   TcPluginM Solve (Maybe ((EvTerm, Ct), [Ct]))
 evMagic tcs ct deps knW preds = do
   holeWanteds <- evSubtPreds (ctLoc ct) preds
-  knWanted <- mapM (mkKnWanted (ctLoc ct)) (Set.elems knW)
+  knWanted <- mapM (mkKnWanted tcs (ctLoc ct)) (Set.elems knW)
   let newWant = knWanted ++ holeWanteds
   case classifyPredType $ ctEvPred $ ctEvidence ct of
     EqPred NomEq t1 t2 ->
@@ -956,11 +954,11 @@ evMagic tcs ct deps knW preds = do
     _ -> return Nothing
 
 mkKnWanted
-  :: CtLoc
+  :: LookedUpTyCons
+  -> CtLoc
   -> CType
   -> TcPluginM Solve Ct
-mkKnWanted loc (CType ty) = do
-  kc_clas <- tcLookupClass knownNatClassName
-  let kn_pred = mkClassPred kc_clas [ty]
+mkKnWanted tcs loc (CType ty) = do
+  let kn_pred = mkClassPred (knownNatClass tcs) [ty]
   wantedCtEv <- newWanted loc kn_pred
   return $ mkNonCanonical wantedCtEv

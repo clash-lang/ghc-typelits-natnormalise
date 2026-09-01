@@ -35,7 +35,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Foldable
   ( asum )
 import GHC.TypeNats
-  ( CmpNat )
+  ( CmpNat, KnownNat )
 #if MIN_VERSION_ghc(9,3,0)
 import qualified GHC.TypeError
   ( Assert )
@@ -50,18 +50,6 @@ import GHC.TypeNats
 #endif
 
 -- ghc
-import GHC.Builtin.Types
-  ( isCTupleTyConName
-  , promotedFalseDataCon, promotedTrueDataCon
-  , promotedLTDataCon, promotedEQDataCon, promotedGTDataCon
-  )
-#if MIN_VERSION_ghc(9,1,0)
-import GHC.Builtin.Types
-  ( cTupleTyCon, cTupleDataCon )
-#else
-import GHC.Builtin.Types
-  ( cTupleTyConName )
-#endif
 #if MIN_VERSION_ghc(9,7,0)
 import GHC.Types.Unique.Map
   ( UniqMap, intersectUniqMap_C, listToUniqMap, nonDetUniqMapToList )
@@ -73,6 +61,16 @@ import GHC.Types.Unique.FM
 #endif
 
 -- ghc-tcplugin-api
+import GHC.Builtins
+  ( isCTupleTyConName
+  , promotedFalseDataCon, promotedTrueDataCon
+  , promotedLTDataCon, promotedEQDataCon, promotedGTDataCon
+#if MIN_VERSION_ghc(9,1,0)
+  , cTupleTyCon, cTupleDataCon
+#else
+  , cTupleTyConName
+#endif
+  )
 import GHC.TcPlugin.API
 import GHC.TcPlugin.API.TyConSubst
   ( TyConSubst, splitTyConApp_upTo )
@@ -97,12 +95,15 @@ data LookedUpTyCons
 #endif
       cmpNatTyCon :: TyCon,
       c0TyCon   :: TyCon,
-      c0DataCon :: DataCon
+      c0DataCon :: DataCon,
+      -- | @KnownNat :: Nat -> Constraint@
+      knownNatClass :: Class
     }
 
 lookupTyCons :: TcPluginM Init LookedUpTyCons
 lookupTyCons = do
     cmpNatT <- lookupTHName ''GHC.TypeNats.CmpNat >>= tcLookupTyCon
+    knownNatC <- lookupTHName ''GHC.TypeNats.KnownNat >>= tcLookupClass
 #if MIN_VERSION_ghc(9,3,0)
     assertT <- lookupTHName ''GHC.TypeError.Assert >>= tcLookupTyCon
 #endif
@@ -119,6 +120,7 @@ lookupTyCons = do
         , cmpNatTyCon  = cmpNatT
         , c0TyCon      = cTupleTyCon 0
         , c0DataCon    = cTupleDataCon 0
+        , knownNatClass = knownNatC
         }
 #else
     leqT  <- lookupTHName ''(GHC.TypeNats.<=)  >>= tcLookupTyCon
@@ -134,6 +136,7 @@ lookupTyCons = do
         , c0TyCon      = c0T
         , c0DataCon    = c0D
         , cmpNatTyCon  = cmpNatT
+        , knownNatClass = knownNatC
         }
 #endif
 
