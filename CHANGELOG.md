@@ -1,5 +1,11 @@
 # Changelog for the [`ghc-typelits-natnormalise`](http://hackage.haskell.org/package/ghc-typelits-natnormalise) package
 
+## Unreleased
+
+## 0.9.7 *September 19th 2026*
+* Support for GHC 10.0 and 10.2
+* Fixes [#131](https://github.com/clash-lang/ghc-typelits-natnormalise/issues/131) Compile-time loop when normalising exponentiation with a type family application as the base.
+
 ## 0.9.6 *May 13th 2026*
 * Bump ghc-tcplugin-api to prepare for inclusion into stackage
 
