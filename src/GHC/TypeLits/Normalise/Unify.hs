@@ -69,9 +69,6 @@ import Data.Set
 import qualified Data.Set as Set
 
 -- ghc
-import GHC.Builtin.Types.Literals
-  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon
-  )
 import GHC.Types.Unique.Set
   ( UniqSet
   , emptyUniqSet, unionManyUniqSets, unionUniqSets, unitUniqSet
@@ -79,6 +76,9 @@ import GHC.Types.Unique.Set
   )
 
 -- ghc-tcplugin-api
+import GHC.Builtins
+  ( typeNatAddTyCon, typeNatExpTyCon, typeNatMulTyCon, typeNatSubTyCon
+  )
 import GHC.TcPlugin.API
 import GHC.Utils.Outputable
 

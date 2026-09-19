@@ -70,8 +70,8 @@ library
                        GHC.TypeLits.Normalise.Unify
   build-depends:       base                >=4.9   && <5,
                        containers          >=0.5.7.1 && <0.9,
-                       ghc                 >=8.8.1 && <9.15,
-                       ghc-tcplugin-api    >=0.19 && <0.20,
+                       ghc                 >=8.8.1 && <10.3,
+                       ghc-tcplugin-api    >=0.20.1 && <0.21,
                        transformers        >=0.5.2 && < 0.7
   if impl(ghc >= 9.0.0)
     build-depends:     ghc-bignum >=1.0 && <1.5
@@ -80,9 +80,7 @@ library
 
     mixins:
       ghc
-        ( TcTypeNats as GHC.Builtin.Types.Literals
-        , TyCon      as GHC.Core.TyCon
-        , TysWiredIn as GHC.Builtin.Types
+        ( TyCon      as GHC.Core.TyCon
         , Unique     as GHC.Types.Unique
         , Util       as GHC.Utils.Misc
         )
